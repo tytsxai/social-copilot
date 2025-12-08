@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build outputs
+packages/*/dist/
+
+# Environment
+.env
+.env.local
+.venv/
