@@ -1,0 +1,20 @@
+{
+  "name": "@social-copilot/core",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "vitest": "^1.6.0",
+    "fast-check": "^3.15.0",
+    "fake-indexeddb": "^5.0.2"
+  }
+}
