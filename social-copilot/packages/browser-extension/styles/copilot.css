@@ -1,0 +1,131 @@
+/* Social Copilot 悬浮面板样式 */
+#social-copilot-root {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  z-index: 99999;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.sc-panel {
+  width: 320px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.sc-header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  cursor: move;
+  user-select: none;
+}
+
+.sc-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sc-shortcut {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-right: 8px;
+}
+
+.sc-header button {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.sc-header button:hover {
+  opacity: 1;
+}
+
+.sc-content {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.sc-notice {
+  padding: 8px 10px;
+  margin: 0 0 8px 0;
+  background: #eef2ff;
+  border: 1px solid #dce1ff;
+  border-radius: 8px;
+  color: #3c366b;
+  font-size: 12px;
+}
+
+.sc-loading,
+.sc-empty,
+.sc-error {
+  padding: 24px 16px;
+  text-align: center;
+  color: #666;
+  font-size: 13px;
+}
+
+.sc-error {
+  color: #d32f2f;
+}
+
+.sc-candidate {
+  padding: 12px;
+  margin: 4px 0;
+  background: #f5f5f5;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sc-candidate:hover {
+  background: #e3f2fd;
+  transform: translateX(4px);
+}
+
+.sc-style {
+  display: inline-block;
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.sc-text {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #333;
+  margin: 0;
+  word-break: break-word;
+}
+
+/* 滚动条样式 */
+.sc-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sc-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sc-content::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.sc-content::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}

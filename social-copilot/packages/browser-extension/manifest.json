@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Social Copilot",
+  "version": "0.1.0",
+  "description": "AI-powered social companion for chat applications",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://web.telegram.org/*",
+    "https://web.whatsapp.com/*",
+    "https://app.slack.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.telegram.org/*"],
+      "js": ["content-scripts/telegram.js"],
+      "css": ["styles/copilot.css"]
+    },
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content-scripts/whatsapp.js"],
+      "css": ["styles/copilot.css"]
+    },
+    {
+      "matches": ["https://app.slack.com/*"],
+      "js": ["content-scripts/slack.js"],
+      "css": ["styles/copilot.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["chunks/*", "assets/*"],
+      "matches": ["https://web.telegram.org/*", "https://web.whatsapp.com/*", "https://app.slack.com/*"]
+    }
+  ]
+}
