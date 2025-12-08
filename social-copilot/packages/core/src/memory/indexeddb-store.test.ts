@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import * as fc from 'fast-check';
 import 'fake-indexeddb/auto';
 import { IndexedDBStore } from './indexeddb-store';
-import type { ReplyStyle, ContactKey } from '../types';
+import type { ReplyStyle, ContactKey, Message } from '../types';
 import { contactKeyToString } from '../types/contact';
 
 // Generators for property-based testing
@@ -28,6 +28,51 @@ const stylePreferenceArb = fc.record({
   styleHistory: fc.array(styleHistoryEntryArb, { minLength: 0, maxLength: 5 }),
   defaultStyle: fc.option(replyStyleArb, { nil: null }),
   updatedAt: fc.integer({ min: 0, max: Date.now() }),
+});
+
+describe('IndexedDBStore - Messages', () => {
+  let store: IndexedDBStore;
+  const contactKey: ContactKey = {
+    platform: 'web',
+    app: 'telegram',
+    accountId: 'acc',
+    conversationId: 'conv',
+    peerId: 'peer',
+    isGroup: false,
+  };
+
+  beforeEach(async () => {
+    store = new IndexedDBStore();
+    await store.init();
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  test('counts unique messages and returns recent items in timestamp order', async () => {
+    const base: Message = {
+      id: 'msg-1',
+      contactKey,
+      direction: 'incoming',
+      senderName: 'Alice',
+      text: 'hello',
+      timestamp: 1,
+    };
+
+    await store.saveMessage(base);
+    // Duplicate id should overwrite instead of increasing count
+    await store.saveMessage({ ...base, text: 'updated hello' });
+    await store.saveMessage({ ...base, id: 'msg-2', text: 'later message', timestamp: 2 });
+
+    const count = await store.getMessageCount(contactKey);
+    expect(count).toBe(2);
+
+    const recent = await store.getRecentMessages(contactKey, 1);
+    expect(recent).toHaveLength(1);
+    expect(recent[0].id).toBe('msg-2');
+    expect(recent[0].text).toBe('later message');
+  });
 });
 
 describe('IndexedDBStore - Style Preferences', () => {

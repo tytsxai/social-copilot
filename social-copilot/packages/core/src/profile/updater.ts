@@ -26,16 +26,22 @@ export class ProfileUpdater {
     messages: Message[],
     existingProfile: ContactProfile
   ): Promise<Partial<ContactProfile>> {
+    if (messages.length === 0) {
+      return {};
+    }
+
     try {
+      const memorySummary = this.buildExtractionPrompt(existingProfile);
+
       const response = await this.llm.generateReply({
-        purpose: 'profile',
+        task: 'profile_extraction',
         context: {
           contactKey: existingProfile.key,
           recentMessages: messages,
           currentMessage: messages[messages.length - 1],
         },
         profile: existingProfile,
-        memorySummary: this.buildExtractionPrompt(existingProfile),
+        memorySummary,
         styles: ['rational'],
         language: 'zh',
       });
@@ -109,7 +115,7 @@ export class ProfileUpdater {
       // 追加备注
       if (parsed.notes && parsed.notes !== existing.notes) {
         const existingNotes = existing.notes || '';
-        const stampedNote = `[${this.formatDate(new Date())}] ${parsed.notes}`;
+        const stampedNote = `[${this.formatDate(Date.now())}] ${parsed.notes}`;
         updates.notes = existingNotes
           ? `${existingNotes}\n${stampedNote}`
           : stampedNote;
@@ -121,7 +127,7 @@ export class ProfileUpdater {
     }
   }
 
-  private formatDate(date: Date): string {
-    return date.toISOString().slice(0, 10);
+  private formatDate(date: number | Date): string {
+    return new Date(date).toISOString().slice(0, 10);
   }
 }

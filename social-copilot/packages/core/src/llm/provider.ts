@@ -62,10 +62,11 @@ export class DeepSeekProvider implements LLMProvider {
 
 输出要求：
 1. 使用${lang}返回结果
-2. 仅返回 JSON 对象，包含: interests[], communicationStyle{}, basicInfo{}, notes
+2. 仅返回 JSON 对象，包含: interests[], communicationStyle{}, basicInfo{}, relationshipType, notes
 3. communicationStyle 可包含 prefersShortMessages、usesEmoji、formalityLevel(casual/neutral/formal)
 4. basicInfo 可包含 ageRange、occupation、location
-5. notes 用于补充无法结构化的信息`;
+5. relationshipType 用于标记关系（如 friend/colleague/family）
+6. notes 用于补充无法结构化的信息`;
     }
 
     const lang = input.language === 'zh' ? '中文' : 'English';

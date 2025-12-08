@@ -1,119 +1,122 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ContactProfile, LLMInput, LLMOutput, LLMProvider, Message } from '../types';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ProfileUpdater } from './updater';
+import type { ContactKey, ContactProfile, LLMInput, LLMOutput, LLMProvider, Message } from '../types';
 
-class MockLLMProvider implements LLMProvider {
-  readonly name = 'mock';
+class FakeLLMProvider implements LLMProvider {
+  readonly name = 'fake';
+  private responseText: string;
+  lastInput: LLMInput | null = null;
 
-  constructor(private responseText: string) {}
+  constructor(responseText: string) {
+    this.responseText = responseText;
+  }
 
-  async generateReply(_input: LLMInput): Promise<LLMOutput> {
+  async generateReply(input: LLMInput): Promise<LLMOutput> {
+    this.lastInput = input;
     return {
-      candidates: [
-        {
-          style: 'rational',
-          text: this.responseText,
-          confidence: 0.9,
-        },
-      ],
-      model: 'mock-model',
-      latency: 5,
+      candidates: [{
+        style: 'rational',
+        text: this.responseText,
+        confidence: 0.9,
+      }],
+      model: 'fake-model',
+      latency: 1,
     };
   }
 }
 
-const contactKey = {
-  platform: 'web' as const,
-  app: 'telegram' as const,
-  conversationId: 'conv-1',
+const contactKey: ContactKey = {
+  platform: 'web',
+  app: 'telegram',
+  accountId: 'acc',
+  conversationId: 'conv',
   peerId: 'alice',
   isGroup: false,
 };
 
-const recentMessages: Message[] = [
+const buildMessages = (): Message[] => ([
   {
-    id: 'm1',
+    id: '1',
     contactKey,
     direction: 'incoming',
     senderName: 'Alice',
-    text: '最近去了上海旅游，超好玩',
+    text: '最近在学摄影',
     timestamp: 1,
   },
   {
-    id: 'm2',
+    id: '2',
     contactKey,
     direction: 'incoming',
     senderName: 'Alice',
-    text: '周末还想去逛美食节',
+    text: '喜欢猫咪',
     timestamp: 2,
   },
-];
+]);
+
+const baseProfile: ContactProfile = {
+  key: contactKey,
+  displayName: 'Alice',
+  interests: ['旅行'],
+  communicationStyle: {
+    prefersShortMessages: false,
+  },
+  relationshipType: 'friend',
+  notes: '已有备注',
+  createdAt: 1,
+  updatedAt: 1,
+};
 
 describe('ProfileUpdater', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-02T00:00:00Z'));
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  test('shouldUpdate respects threshold differences', () => {
-    const updater = new ProfileUpdater(new MockLLMProvider('{}'), 5);
+  test('shouldUpdate respects configured threshold', () => {
+    const updater = new ProfileUpdater(new FakeLLMProvider('{}'), 3);
 
-    expect(updater.shouldUpdate(4, 0)).toBe(false);
-    expect(updater.shouldUpdate(5, 0)).toBe(true);
-    expect(updater.shouldUpdate(10, 6)).toBe(false);
-    expect(updater.shouldUpdate(11, 6)).toBe(true);
+    expect(updater.shouldUpdate(2, 0)).toBe(false);
+    expect(updater.shouldUpdate(3, 0)).toBe(true);
+    expect(updater.shouldUpdate(10, 8)).toBe(false);
+    expect(updater.shouldUpdate(10, 7)).toBe(true);
   });
 
-  test('extractProfileUpdates merges structured fields and stamps notes', async () => {
-    vi.setSystemTime(new Date('2024-05-01T12:00:00Z'));
+  test('extractProfileUpdates uses profile task and merges structured data', async () => {
+    const provider = new FakeLLMProvider(
+      JSON.stringify({
+        interests: ['摄影'],
+        communicationStyle: { usesEmoji: true },
+        basicInfo: { location: '深圳' },
+        notes: '新增备注',
+      })
+    );
+    const updater = new ProfileUpdater(provider);
 
-    const llmResponse = JSON.stringify({
-      interests: ['摄影', '旅行'],
-      communicationStyle: {
-        usesEmoji: true,
-        formalityLevel: 'casual',
-      },
-      basicInfo: {
-        location: '上海',
-      },
-      relationshipType: 'colleague',
-      notes: '喜欢周末出门探索美食',
-    });
+    const updates = await updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
 
-    const updater = new ProfileUpdater(new MockLLMProvider(llmResponse));
-    const profile: ContactProfile = {
-      key: contactKey,
-      displayName: 'Alice',
-      interests: ['摄影'],
-      relationshipType: 'friend',
-      communicationStyle: {
-        prefersShortMessages: false,
-      },
-      basicInfo: {
-        occupation: '工程师',
-      },
-      notes: '老朋友',
-      createdAt: 0,
-      updatedAt: 0,
-    };
+    expect(provider.lastInput?.task).toBe('profile_extraction');
+    expect(provider.lastInput?.context.currentMessage.id).toBe('2');
+    expect(provider.lastInput?.memorySummary).toContain('现有画像');
 
-    const updates = await updater.extractProfileUpdates(recentMessages, profile);
-
-    expect(updates.interests).toEqual(['摄影', '旅行']);
+    expect(updates.interests).toEqual(['旅行', '摄影']);
     expect(updates.communicationStyle).toEqual({
       prefersShortMessages: false,
       usesEmoji: true,
-      formalityLevel: 'casual',
     });
-    expect(updates.basicInfo).toEqual({
-      occupation: '工程师',
-      location: '上海',
-    });
-    expect(updates.relationshipType).toBe('colleague');
-    expect(updates.notes).toContain('[2024-05-01]');
-    expect(updates.notes).toContain('喜欢周末出门探索美食');
+    expect(updates.basicInfo?.location).toBe('深圳');
+    expect(updates.notes).toContain('2024-01-02');
+    expect(updates.notes).toContain('新增备注');
+  });
+
+  test('returns empty updates when response is not JSON', async () => {
+    const provider = new FakeLLMProvider('non-json response');
+    const updater = new ProfileUpdater(provider);
+
+    const updates = await updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
+    expect(updates).toEqual({});
   });
 });
