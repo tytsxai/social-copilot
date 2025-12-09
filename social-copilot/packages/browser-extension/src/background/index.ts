@@ -382,7 +382,7 @@ async function clearData() {
   currentConfig = null;
 
   // 重新初始化存储
-  await store.close();
+  await store.deleteDatabase();
   await initStore();
 
   return { success: true };

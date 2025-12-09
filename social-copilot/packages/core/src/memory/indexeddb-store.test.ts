@@ -73,6 +73,64 @@ describe('IndexedDBStore - Messages', () => {
     expect(recent[0].id).toBe('msg-2');
     expect(recent[0].text).toBe('later message');
   });
+
+  test('deleteDatabase removes all data and allows clean re-init', async () => {
+    await store.saveMessage({
+      id: 'msg-3',
+      contactKey,
+      direction: 'incoming',
+      senderName: 'Alice',
+      text: 'keep me?',
+      timestamp: Date.now(),
+    });
+
+    await store.deleteDatabase();
+
+    const fresh = new IndexedDBStore();
+    await fresh.init();
+
+    const count = await fresh.getMessageCount(contactKey);
+    expect(count).toBe(0);
+
+    await fresh.close();
+  });
+
+  test('clearContact removes messages, profile, and style preferences', async () => {
+    await store.saveMessage({
+      id: 'msg-4',
+      contactKey,
+      direction: 'incoming',
+      senderName: 'Alice',
+      text: 'hello',
+      timestamp: 1,
+    });
+
+    await store.saveProfile({
+      key: contactKey,
+      displayName: 'Alice',
+      interests: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    await store.saveStylePreference({
+      contactKeyStr: contactKeyToString(contactKey),
+      styleHistory: [],
+      defaultStyle: null,
+      updatedAt: 1,
+    });
+
+    await store.clearContact(contactKey);
+
+    const msgCount = await store.getMessageCount(contactKey);
+    expect(msgCount).toBe(0);
+
+    const profile = await store.getProfile(contactKey);
+    expect(profile).toBeNull();
+
+    const stylePref = await store.getStylePreference(contactKey);
+    expect(stylePref).toBeNull();
+  });
 });
 
 describe('IndexedDBStore - Style Preferences', () => {

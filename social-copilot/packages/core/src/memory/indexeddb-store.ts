@@ -223,6 +223,16 @@ export class IndexedDBStore implements MemoryStore {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve();
     });
+
+    // 删除风格偏好
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.stylePreferences, 'readwrite');
+      const store = tx.objectStore(STORES.stylePreferences);
+      const request = store.delete(contactKeyStr);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve();
+    });
   }
 
   /**
@@ -240,7 +250,7 @@ export class IndexedDBStore implements MemoryStore {
 
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
-        resolve(request.result as StylePreference | null);
+        resolve((request.result as StylePreference | undefined) ?? null);
       };
     });
   }
@@ -294,6 +304,23 @@ export class IndexedDBStore implements MemoryStore {
       request.onsuccess = () => {
         resolve(request.result as StylePreference[]);
       };
+    });
+  }
+
+  /**
+   * 删除整个 IndexedDB 数据库（用于彻底清除数据）
+   */
+  async deleteDatabase(): Promise<void> {
+    // 关闭现有连接，避免阻塞删除
+    this.db?.close();
+    this.db = null;
+
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(DB_NAME);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve();
+      request.onblocked = () => reject(new Error('Database deletion blocked'));
     });
   }
 }
