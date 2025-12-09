@@ -27,6 +27,16 @@ export class SlackAdapter implements PlatformAdapter {
     return window.location.hostname === 'app.slack.com';
   }
 
+  private getCurrentUserId(): string | null {
+    const slack = window as unknown as {
+      TS?: {
+        boot_data?: { user_id?: string };
+        model?: { user?: { id?: string } };
+      };
+    };
+    return slack.TS?.boot_data?.user_id || slack.TS?.model?.user?.id || null;
+  }
+
   extractContactKey(): ContactKey | null {
     const pathMatch = window.location.pathname.match(/\/client\/[^/]+\/([^/]+)/);
     const channelId = pathMatch?.[1] || '';
@@ -71,7 +81,12 @@ export class SlackAdapter implements PlatformAdapter {
     const senderEl = el.querySelector(this.selectors.senderName);
     const senderName = senderEl?.textContent?.trim() || 'Unknown';
 
-    const isOutgoing = senderName === 'You' || senderName === '你';
+    const senderId = el.getAttribute('data-sender-id') || el.dataset.senderId || null;
+    const currentUserId = this.getCurrentUserId();
+
+    const isOutgoing = (senderId && currentUserId && senderId === currentUserId)
+      || senderName === 'You'
+      || senderName === '你';
 
     const timeEl = el.querySelector(this.selectors.time);
     const timeText = timeEl?.textContent?.trim() || '';
@@ -103,11 +118,18 @@ export class SlackAdapter implements PlatformAdapter {
     input.focus();
 
     if (input.classList.contains('ql-editor')) {
-      input.innerHTML = `<p>${text}</p>`;
+      // 使用纯文本插入，避免将模型输出作为 HTML 解析
+      input.textContent = '';
+      const inserted = typeof document.execCommand === 'function'
+        ? document.execCommand('insertText', false, text)
+        : false;
+      if (!inserted) {
+        input.textContent = text;
+      }
       input.dispatchEvent(new InputEvent('input', { bubbles: true }));
     } else {
       input.textContent = text;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
     }
 
     return true;
