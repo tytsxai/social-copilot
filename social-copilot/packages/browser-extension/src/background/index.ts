@@ -1,4 +1,4 @@
-import { IndexedDBStore, ProfileUpdater, LLMManager, StylePreferenceManager } from '@social-copilot/core';
+import { IndexedDBStore, ProfileUpdater, LLMManager, StylePreferenceManager, ThoughtAnalyzer } from '@social-copilot/core';
 import type {
   Message,
   ContactKey,
@@ -6,8 +6,10 @@ import type {
   ReplyStyle,
   ContactProfile,
   LLMProvider,
+  ThoughtType,
+  ConversationContext,
 } from '@social-copilot/core';
-import { contactKeyToString } from '@social-copilot/core';
+import { contactKeyToString, THOUGHT_CARDS } from '@social-copilot/core';
 import type { ProviderType, LLMManagerConfig } from '@social-copilot/core';
 
 // 配置类型
@@ -64,6 +66,14 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
           contactKey: ContactKey;
           messages: Message[];
           currentMessage: Message;
+          thoughtDirection?: ThoughtType;
+        }
+      );
+
+    case 'ANALYZE_THOUGHT':
+      return handleAnalyzeThought(
+        request.payload as {
+          context: ConversationContext;
         }
       );
 
@@ -234,12 +244,20 @@ async function notifyTabs(message: unknown) {
   }
 }
 
+async function handleAnalyzeThought(payload: { context: ConversationContext }) {
+  const analyzer = new ThoughtAnalyzer();
+  const result = analyzer.analyze(payload.context);
+  const cards = analyzer.getRecommendedCards(result);
+  return { result, cards };
+}
+
 async function handleGenerateReply(payload: {
   contactKey: ContactKey;
   messages: Message[];
   currentMessage: Message;
+  thoughtDirection?: ThoughtType;
 }) {
-  const { contactKey, messages, currentMessage } = payload;
+  const { contactKey, messages, currentMessage, thoughtDirection } = payload;
 
   // 保存消息
   for (const msg of messages) {
@@ -290,6 +308,12 @@ async function handleGenerateReply(payload: {
     styles: styles as ReplyStyle[],
     language: 'zh',
   };
+
+  // 添加思路方向
+  if (thoughtDirection) {
+    input.thoughtDirection = thoughtDirection;
+    input.thoughtHint = THOUGHT_CARDS[thoughtDirection]?.promptHint;
+  }
 
   // 调用 LLM
   try {

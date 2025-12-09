@@ -1,6 +1,6 @@
 import { WhatsAppAdapter } from '../adapters/whatsapp';
 import { CopilotUI } from '../ui/copilot-ui';
-import type { ContactKey, Message, ReplyCandidate } from '@social-copilot/core';
+import type { ContactKey, Message, ReplyCandidate, ThoughtType, ThoughtCard } from '@social-copilot/core';
 
 /**
  * WhatsApp Web Content Script 入口
@@ -24,6 +24,7 @@ class WhatsAppContentScript {
     this.ui = new CopilotUI({
       onSelect: (candidate) => this.handleSelect(candidate),
       onRefresh: () => this.handleRefresh(),
+      onThoughtSelect: (thought) => this.handleThoughtSelect(thought),
     });
   }
 
@@ -126,8 +127,47 @@ class WhatsAppContentScript {
     if (message.direction === 'incoming' && message.id !== this.lastMessageId) {
       this.lastMessageId = message.id;
       console.log('[Social Copilot] New incoming message:', message.text.slice(0, 50));
-      this.generateSuggestions();
+      this.analyzeAndGenerateSuggestions(message);
     }
+  }
+
+  private async analyzeAndGenerateSuggestions(currentMessage: Message) {
+    if (this.isDestroyed) return;
+
+    const contactKey = this.adapter.extractContactKey();
+    if (!contactKey) return;
+
+    const messages = this.adapter.extractMessages(10);
+    
+    // 分析思路
+    try {
+      const analyzeResponse = await chrome.runtime.sendMessage({
+        type: 'ANALYZE_THOUGHT',
+        payload: {
+          context: {
+            contactKey,
+            recentMessages: messages,
+            currentMessage,
+          },
+        },
+      });
+
+      if (!this.isDestroyed && analyzeResponse?.cards) {
+        this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
+      }
+    } catch (error) {
+      console.warn('[Social Copilot] Failed to analyze thought:', error);
+    }
+
+    // 生成建议
+    this.generateSuggestions();
+  }
+
+  private async handleThoughtSelect(thought: ThoughtType | null) {
+    if (this.isDestroyed) return;
+    
+    // 重新生成带有思路方向的建议
+    await this.generateSuggestions(thought ?? undefined);
   }
 
   private handleRuntimeMessage(message: unknown) {
@@ -157,7 +197,7 @@ class WhatsAppContentScript {
     }
   }
 
-  private async generateSuggestions() {
+  private async generateSuggestions(thoughtDirection?: ThoughtType) {
     if (this.isDestroyed || this.isGenerating) return;
 
     const contactKey = this.adapter.extractContactKey();
@@ -171,6 +211,9 @@ class WhatsAppContentScript {
     this.ui.setLoading(true);
     this.ui.show();
 
+    // 使用 UI 选中的思路方向（如果没有传入）
+    const selectedThought = thoughtDirection ?? this.ui.getSelectedThought() ?? undefined;
+
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'GENERATE_REPLY',
@@ -178,6 +221,7 @@ class WhatsAppContentScript {
           contactKey,
           messages,
           currentMessage: messages[messages.length - 1],
+          thoughtDirection: selectedThought,
         },
       });
 

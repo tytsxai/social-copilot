@@ -1,8 +1,10 @@
-import type { ReplyCandidate } from '@social-copilot/core';
+import type { ReplyCandidate, ThoughtCard, ThoughtType } from '@social-copilot/core';
+import { ThoughtCardsComponent } from './thought-cards';
 
 interface CopilotUIOptions {
   onSelect: (candidate: ReplyCandidate) => void;
   onRefresh: () => void;
+  onThoughtSelect?: (thought: ThoughtType | null) => void;
 }
 
 /**
@@ -23,9 +25,17 @@ export class CopilotUI {
   private closeHandler: (() => void) | null = null;
   private refreshHandler: (() => void) | null = null;
   private candidateClickHandler: ((e: Event) => void) | null = null;
+  
+  // 思路卡片组件
+  private thoughtCards: ThoughtCardsComponent;
 
   constructor(options: CopilotUIOptions) {
     this.options = options;
+    this.thoughtCards = new ThoughtCardsComponent({
+      onSelect: (thought) => {
+        this.options.onThoughtSelect?.(thought);
+      },
+    });
   }
 
   mount() {
@@ -39,11 +49,18 @@ export class CopilotUI {
     void this.restorePosition();
 
     this.bindEvents();
+    
+    // 渲染思路卡片
+    const contentEl = this.container.querySelector('.sc-content');
+    if (contentEl) {
+      this.thoughtCards.render(contentEl as HTMLElement);
+    }
   }
 
   unmount() {
     this.unbindEvents();
     this.detachDragListeners();
+    this.thoughtCards.destroy();
     this.container?.remove();
     this.container = null;
     this.candidates = [];
@@ -91,6 +108,18 @@ export class CopilotUI {
   clearNotification() {
     this.notification = null;
     this.update();
+  }
+
+  setThoughtCards(cards: ThoughtCard[]) {
+    this.thoughtCards.setCards(cards);
+  }
+
+  getSelectedThought(): ThoughtType | null {
+    return this.thoughtCards.getSelectedThought();
+  }
+
+  getThoughtAbortController(): AbortController {
+    return this.thoughtCards.createAbortController();
   }
 
   private render(): string {
@@ -160,6 +189,8 @@ export class CopilotUI {
     const content = this.container?.querySelector('.sc-content');
     if (content) {
       content.innerHTML = this.renderContent();
+      // 重新渲染思路卡片
+      this.thoughtCards.render(content as HTMLElement);
     }
   }
 

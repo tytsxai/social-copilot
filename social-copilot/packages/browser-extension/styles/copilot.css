@@ -129,3 +129,51 @@
 .sc-content::-webkit-scrollbar-thumb:hover {
   background: #999;
 }
+
+/* 思路卡片样式 */
+.sc-thought-cards {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 8px 0;
+  flex-wrap: wrap;
+}
+
+.sc-thought-card {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: #f0f0f0;
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 12px;
+}
+
+.sc-thought-card:hover {
+  background: #e8e8e8;
+  border-color: #d0d0d0;
+  transform: translateY(-1px);
+}
+
+.sc-thought-card--active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: transparent;
+  color: white;
+}
+
+.sc-thought-card--active:hover {
+  background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+  border-color: transparent;
+}
+
+.sc-thought-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.sc-thought-label {
+  font-weight: 500;
+  white-space: nowrap;
+}

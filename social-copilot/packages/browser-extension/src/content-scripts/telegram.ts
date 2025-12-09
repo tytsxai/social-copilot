@@ -1,6 +1,6 @@
 import { TelegramAdapter } from '../adapters/telegram';
 import { CopilotUI } from '../ui/copilot-ui';
-import type { ContactKey, Message, ReplyCandidate } from '@social-copilot/core';
+import type { ContactKey, Message, ReplyCandidate, ThoughtType, ThoughtCard } from '@social-copilot/core';
 
 /**
  * Telegram Web Content Script 入口
@@ -24,6 +24,7 @@ class TelegramContentScript {
     this.ui = new CopilotUI({
       onSelect: (candidate) => this.handleSelect(candidate),
       onRefresh: () => this.handleRefresh(),
+      onThoughtSelect: (thought) => this.handleThoughtSelect(thought),
     });
   }
 
@@ -145,8 +146,43 @@ class TelegramContentScript {
     if (message.direction === 'incoming' && message.id !== this.lastMessageId) {
       this.lastMessageId = message.id;
       console.log('[Social Copilot] New incoming message:', message.text.slice(0, 50));
-      this.generateSuggestions();
+      this.analyzeAndGenerateSuggestions(message);
     }
+  }
+
+  private async analyzeAndGenerateSuggestions(currentMessage: Message) {
+    if (this.isDestroyed) return;
+
+    const contactKey = this.adapter.extractContactKey();
+    if (!contactKey) return;
+
+    const messages = this.adapter.extractMessages(10);
+    
+    try {
+      const analyzeResponse = await chrome.runtime.sendMessage({
+        type: 'ANALYZE_THOUGHT',
+        payload: {
+          context: {
+            contactKey,
+            recentMessages: messages,
+            currentMessage,
+          },
+        },
+      });
+
+      if (!this.isDestroyed && analyzeResponse?.cards) {
+        this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
+      }
+    } catch (error) {
+      console.warn('[Social Copilot] Failed to analyze thought:', error);
+    }
+
+    this.generateSuggestions();
+  }
+
+  private async handleThoughtSelect(thought: ThoughtType | null) {
+    if (this.isDestroyed) return;
+    await this.generateSuggestions(thought ?? undefined);
   }
 
   private handleRuntimeMessage(message: unknown) {
@@ -176,7 +212,7 @@ class TelegramContentScript {
     }
   }
 
-  private async generateSuggestions() {
+  private async generateSuggestions(thoughtDirection?: ThoughtType) {
     if (this.isDestroyed || this.isGenerating) {
       return;
     }
@@ -198,6 +234,8 @@ class TelegramContentScript {
     this.ui.setLoading(true);
     this.ui.show();
 
+    const selectedThought = thoughtDirection ?? this.ui.getSelectedThought() ?? undefined;
+
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'GENERATE_REPLY',
@@ -205,6 +243,7 @@ class TelegramContentScript {
           contactKey,
           messages,
           currentMessage: messages[messages.length - 1],
+          thoughtDirection: selectedThought,
         },
       });
 
