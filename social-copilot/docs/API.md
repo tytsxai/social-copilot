@@ -513,6 +513,12 @@ interface ThoughtCard {
 基于当前消息快速推荐思路方向。
 
 ```typescript
+interface ThoughtAnalysisResult {
+  recommended: ThoughtType[];
+  confidence: number;
+  reason?: string;
+}
+
 const analyzer = new ThoughtAnalyzer();
 const result = analyzer.analyze(context);   // 返回 ThoughtAnalysisResult
 const cards = analyzer.getRecommendedCards(result); // 映射到可展示的卡片
