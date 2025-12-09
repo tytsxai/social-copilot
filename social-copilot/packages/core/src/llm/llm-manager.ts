@@ -1,4 +1,5 @@
 import type { LLMInput, LLMOutput, LLMProvider } from '../types';
+import { ReplyParseError } from './reply-validation';
 import { DeepSeekProvider } from './provider';
 import { OpenAIProvider } from './openai';
 import { ClaudeProvider } from './claude';
@@ -64,10 +65,27 @@ export class LLMManager {
   async generateReply(input: LLMInput): Promise<LLMOutput> {
     const errors: Error[] = [];
 
+    // helper to attempt provider call with one retry on parse error
+    const invokeWithRetry = async (provider: LLMProvider, attemptInput: LLMInput): Promise<LLMOutput> => {
+      try {
+        return await provider.generateReply(attemptInput);
+      } catch (err) {
+        if (!(err instanceof ReplyParseError)) throw err;
+
+        // One-time retry with stricter JSON reminder appended to thought hint
+        const retryInput: LLMInput = {
+          ...attemptInput,
+          thoughtHint: `${attemptInput.thoughtHint ?? ''}\n请务必只返回严格的 JSON 数组，格式为 [{"style":"...","text":"..."}]，不要添加任何额外说明。`.trim(),
+        };
+
+        return provider.generateReply(retryInput);
+      }
+    };
+
     // If primary previously failed but we want to try recovery
     if (this.primaryFailed) {
       try {
-        const result = await this.primaryProvider.generateReply(input);
+        const result = await invokeWithRetry(this.primaryProvider, input);
         // Primary recovered
         this.primaryFailed = false;
         this.events.onRecovery?.(this.primaryProvider.name);
@@ -79,7 +97,7 @@ export class LLMManager {
     } else {
       // Try primary first
       try {
-        return await this.primaryProvider.generateReply(input);
+        return await invokeWithRetry(this.primaryProvider, input);
       } catch (error) {
         const primaryError = error instanceof Error ? error : new Error(String(error));
         errors.push(primaryError);
@@ -99,7 +117,7 @@ export class LLMManager {
     // Try fallback provider
     if (this.fallbackProvider) {
       try {
-        return await this.fallbackProvider.generateReply(input);
+        return await invokeWithRetry(this.fallbackProvider, input);
       } catch (error) {
         errors.push(error instanceof Error ? error : new Error(String(error)));
       }

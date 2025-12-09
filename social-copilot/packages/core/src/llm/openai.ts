@@ -1,4 +1,5 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
+import { parseReplyContent, ReplyParseError } from './reply-validation';
 
 /**
  * OpenAI API Provider
@@ -164,26 +165,13 @@ export class OpenAIProvider implements LLMProvider {
 
   private parseReplyResponse(content: string, styles: ReplyStyle[]): ReplyCandidate[] {
     try {
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return parsed.map((item: { style: ReplyStyle; text: string }) => ({
-          style: item.style,
-          text: item.text,
-          confidence: 0.8,
-        }));
+      return parseReplyContent(content, styles, 'reply');
+    } catch (err) {
+      if (err instanceof ReplyParseError) {
+        throw err;
       }
-    } catch {
-      // JSON 解析失败
+      throw new ReplyParseError((err as Error).message);
     }
-
-    return [
-      {
-        style: styles[0] || 'casual',
-        text: content.trim(),
-        confidence: 0.5,
-      },
-    ];
   }
 
   private parseProfileResponse(content: string): ReplyCandidate[] {

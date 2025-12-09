@@ -45,9 +45,9 @@ describe('ThoughtAnalyzer', () => {
   });
 
   it.each([
-    ['empathy', '今天好累，好烦，压力有点大'],
-    ['solution', '能不能帮我看看这个问题？'],
-    ['humor', '哈哈哈，今天笑死我了'],
+    ['empathy' as ThoughtType, '今天好累，好烦，压力有点大'],
+    ['solution' as ThoughtType, '能不能帮我看看这个问题？'],
+    ['humor' as ThoughtType, '哈哈哈，今天笑死我了'],
   ])('prioritizes %s cues when message matches keywords', (expected: ThoughtType, text: string) => {
     const analyzer = new ThoughtAnalyzer();
     const result = analyzer.analyze(buildContext(text));

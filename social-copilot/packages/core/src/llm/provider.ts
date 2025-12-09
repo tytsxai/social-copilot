@@ -1,4 +1,5 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
+import { parseReplyContent, ReplyParseError } from './reply-validation';
 
 /**
  * DeepSeek API Provider
@@ -161,36 +162,13 @@ ${recent}${current ? `\n${current}` : ''}
   }
 
   private parseResponse(content: string, styles: ReplyStyle[], task?: LLMInput['task']): ReplyCandidate[] {
-    if ((task ?? 'reply') === 'profile_extraction') {
-      const objectMatch = content.match(/\{[\s\S]*\}/);
-      const text = objectMatch ? objectMatch[0] : content.trim();
-      return [{
-        style: styles[0] || 'rational',
-        text,
-        confidence: objectMatch ? 0.8 : 0.5,
-      }];
-    }
-
     try {
-      // 尝试提取 JSON
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return parsed.map((item: { style: ReplyStyle; text: string }) => ({
-          style: item.style,
-          text: item.text,
-          confidence: 0.8,
-        }));
+      return parseReplyContent(content, styles, task);
+    } catch (err) {
+      if (err instanceof ReplyParseError) {
+        throw err;
       }
-    } catch {
-      // JSON 解析失败，降级处理
+      throw new ReplyParseError((err as Error).message);
     }
-
-    // 降级：将整个内容作为单个回复
-    return [{
-      style: styles[0] || 'casual',
-      text: content.trim(),
-      confidence: 0.5,
-    }];
   }
 }
