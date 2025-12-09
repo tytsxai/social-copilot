@@ -8,6 +8,7 @@
 - [Memory 存储模块](#memory-存储模块)
 - [LLM 模块](#llm-模块)
 - [Preference 偏好模块](#preference-偏好模块)
+- [Thought 思路模块](#thought-思路模块)
 - [Platform Adapter 平台适配器](#platform-adapter-平台适配器)
 
 ---
@@ -110,10 +111,20 @@ type ReplyStyle = 'humorous' | 'caring' | 'rational' | 'casual' | 'formal';
 
 ### ThoughtType
 
-思路方向枚举，用于控制回复的语气/意图。
+思路方向枚举与预设卡片，用于控制回复的语气/意图。
 
 ```typescript
 type ThoughtType = 'empathy' | 'solution' | 'humor' | 'neutral';
+
+interface ThoughtCard {
+  type: ThoughtType;
+  label: string;
+  description: string;
+  icon: string;
+  promptHint: string; // 将注入到 thoughtHint 中
+}
+
+const THOUGHT_CARDS: Record<ThoughtType, ThoughtCard>;
 ```
 
 | 值 | 说明 |
@@ -522,7 +533,7 @@ const input = builder.buildInput(context, profile, styles, 'empathy');
 // input.thoughtHint === THOUGHT_CARDS.empathy.promptHint
 ```
 
-- `buildInput(...)`：在基础输入上注入 `thoughtDirection` / `thoughtHint`。
+- `buildInput(...)`：在基础输入上注入 `thoughtDirection` / `thoughtHint`，可指定语言（默认 `zh`）。
 - `getThoughtPromptSegment(thought)`：单独获取某个思路的提示片段。
 
 ---
