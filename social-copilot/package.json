@@ -4,12 +4,12 @@
   "private": true,
   "description": "AI-powered social companion for chat applications",
   "scripts": {
-    "dev": "pnpm -r --filter './packages/*' --if-present dev",
-    "build": "pnpm -r --filter './packages/*' --if-present build",
+    "dev": "pnpm -r --filter \"./packages/*\" --if-present dev",
+    "build": "pnpm -r --filter \"./packages/*\" --if-present build",
     "build:extension": "pnpm --filter @social-copilot/browser-extension build",
-    "test": "pnpm -r --filter './packages/*' --if-present test",
+    "test": "pnpm -r --filter \"./packages/*\" --if-present test",
     "lint": "eslint . --ext .ts,.tsx",
-    "typecheck": "pnpm -r --filter './packages/*' --if-present typecheck"
+    "typecheck": "pnpm -r --filter \"./packages/*\" --if-present typecheck"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
