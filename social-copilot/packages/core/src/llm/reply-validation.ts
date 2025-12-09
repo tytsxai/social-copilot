@@ -106,11 +106,21 @@ export function parseReplyContent(content: string, styles: ReplyStyle[], task?: 
 
   const parsed = parseArray();
 
-  const candidates = parsed.map((item: any, idx: number) => ({
-    style: typeof item?.style === 'string' ? item.style : styles[idx] || styles[0] || 'casual',
-    text: typeof item?.text === 'string' ? item.text : String(item?.text ?? ''),
-    confidence: 0.8,
-  }));
+  const candidates = parsed.map((item: any, idx: number) => {
+    const style = typeof item?.style === 'string' ? item.style : styles[idx] || styles[0] || 'casual';
+
+    const rawText = typeof item?.text === 'string' ? item.text : String(item?.text ?? '');
+    const normalizedText = rawText.trim();
+    const safeText = normalizedText.length > 0
+      ? rawText
+      : (typeof item === 'string' ? item : JSON.stringify(item));
+
+    return {
+      style,
+      text: safeText,
+      confidence: 0.8,
+    };
+  });
 
   const validation = validateReplyCandidates(candidates);
   if (!validation.ok) {
