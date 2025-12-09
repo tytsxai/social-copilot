@@ -111,9 +111,16 @@ class SlackContentScript {
 
     const contactKey = this.adapter.extractContactKey();
     if (!contactKey) return;
+    this.currentContactKey = contactKey;
 
     const messages = this.adapter.extractMessages(10);
-    
+    await this.updateThoughtCards(contactKey, messages, currentMessage);
+    await this.generateSuggestions(undefined, true);
+  }
+
+  private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message) {
+    if (this.isDestroyed) return;
+
     try {
       const analyzeResponse = await chrome.runtime.sendMessage({
         type: 'ANALYZE_THOUGHT',
@@ -130,10 +137,10 @@ class SlackContentScript {
         this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
       }
     } catch (error) {
-      console.warn('[Social Copilot] Failed to analyze thought:', error);
+      if (!this.isDestroyed) {
+        console.warn('[Social Copilot] Failed to analyze thought:', error);
+      }
     }
-
-    this.generateSuggestions();
   }
 
   private async handleThoughtSelect(thought: ThoughtType | null) {
@@ -168,7 +175,7 @@ class SlackContentScript {
     }
   }
 
-  private async generateSuggestions(thoughtDirection?: ThoughtType) {
+  private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false) {
     if (this.isDestroyed || this.isGenerating) return;
 
     const contactKey = this.adapter.extractContactKey();
@@ -181,6 +188,14 @@ class SlackContentScript {
     this.isGenerating = true;
     this.ui.setLoading(true);
     this.ui.show();
+
+    if (!skipThoughtAnalysis) {
+      await this.updateThoughtCards(contactKey, messages, messages[messages.length - 1]);
+      if (this.isDestroyed) {
+        this.isGenerating = false;
+        return;
+      }
+    }
 
     const selectedThought = thoughtDirection ?? this.ui.getSelectedThought() ?? undefined;
 

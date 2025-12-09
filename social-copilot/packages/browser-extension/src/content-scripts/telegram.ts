@@ -128,7 +128,9 @@ class TelegramContentScript {
         lastHash = window.location.hash;
         console.log('[Social Copilot] Chat changed, resetting state');
         this.lastMessageId = null;
+        this.currentContactKey = null;
         this.ui.hide();
+        this.ui.setThoughtCards([]);
       }
     }, 1000);
   }
@@ -157,7 +159,13 @@ class TelegramContentScript {
     if (!contactKey) return;
 
     const messages = this.adapter.extractMessages(10);
-    
+    await this.updateThoughtCards(contactKey, messages, currentMessage);
+    await this.generateSuggestions(undefined, true);
+  }
+
+  private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message) {
+    if (this.isDestroyed) return;
+
     try {
       const analyzeResponse = await chrome.runtime.sendMessage({
         type: 'ANALYZE_THOUGHT',
@@ -174,10 +182,10 @@ class TelegramContentScript {
         this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
       }
     } catch (error) {
-      console.warn('[Social Copilot] Failed to analyze thought:', error);
+      if (!this.isDestroyed) {
+        console.warn('[Social Copilot] Failed to analyze thought:', error);
+      }
     }
-
-    this.generateSuggestions();
   }
 
   private async handleThoughtSelect(thought: ThoughtType | null) {
@@ -212,7 +220,7 @@ class TelegramContentScript {
     }
   }
 
-  private async generateSuggestions(thoughtDirection?: ThoughtType) {
+  private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false) {
     if (this.isDestroyed || this.isGenerating) {
       return;
     }
@@ -233,6 +241,14 @@ class TelegramContentScript {
     this.isGenerating = true;
     this.ui.setLoading(true);
     this.ui.show();
+
+    if (!skipThoughtAnalysis) {
+      await this.updateThoughtCards(contactKey, messages, messages[messages.length - 1]);
+      if (this.isDestroyed) {
+        this.isGenerating = false;
+        return;
+      }
+    }
 
     const selectedThought = thoughtDirection ?? this.ui.getSelectedThought() ?? undefined;
 

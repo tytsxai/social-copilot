@@ -114,7 +114,9 @@ class WhatsAppContentScript {
       if (newTitle && newTitle !== currentTitle) {
         currentTitle = newTitle;
         this.lastMessageId = null;
+        this.currentContactKey = null;
         this.ui.hide();
+        this.ui.setThoughtCards([]);
       }
     });
 
@@ -139,7 +141,13 @@ class WhatsAppContentScript {
 
     const messages = this.adapter.extractMessages(10);
     
-    // 分析思路
+    await this.updateThoughtCards(contactKey, messages, currentMessage);
+    await this.generateSuggestions(undefined, true);
+  }
+
+  private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message) {
+    if (this.isDestroyed) return;
+
     try {
       const analyzeResponse = await chrome.runtime.sendMessage({
         type: 'ANALYZE_THOUGHT',
@@ -156,11 +164,10 @@ class WhatsAppContentScript {
         this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
       }
     } catch (error) {
-      console.warn('[Social Copilot] Failed to analyze thought:', error);
+      if (!this.isDestroyed) {
+        console.warn('[Social Copilot] Failed to analyze thought:', error);
+      }
     }
-
-    // 生成建议
-    this.generateSuggestions();
   }
 
   private async handleThoughtSelect(thought: ThoughtType | null) {
@@ -197,7 +204,7 @@ class WhatsAppContentScript {
     }
   }
 
-  private async generateSuggestions(thoughtDirection?: ThoughtType) {
+  private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false) {
     if (this.isDestroyed || this.isGenerating) return;
 
     const contactKey = this.adapter.extractContactKey();
@@ -210,6 +217,14 @@ class WhatsAppContentScript {
     this.isGenerating = true;
     this.ui.setLoading(true);
     this.ui.show();
+
+    if (!skipThoughtAnalysis) {
+      await this.updateThoughtCards(contactKey, messages, messages[messages.length - 1]);
+      if (this.isDestroyed) {
+        this.isGenerating = false;
+        return;
+      }
+    }
 
     // 使用 UI 选中的思路方向（如果没有传入）
     const selectedThought = thoughtDirection ?? this.ui.getSelectedThought() ?? undefined;
