@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach, vi } from 'vitest';
 import * as fc from 'fast-check';
 import { ClaudeProvider } from './claude';
+import { ReplyParseError } from './reply-validation';
 import type { LLMInput, ReplyStyle } from '../types';
 
 const replyStyleArb = fc.constantFrom<ReplyStyle>('humorous', 'caring', 'rational', 'casual', 'formal');
@@ -99,10 +100,11 @@ describe('ClaudeProvider', () => {
    * **Validates: Requirements 2.3**
    */
   describe('response parsing', () => {
+    const nonEmptyTextArb = fc.string({ minLength: 1, maxLength: 120 }).filter(text => text.trim().length > 0);
     const responseItemsArb = fc.array(
       fc.record({
         style: replyStyleArb,
-        text: fc.string({ minLength: 1, maxLength: 120 }),
+        text: nonEmptyTextArb,
       }),
       { minLength: 1, maxLength: 5 }
     );
@@ -130,6 +132,24 @@ describe('ClaudeProvider', () => {
       expect(output.candidates).toHaveLength(items.length);
       expect(output.candidates.map(c => c.style)).toEqual(styles);
       expect(output.candidates.map(c => c.text)).toEqual(items.map(i => i.text));
+    });
+
+    test('rejects candidates with blank text', async () => {
+      const provider = new ClaudeProvider({ apiKey: 'test-key' });
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'msg_1',
+          content: [
+            { text: JSON.stringify([{ style: 'formal', text: '   ' }]) },
+          ],
+        }),
+      }));
+
+      await expect(provider.generateReply({ ...baseInput, styles: ['formal'] }))
+        .rejects.toBeInstanceOf(ReplyParseError);
     });
   });
 

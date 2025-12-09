@@ -4,6 +4,7 @@ import { LLMManager, type ProviderType } from './llm-manager';
 import { DeepSeekProvider } from './provider';
 import { OpenAIProvider } from './openai';
 import { ClaudeProvider } from './claude';
+import { ReplyParseError } from './reply-validation';
 import type { LLMInput, LLMOutput } from '../types';
 const fallbackProviderArb = fc.constantFrom<ProviderType>('openai', 'claude');
 
@@ -188,5 +189,32 @@ describe('LLMManager fallback behavior', () => {
     expect(primarySpy).toHaveBeenCalledTimes(2);
     expect(fallbackSpy).toHaveBeenCalledTimes(1);
     expect(recoverySpy).toHaveBeenCalledWith('deepseek');
+  });
+
+  /**
+   * **Feature: reply-validation, Property 2: Retry on parse errors**
+   * **Validates: Requirements 2.2**
+   */
+  test('retries once with stricter JSON hint when provider throws ReplyParseError', async () => {
+    const primarySpy = vi.spyOn(DeepSeekProvider.prototype, 'generateReply')
+      .mockRejectedValueOnce(new ReplyParseError('bad json'))
+      .mockResolvedValueOnce(buildOutput('deepseek-model'));
+
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+    });
+
+    const inputWithHint: LLMInput = {
+      ...baseInput,
+      thoughtHint: '原始思路提示',
+    };
+
+    const output = await manager.generateReply(inputWithHint);
+
+    expect(output.model).toBe('deepseek-model');
+    expect(primarySpy).toHaveBeenCalledTimes(2);
+    const retryPayload = primarySpy.mock.calls[1][0] as LLMInput;
+    expect(retryPayload.thoughtHint).toContain('原始思路提示');
+    expect(retryPayload.thoughtHint).toContain('请务必只返回严格的 JSON 数组');
   });
 });

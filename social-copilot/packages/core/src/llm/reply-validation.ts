@@ -18,11 +18,14 @@ export interface ValidationResult {
  * Supports bracket-balanced scan to avoid greedy regex mistakes.
  */
 export function extractJsonBlock(text: string): string | null {
-  const starts = ['[', '{'];
-  for (const startChar of starts) {
-    const endChar = startChar === '[' ? ']' : '}';
-    const start = text.indexOf(startChar);
-    if (start === -1) continue;
+  const candidates = [
+    { start: text.indexOf('['), startChar: '[', endChar: ']' },
+    { start: text.indexOf('{'), startChar: '{', endChar: '}' },
+  ]
+    .filter((item) => item.start !== -1)
+    .sort((a, b) => a.start - b.start);
+
+  for (const { start, startChar, endChar } of candidates) {
     let depth = 0;
     for (let i = start; i < text.length; i++) {
       const ch = text[i];
@@ -35,6 +38,7 @@ export function extractJsonBlock(text: string): string | null {
       }
     }
   }
+
   return null;
 }
 
@@ -106,21 +110,11 @@ export function parseReplyContent(content: string, styles: ReplyStyle[], task?: 
 
   const parsed = parseArray();
 
-  const candidates = parsed.map((item: any, idx: number) => {
-    const style = typeof item?.style === 'string' ? item.style : styles[idx] || styles[0] || 'casual';
-
-    const rawText = typeof item?.text === 'string' ? item.text : String(item?.text ?? '');
-    const normalizedText = rawText.trim();
-    const safeText = normalizedText.length > 0
-      ? rawText
-      : (typeof item === 'string' ? item : JSON.stringify(item));
-
-    return {
-      style,
-      text: safeText,
-      confidence: 0.8,
-    };
-  });
+  const candidates = parsed.map((item: any, idx: number) => ({
+    style: typeof item?.style === 'string' ? item.style : styles[idx] || styles[0] || 'casual',
+    text: typeof item?.text === 'string' ? item.text : String(item?.text ?? ''),
+    confidence: 0.8,
+  }));
 
   const validation = validateReplyCandidates(candidates);
   if (!validation.ok) {
