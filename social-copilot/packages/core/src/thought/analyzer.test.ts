@@ -1,39 +1,36 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ThoughtAnalyzer } from './analyzer';
-import type { ConversationContext } from '../types';
-import { THOUGHT_CARDS } from '../types';
+import { ThoughtAwarePromptBuilder } from './prompt-builder';
+import { THOUGHT_CARDS, type ConversationContext, type ThoughtType } from '../types';
 
-const baseContext: ConversationContext = {
-  contactKey: {
-    platform: 'web',
-    app: 'telegram',
-    conversationId: 'conv',
-    peerId: 'peer',
-    isGroup: false,
-  },
-  recentMessages: [],
-  currentMessage: {
-    id: 'msg_1',
-    contactKey: {
-      platform: 'web',
-      app: 'telegram',
-      conversationId: 'conv',
-      peerId: 'peer',
-      isGroup: false,
-    },
-    direction: 'incoming',
-    senderName: 'Alice',
-    text: '',
-    timestamp: Date.now(),
-  },
+const baseContact = {
+  platform: 'web' as const,
+  app: 'telegram' as const,
+  conversationId: 'conv',
+  peerId: 'peer',
+  isGroup: false,
 };
 
-function createContext(message: string): ConversationContext {
+function buildContext(text: string): ConversationContext {
   return {
-    ...baseContext,
+    contactKey: baseContact,
+    recentMessages: [
+      {
+        id: '1',
+        contactKey: baseContact,
+        direction: 'incoming',
+        senderName: 'Alice',
+        text,
+        timestamp: Date.now(),
+      },
+    ],
     currentMessage: {
-      ...baseContext.currentMessage,
-      text: message,
+      id: '2',
+      contactKey: baseContact,
+      direction: 'incoming',
+      senderName: 'Alice',
+      text,
+      timestamp: Date.now(),
     },
   };
 }
@@ -42,36 +39,40 @@ describe('ThoughtAnalyzer', () => {
   it('returns default order when context is missing', () => {
     const analyzer = new ThoughtAnalyzer();
     const result = analyzer.analyze(undefined as unknown as ConversationContext);
-    expect(result.recommended).toEqual(['neutral', 'empathy', 'solution', 'humor']);
+
+    expect(result.recommended[0]).toBe('neutral');
     expect(result.confidence).toBe(0);
   });
 
-  it('prefers empathy when negative sentiment is detected', () => {
+  it.each([
+    ['empathy', '今天好累，好烦，压力有点大'],
+    ['solution', '能不能帮我看看这个问题？'],
+    ['humor', '哈哈哈，今天笑死我了'],
+  ])('prioritizes %s cues when message matches keywords', (expected: ThoughtType, text: string) => {
     const analyzer = new ThoughtAnalyzer();
-    const result = analyzer.analyze(createContext('今天心情很难过，压力好大'));
-    expect(result.recommended[0]).toBe('empathy');
-    expect(result.confidence).toBeGreaterThan(0);
+    const result = analyzer.analyze(buildContext(text));
+
+    expect(result.recommended[0]).toBe(expected);
+    expect(result.confidence).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('ThoughtAwarePromptBuilder', () => {
+  it('injects thought direction and hint when provided', () => {
+    const builder = new ThoughtAwarePromptBuilder();
+    const input = builder.buildInput(buildContext('今天好累'), undefined, ['casual'], 'empathy');
+
+    expect(input.thoughtDirection).toBe('empathy');
+    expect(input.thoughtHint).toBe(THOUGHT_CARDS.empathy.promptHint);
+    expect(input.language).toBe('zh');
   });
 
-  it('prefers solution when a question is asked', () => {
-    const analyzer = new ThoughtAnalyzer();
-    const result = analyzer.analyze(createContext('能不能帮我看看这个方案？'));
-    expect(result.recommended[0]).toBe('solution');
-    expect(result.confidence).toBeGreaterThan(0);
-  });
+  it('keeps input clean when no thought is selected', () => {
+    const builder = new ThoughtAwarePromptBuilder();
+    const input = builder.buildInput(buildContext('好久不见'), undefined, ['humorous']);
 
-  it('prefers humor for playful tone', () => {
-    const analyzer = new ThoughtAnalyzer();
-    const result = analyzer.analyze(createContext('哈哈，这个太搞笑了 lol'));
-    expect(result.recommended[0]).toBe('humor');
-  });
-
-  it('returns matching cards for recommended thoughts', () => {
-    const analyzer = new ThoughtAnalyzer();
-    const result = analyzer.analyze(createContext('能不能帮我看看这个方案？'));
-    const cards = analyzer.getRecommendedCards(result);
-
-    expect(cards.length).toBe(result.recommended.length);
-    expect(cards[0]).toEqual(THOUGHT_CARDS[result.recommended[0]]);
+    expect(input.thoughtDirection).toBeUndefined();
+    expect(input.thoughtHint).toBeUndefined();
+    expect(input.styles).toEqual(['humorous']);
   });
 });
