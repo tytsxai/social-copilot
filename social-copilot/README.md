@@ -8,24 +8,34 @@ AI 辅助社交伴侣 - 为聊天应用提供智能回复建议
 - 👤 **联系人画像** - 自动学习并记忆每个联系人的特点
 - 💾 **本地存储** - 所有数据默认存储在本地，保护隐私
 - ⌨️ **快捷操作** - Alt+S 手动触发，点击即填充
+- 🔄 **多模型支持** - 支持 DeepSeek、OpenAI、Claude，自动故障转移
+- 📊 **风格学习** - 自动学习用户对每个联系人的回复风格偏好
+- 🧭 **思路卡片** - 自动分析对话语气，推荐回复方向并融入提示词
 
 ## 支持平台
 
-- ✅ Telegram Web (K 版 & A 版)
-- ✅ WhatsApp Web
-- ✅ Slack Web
+| 平台 | 状态 | 说明 |
+|------|------|------|
+| Telegram Web | ✅ | 支持 K 版和 A 版 |
+| WhatsApp Web | ✅ | 完整支持 |
+| Slack Web | ✅ | 完整支持 |
+| Discord | 🚧 | 计划中 |
 
 ## 快速开始
 
-### 安装依赖
+### 环境要求
+
+- Node.js >= 18.0.0
+- pnpm >= 8.0.0
+- Chrome 或 Edge 浏览器
+
+### 安装与构建
 
 ```bash
+# 安装依赖
 pnpm install
-```
 
-### 构建
-
-```bash
+# 构建项目
 pnpm build
 ```
 
@@ -39,18 +49,20 @@ pnpm build
 ### 配置
 
 1. 点击扩展图标打开设置
-2. 选择 AI 模型（DeepSeek 或 OpenAI）
+2. 选择 AI 模型（DeepSeek / OpenAI / Claude）
 3. 输入对应的 API Key
-4. 选择默认回复风格
-5. 保存设置
+4. （可选）配置备用模型实现自动故障转移
+5. 选择默认回复风格
+6. 保存设置
 
 ### 使用
 
 1. 打开支持的聊天网站
 2. 收到消息时，右下角会自动弹出建议面板
-3. 点击候选回复即可填充到输入框
-4. 按 `Alt+S` 可手动触发建议
-5. 按 `Esc` 关闭面板
+3. 先在顶部思路卡片中选择方向（如共情/解决方案/幽默）
+4. 点击候选回复即可填充到输入框
+5. 按 `Alt+S` 可手动触发建议
+6. 按 `Esc` 关闭面板
 
 ## 项目结构
 
@@ -61,27 +73,36 @@ social-copilot/
 │   │   └── src/
 │   │       ├── types/           # 类型定义
 │   │       ├── memory/          # 存储层（IndexedDB）
-│   │       ├── llm/             # LLM 接入（DeepSeek/OpenAI）
-│   │       └── profile/         # 画像更新
+│   │       ├── llm/             # LLM 接入与管理
+│   │       ├── profile/         # 画像更新
+│   │       ├── preference/      # 风格偏好管理
+│   │       └── thought/         # 思路分析与提示构建
 │   └── browser-extension/       # Chrome 扩展
 │       ├── src/
 │       │   ├── adapters/        # 平台适配器
 │       │   ├── background/      # Service Worker
 │       │   ├── content-scripts/ # 注入脚本
 │       │   ├── popup/           # 设置页面
-│       │   └── ui/              # 悬浮面板
+│       │   └── ui/              # 悬浮面板（含思路卡片）
 │       └── manifest.json
+├── docs/
+│   ├── DEVELOPMENT.md           # 开发指南
+│   ├── ARCHITECTURE.md          # 架构设计
+│   ├── API.md                   # API 文档
+│   ├── PRODUCT_PLAN.md          # 产品规划
+│   └── CONTRIBUTING.md          # 贡献指南
+└── CHANGELOG.md                 # 更新日志
 ```
 
 ## 回复风格
 
-| 风格 | 说明 |
-|------|------|
-| 💗 caring | 关心体贴 |
-| 😄 humorous | 幽默风趣 |
-| 😊 casual | 随意轻松 |
-| 🧠 rational | 理性客观 |
-| 📝 formal | 正式礼貌 |
+| 风格 | 说明 | 适用场景 |
+|------|------|----------|
+| 💗 caring | 关心体贴 | 安慰、关怀、情感支持 |
+| 😄 humorous | 幽默风趣 | 轻松聊天、活跃气氛 |
+| 😊 casual | 随意轻松 | 日常闲聊、朋友交流 |
+| 🧠 rational | 理性客观 | 讨论问题、提供建议 |
+| 📝 formal | 正式礼貌 | 工作沟通、正式场合 |
 
 ## 开发
 
@@ -92,15 +113,38 @@ pnpm dev
 # 类型检查
 pnpm typecheck
 
+# 运行测试
+pnpm test
+
 # 构建
 pnpm build
 ```
+
+## 文档
+
+- [开发指南](docs/DEVELOPMENT.md) - 环境配置、构建流程、调试技巧
+- [架构设计](docs/ARCHITECTURE.md) - 系统架构、模块设计、数据流
+- [API 文档](docs/API.md) - 核心模块 API 参考
+- [产品规划](docs/PRODUCT_PLAN.md) - 功能规划、迭代计划
+- [贡献指南](docs/CONTRIBUTING.md) - 如何参与贡献
+- [更新日志](CHANGELOG.md) - 版本记录与变更说明
 
 ## 隐私说明
 
 - 所有聊天数据默认存储在浏览器本地（IndexedDB）
 - API Key 仅存储在本地，不会上传
 - 仅在生成回复时将必要的上下文发送到 AI 服务
+- 不收集任何用户行为数据
+
+## 贡献指南
+
+欢迎提交 Issue 和 Pull Request！
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'Add amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 提交 Pull Request
 
 ## License
 

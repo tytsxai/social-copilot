@@ -30,7 +30,10 @@ Social Copilot 是一个 AI 辅助社交伴侣浏览器扩展，为聊天应用�
 - 👤 联系人画像自动学习
 - 💾 本地数据持久化（IndexedDB）
 - ⌨️ 快捷键操作（Alt+S）
-- 🔄 多模型支持（DeepSeek / OpenAI）
+- 🔄 多模型支持（DeepSeek / OpenAI / Claude）
+- 🔀 自动故障转移（主备模型切换）
+- 📊 风格偏好学习（自动记忆用户选择）
+- 🧭 思路卡片（根据语气推荐回复方向并注入提示词）
 
 ---
 
@@ -156,15 +159,24 @@ social-copilot/
 │   │       ├── types/           # 类型定义
 │   │       │   ├── contact.ts   # ContactKey, ContactProfile
 │   │       │   ├── message.ts   # Message, ConversationContext
-│   │       │   └── llm.ts       # LLMInput, LLMOutput
+│   │       │   ├── llm.ts       # LLMInput, LLMOutput
+│   │       │   ├── preference.ts # StylePreference
+│   │       │   └── thought.ts   # ThoughtType, THOUGHT_CARDS
 │   │       ├── memory/          # 存储层
 │   │       │   ├── store.ts     # MemoryStore 接口
 │   │       │   └── indexeddb-store.ts  # IndexedDB 实现
 │   │       ├── llm/             # LLM 接入
 │   │       │   ├── provider.ts  # DeepSeek Provider
-│   │       │   └── openai.ts    # OpenAI Provider
-│   │       └── profile/         # 画像管理
-│   │           └── updater.ts   # 画像自动更新
+│   │       │   ├── openai.ts    # OpenAI Provider
+│   │       │   ├── claude.ts    # Claude Provider
+│   │       │   └── llm-manager.ts # 模型管理与故障转移
+│   │       ├── profile/         # 画像管理
+│   │       │   └── updater.ts   # 画像自动更新
+│   │       ├── preference/      # 偏好管理
+│   │       │   └── manager.ts   # 风格偏好学习
+│   │       └── thought/         # 思路分析
+│   │           ├── analyzer.ts  # 思路推荐（共情/方案/幽默/中性）
+│   │           └── prompt-builder.ts # 带思路提示的 LLM 输入构建
 │   │
 │   └── browser-extension/       # Chrome 扩展
 │       ├── src/
@@ -183,11 +195,20 @@ social-copilot/
 │       │   │   ├── index.html
 │       │   │   └── popup.ts
 │       │   └── ui/              # 悬浮面板
-│       │       └── copilot-ui.ts
+│       │       ├── copilot-ui.ts      # 总控组件（拖拽/刷新/候选展示）
+│       │       └── thought-cards.ts   # 思路卡片组件
 │       ├── styles/
 │       │   └── copilot.css
 │       └── manifest.json
+├── docs/
+│   ├── DEVELOPMENT.md           # 开发指南（本文档）
+│   ├── ARCHITECTURE.md          # 架构设计
+│   ├── API.md                   # API 文档
+│   ├── PRODUCT_PLAN.md          # 产品规划
+│   └── CONTRIBUTING.md          # 贡献指南
 ```
+
+> 📖 更多架构细节请参考 [ARCHITECTURE.md](./ARCHITECTURE.md)，API 参考请查看 [API.md](./API.md)
 
 ### 开发模式
 
@@ -207,26 +228,68 @@ pnpm dev
 5. 更新 `manifest.json` 添加 content_scripts 配置
 6. 更新 `vite.config.ts` 添加入口
 
+> 📖 详细的适配器实现指南请参考 [API.md](./API.md#platform-adapter-平台适配器)
+
+### 添加新 LLM Provider
+
+1. 在 `packages/core/src/llm/` 创建新文件
+2. 实现 `LLMProvider` 接口
+3. 在 `llm-manager.ts` 的 `createProvider` 中注册
+4. 更新 `ProviderType` 类型
+
+> 📖 详细的 Provider 实现指南请参考 [API.md](./API.md#llm-模块)
+
+### 思路模块
+
+- `ThoughtAnalyzer`：根据 `ConversationContext` 自动推荐思路方向（共情/方案/幽默/中性）
+- `ThoughtAwarePromptBuilder`：将思路方向转换为 `LLMInput` 的 `thoughtHint`，可指定语言
+- `THOUGHT_CARDS`：预设的思路卡片文案，可直接用于 UI 展示
+
+```ts
+import { ThoughtAnalyzer, ThoughtAwarePromptBuilder, THOUGHT_CARDS } from '@social-copilot/core';
+
+const analyzer = new ThoughtAnalyzer();
+const builder = new ThoughtAwarePromptBuilder();
+
+const analysis = analyzer.analyze(context);
+const bestThought = analysis.recommended[0];
+const llmInput = builder.buildInput(context, profile, styles, bestThought, 'zh');
+// llmInput.thoughtHint 会自动附加到提示词
+```
+
+> 📖 更多用法请参考 [API.md](./API.md#thought-思路模块)
+
 ### 类型检查
 
 ```bash
 pnpm typecheck
 ```
 
+### 运行测试
+
+```bash
+# 运行所有测试
+pnpm test
+
+# 监听模式（开发时使用）
+pnpm --filter @social-copilot/core test:watch
+```
+
 ---
 
 ## 后续开发计划
 
-### Phase 2：体验优化（预计 2-3 周）
+### Phase 2：体验优化 ✅ 已完成
 
 - [x] 拖拽调整面板位置（已实现，位置自动记忆）
 - [x] 记住用户偏好的回复风格（选择候选后记忆联系人偏好，下次优先生成该风格）
-- [ ] 添加更多模型支持（Claude 等）
-- [ ] 模型调用失败自动降级
+- [x] 添加更多模型支持（Claude）
+- [x] 模型调用失败自动降级（LLMManager 实现）
+- [x] 思路卡片功能（根据上下文推荐回复方向并在提示词中生效）
+
+### Phase 3：高级功能（进行中）
+
 - [ ] 优化 DOM 选择器稳定性
-
-### Phase 3：高级功能（预计 4+ 周）
-
 - [ ] 向量检索（语义相似度搜索历史对话）
 - [ ] Electron 桌面端包装
 - [ ] 知识图谱（结构化事实存储）
@@ -238,6 +301,8 @@ pnpm typecheck
 - [ ] Facebook Messenger
 - [ ] Gmail
 - [ ] 微信 PC（需要 Windows UIA）
+
+> 📖 详细的产品规划请参考 [PRODUCT_PLAN.md](./PRODUCT_PLAN.md)
 
 ---
 
@@ -322,6 +387,15 @@ pnpm typecheck
 4. 可以查看 messages 和 profiles 存储的数据
 
 ---
+
+## 相关文档
+
+- [README.md](../README.md) - 项目概述与快速开始
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - 系统架构设计
+- [API.md](./API.md) - 核心模块 API 参考
+- [PRODUCT_PLAN.md](./PRODUCT_PLAN.md) - 产品规划与迭代计划
+- [CONTRIBUTING.md](./CONTRIBUTING.md) - 贡献流程和规范
+- [CHANGELOG.md](../CHANGELOG.md) - 版本更新记录
 
 ## 联系与反馈
 
