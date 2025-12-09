@@ -14,6 +14,7 @@ coverage/
 .DS_Store
 .vscode/
 .idea/
+.code/
 
 # Logs
 npm-debug.log*
@@ -24,3 +25,4 @@ yarn-error.log*
 # Misc
 *.orig
 .kiro/
+.code/
