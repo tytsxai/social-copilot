@@ -1,6 +1,7 @@
 import type { MemorySnippet, EmbeddingService, MemoryRetriever } from './memory-types';
 import type { VectorStore } from './vector-store';
 import { v4 as uuidv4 } from 'uuid';
+import { contactKeyToString } from '../types/contact';
 
 export interface VectorMemoryRetrieverOptions {
   vectorStore: VectorStore;
@@ -50,8 +51,12 @@ export class VectorMemoryRetriever implements MemoryRetriever {
       partition: options.partition,
       filter: (rec) => {
         const snippet = rec as unknown as MemorySnippet;
-        if (options.contactKey && snippet.contactKey?.peerId !== options.contactKey.peerId) return false;
-        if (options.contactKey && snippet.contactKey?.app !== options.contactKey.app) return false;
+        if (options.contactKey) {
+          if (!snippet.contactKey) return false;
+          if (contactKeyToString(snippet.contactKey) !== contactKeyToString(options.contactKey)) {
+            return false;
+          }
+        }
         if (options.filter && !options.filter(snippet)) return false;
         return true;
       },
