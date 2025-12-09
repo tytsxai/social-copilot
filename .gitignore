@@ -7,6 +7,10 @@ dist/
 packages/*/dist/
 coverage/
 .vite/
+packages/*/.vite/
+
+# TypeScript
+*.tsbuildinfo
 
 # Environment & editor
 .env
@@ -22,7 +26,14 @@ pnpm-debug.log*
 yarn-error.log*
 *.log
 
+# Expo / React Native
+.expo/
+.expo-shared/
+web-build/
+packages/mobile/.expo/
+packages/mobile/.expo-shared/
+packages/mobile/web-build/
+
 # Misc
 *.orig
 .kiro/
-.code/
