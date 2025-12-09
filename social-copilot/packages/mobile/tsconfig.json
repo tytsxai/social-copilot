@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["react", "react-native", "node"],
+    "baseUrl": "./",
+    "paths": {
+      "@social-copilot/core": ["../core/src"],
+      "@mobile/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "App.tsx", "app.config.ts"],
+  "exclude": ["node_modules"]
+}
