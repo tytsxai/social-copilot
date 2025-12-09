@@ -25,6 +25,7 @@ interface Config {
 
 // 初始化存储
 const store = new IndexedDBStore();
+let storeReady: Promise<void> | null = null;
 let llmManager: LLMManager | null = null;
 let profileUpdater: ProfileUpdater | null = null;
 let preferenceManager: StylePreferenceManager | null = null;
@@ -33,20 +34,28 @@ const DEFAULT_STYLES: ReplyStyle[] = ['caring', 'humorous', 'casual'];
 
 const lastProfileUpdateCount: Map<string, number> = new Map();
 
-async function initStore() {
-  await store.init();
-  preferenceManager = new StylePreferenceManager(store);
+function ensureStoreReady(): Promise<void> {
+  if (!storeReady) {
+    storeReady = (async () => {
+      await store.init();
+      preferenceManager = new StylePreferenceManager(store);
+    })().catch((err) => {
+      storeReady = null;
+      throw err;
+    });
+  }
+  return storeReady;
 }
 
 // 初始化
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('[Social Copilot] Extension installed');
-  await initStore();
+  await ensureStoreReady();
   await loadConfig();
 });
 
 // 启动时初始化
-initStore().then(loadConfig).catch(console.error);
+ensureStoreReady().then(loadConfig).catch(console.error);
 
 // 监听消息
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
@@ -60,6 +69,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 async function handleMessage(request: { type: string; [key: string]: unknown }) {
+  await ensureStoreReady();
+
   switch (request.type) {
     case 'GENERATE_REPLY':
       return handleGenerateReply(
@@ -153,20 +164,33 @@ async function loadConfig() {
 }
 
 async function setConfig(config: Config) {
-  currentConfig = config;
+  const apiKey = (config.apiKey ?? '').trim();
+  if (!apiKey) {
+    return { error: 'API Key is required' };
+  }
+
+  const normalizedStyles = sanitizeStyles(config.styles);
+  const normalizedSuggestionCount = normalizeSuggestionCount(config.suggestionCount);
+  currentConfig = {
+    ...config,
+    apiKey,
+    fallbackApiKey: config.fallbackApiKey?.trim(),
+    styles: normalizedStyles,
+    suggestionCount: normalizedSuggestionCount,
+  };
 
   // 保存到 storage
   await chrome.storage.local.set({
-    apiKey: config.apiKey,
-    provider: config.provider,
-    styles: config.styles,
-    fallbackProvider: config.fallbackProvider,
-    fallbackApiKey: config.fallbackApiKey,
-    enableFallback: config.enableFallback ?? false,
-    suggestionCount: normalizeSuggestionCount(config.suggestionCount),
+    apiKey: currentConfig.apiKey,
+    provider: currentConfig.provider,
+    styles: currentConfig.styles,
+    fallbackProvider: currentConfig.fallbackProvider,
+    fallbackApiKey: currentConfig.fallbackApiKey,
+    enableFallback: currentConfig.enableFallback ?? false,
+    suggestionCount: currentConfig.suggestionCount,
   });
 
-  const managerConfig = buildManagerConfig(config);
+  const managerConfig = buildManagerConfig(currentConfig);
   llmManager = new LLMManager(managerConfig, {
     onFallback: handleFallbackEvent,
     onRecovery: handleRecoveryEvent,
@@ -175,7 +199,7 @@ async function setConfig(config: Config) {
 
   const profileLLM: LLMProvider = {
     get name() {
-      return llmManager?.getActiveProvider() || config.provider;
+      return llmManager?.getActiveProvider() || currentConfig?.provider || 'deepseek';
     },
     generateReply: (input: LLMInput) => {
       if (!llmManager) {
@@ -188,7 +212,7 @@ async function setConfig(config: Config) {
   profileUpdater = new ProfileUpdater(profileLLM, 20);
 
   const fallbackLabel = managerConfig.fallback ? managerConfig.fallback.provider : 'disabled';
-  console.log(`[Social Copilot] Config updated: provider=${config.provider}, fallback=${fallbackLabel}`);
+  console.log(`[Social Copilot] Config updated: provider=${currentConfig.provider}, fallback=${fallbackLabel}`);
   return { success: true };
 }
 
@@ -345,6 +369,15 @@ function normalizeSuggestionCount(count: unknown): 2 | 3 {
   return count === 2 ? 2 : 3;
 }
 
+function sanitizeStyles(styles: unknown): ReplyStyle[] {
+  const allowed: ReplyStyle[] = ['humorous', 'caring', 'rational', 'casual', 'formal'];
+  if (!Array.isArray(styles)) {
+    return DEFAULT_STYLES;
+  }
+  const unique = Array.from(new Set(styles.filter((s): s is ReplyStyle => allowed.includes(s as ReplyStyle))));
+  return unique.length > 0 ? unique : DEFAULT_STYLES;
+}
+
 async function maybeUpdateProfile(
   contactKey: ContactKey,
   profile: ContactProfile,
@@ -416,10 +449,11 @@ async function clearData() {
   profileUpdater = null;
   preferenceManager = null;
   currentConfig = null;
+  storeReady = null;
 
   // 重新初始化存储
   await store.deleteDatabase();
-  await initStore();
+  await ensureStoreReady();
 
   return { success: true };
 }
