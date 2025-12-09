@@ -11,6 +11,7 @@ const fallbackFields = document.getElementById('fallbackFields')!;
 const fallbackProviderSelect = document.getElementById('fallbackProvider') as HTMLSelectElement;
 const fallbackApiKeyInput = document.getElementById('fallbackApiKey') as HTMLInputElement;
 const fallbackApiKeyHint = document.getElementById('fallbackApiKeyHint')!;
+const suggestionCountSelect = document.getElementById('suggestionCount') as HTMLSelectElement;
 const saveBtn = document.getElementById('saveBtn')!;
 const contactListEl = document.getElementById('contactList')!;
 const clearDataBtn = document.getElementById('clearDataBtn')!;
@@ -98,6 +99,7 @@ async function loadSettings() {
     'fallbackProvider',
     'fallbackApiKey',
     'enableFallback',
+    'suggestionCount',
   ]);
 
   if (result.apiKey) {
@@ -121,6 +123,10 @@ async function loadSettings() {
   toggleFallbackFields();
   fallbackProviderSelect.dispatchEvent(new Event('change'));
 
+  if (result.suggestionCount === 2 || result.suggestionCount === 3) {
+    suggestionCountSelect.value = String(result.suggestionCount);
+  }
+
   if (result.styles && Array.isArray(result.styles)) {
     document.querySelectorAll('.style-option').forEach((option) => {
       const style = option.getAttribute('data-style');
@@ -140,6 +146,7 @@ saveBtn.addEventListener('click', async () => {
   const enableFallback = enableFallbackCheckbox.checked;
   const fallbackProvider = fallbackProviderSelect.value;
   const fallbackApiKey = fallbackApiKeyInput.value.trim();
+  const suggestionCount = Number(suggestionCountSelect.value);
 
   if (!apiKey) {
     alert('请输入 API Key');
@@ -170,6 +177,7 @@ saveBtn.addEventListener('click', async () => {
     enableFallback,
     fallbackProvider,
     fallbackApiKey,
+    suggestionCount,
   };
 
   // 保存到 storage

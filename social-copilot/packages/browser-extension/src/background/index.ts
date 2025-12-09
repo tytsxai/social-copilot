@@ -1,4 +1,4 @@
-import { IndexedDBStore, ProfileUpdater, LLMManager, StylePreferenceManager, ThoughtAnalyzer } from '@social-copilot/core';
+import { IndexedDBStore, ProfileUpdater, LLMManager, StylePreferenceManager, ThoughtAnalyzer, ReplyParseError } from '@social-copilot/core';
 import type {
   Message,
   ContactKey,
@@ -20,6 +20,7 @@ interface Config {
   fallbackProvider?: ProviderType;
   fallbackApiKey?: string;
   enableFallback?: boolean;
+  suggestionCount?: number;
 }
 
 // 初始化存储
@@ -135,6 +136,7 @@ async function loadConfig() {
     'fallbackProvider',
     'fallbackApiKey',
     'enableFallback',
+    'suggestionCount',
   ]);
 
   if (result.apiKey) {
@@ -145,6 +147,7 @@ async function loadConfig() {
       fallbackProvider: result.fallbackProvider,
       fallbackApiKey: result.fallbackApiKey,
       enableFallback: result.enableFallback ?? false,
+      suggestionCount: normalizeSuggestionCount(result.suggestionCount),
     });
   }
 }
@@ -160,6 +163,7 @@ async function setConfig(config: Config) {
     fallbackProvider: config.fallbackProvider,
     fallbackApiKey: config.fallbackApiKey,
     enableFallback: config.enableFallback ?? false,
+    suggestionCount: normalizeSuggestionCount(config.suggestionCount),
   });
 
   const managerConfig = buildManagerConfig(config);
@@ -291,11 +295,12 @@ async function handleGenerateReply(payload: {
   }
 
   // 获取配置的风格（按偏好排序）
-  const baseStyles = currentConfig?.styles || DEFAULT_STYLES;
+  const suggestionCount = normalizeSuggestionCount(currentConfig?.suggestionCount);
+  const baseStyles = (currentConfig?.styles || DEFAULT_STYLES).slice(0, suggestionCount);
   const recommended = preferenceManager
     ? await preferenceManager.getRecommendedStyles(contactKey)
     : baseStyles;
-  const styles = mergeStyles(baseStyles, recommended);
+  const styles = mergeStyles(baseStyles, recommended).slice(0, suggestionCount);
 
   // 构建输入
   const input: LLMInput = {
@@ -329,8 +334,15 @@ async function handleGenerateReply(payload: {
     };
   } catch (error) {
     console.error('[Social Copilot] Failed to generate reply:', error);
-    return { error: (error as Error).message };
+    const message = error instanceof ReplyParseError
+      ? 'AI 回复格式不正确，请重试。'
+      : (error as Error).message;
+    return { error: message };
   }
+}
+
+function normalizeSuggestionCount(count: unknown): 2 | 3 {
+  return count === 2 ? 2 : 3;
 }
 
 async function maybeUpdateProfile(
