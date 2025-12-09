@@ -62,7 +62,7 @@ export class OpenAIProvider implements LLMProvider {
 
   private getReplySystemPrompt(input: LLMInput): string {
     const lang = input.language === 'zh' ? '中文' : 'English';
-    return `你是一个高情商社交助理，帮助用户生成聊天回复建议。
+    let systemPrompt = `你是一个高情商社交助理，帮助用户生成聊天回复建议。
 
 规则：
 1. 根据对话上下文和联系人特点，生成自然、得体的回复
@@ -77,6 +77,13 @@ export class OpenAIProvider implements LLMProvider {
 - rational: 理性客观
 - casual: 随意轻松
 - formal: 正式礼貌`;
+
+    // 添加思路方向提示
+    if (input.thoughtHint) {
+      systemPrompt += `\n\n【回复方向】${input.thoughtHint}`;
+    }
+
+    return systemPrompt;
   }
 
   private getProfileSystemPrompt(input: LLMInput): string {
@@ -119,6 +126,11 @@ export class OpenAIProvider implements LLMProvider {
 
     prompt += `\n【待回复消息】\n${context.currentMessage.senderName}: ${context.currentMessage.text}`;
     prompt += `\n\n请生成 ${input.styles.length} 个不同风格的回复建议，风格分别为：${input.styles.join('、')}`;
+
+    // 添加思路方向提示
+    if (input.thoughtHint) {
+      prompt += `\n\n【回复方向要求】${input.thoughtHint}`;
+    }
 
     return prompt;
   }

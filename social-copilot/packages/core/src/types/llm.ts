@@ -1,5 +1,6 @@
 import type { ContactProfile } from './contact';
 import type { ConversationContext } from './message';
+import type { ThoughtType } from './thought';
 
 /**
  * 回复风格
@@ -29,6 +30,10 @@ export interface LLMInput {
   maxLength?: number;
   /** 任务类型（默认 reply） */
   task?: LLMTask;
+  /** 选中的思路方向（可选） */
+  thoughtDirection?: ThoughtType;
+  /** 思路提示语 */
+  thoughtHint?: string;
 }
 
 /**
