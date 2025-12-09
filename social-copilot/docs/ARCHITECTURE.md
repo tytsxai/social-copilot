@@ -194,9 +194,10 @@ interface PlatformAdapter {
    - 最近 10 条历史消息
    - 联系人画像
    - 风格偏好
+   - 选中的思路提示（thoughtHint）
    │
    ▼
-6. LLMManager 调用 AI 模型生成候选回复
+6. LLMManager 调用 AI 模型生成候选回复（附带思路提示）
    │
    ▼
 7. 返回候选回复到 Content Script
