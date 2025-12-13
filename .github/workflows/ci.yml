@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "social-copilot/**"
+      - ".github/workflows/**"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "social-copilot/**"
+      - ".github/workflows/**"
+  schedule:
+    - cron: "11 2 * * 1"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: social-copilot
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: social-copilot/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Release Build (zip)
+        run: pnpm release:extension
+
+      - name: Upload Extension Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: social-copilot-extension-${{ github.sha }}
+          path: social-copilot/packages/browser-extension/release/*.zip
+          if-no-files-found: error

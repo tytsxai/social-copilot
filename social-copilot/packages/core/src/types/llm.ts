@@ -10,7 +10,7 @@ export type ReplyStyle = 'humorous' | 'caring' | 'rational' | 'casual' | 'formal
 /**
  * 调用任务类型
  */
-export type LLMTask = 'reply' | 'profile_extraction';
+export type LLMTask = 'reply' | 'profile_extraction' | 'memory_extraction';
 
 /**
  * LLM 输入

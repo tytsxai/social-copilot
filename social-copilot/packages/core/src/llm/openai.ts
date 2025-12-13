@@ -1,5 +1,6 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
 import { parseReplyContent, ReplyParseError } from './reply-validation';
+import { fetchWithTimeout } from './fetch-with-timeout';
 
 /**
  * OpenAI API Provider
@@ -19,14 +20,19 @@ export class OpenAIProvider implements LLMProvider {
   async generateReply(input: LLMInput): Promise<LLMOutput> {
     const task = input.task ?? 'reply';
     const startTime = Date.now();
+    const maxTokens = Math.max(1, Math.min(input.maxLength ?? 1000, 2000));
     const prompt = task === 'profile_extraction'
       ? this.buildProfilePrompt(input)
-      : this.buildReplyPrompt(input);
+      : task === 'memory_extraction'
+        ? this.buildMemoryPrompt(input)
+        : this.buildReplyPrompt(input);
     const systemPrompt = task === 'profile_extraction'
       ? this.getProfileSystemPrompt(input)
-      : this.getReplySystemPrompt(input);
+      : task === 'memory_extraction'
+        ? this.getMemorySystemPrompt(input)
+        : this.getReplySystemPrompt(input);
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -39,8 +45,9 @@ export class OpenAIProvider implements LLMProvider {
           { role: 'user', content: prompt },
         ],
         temperature: 0.8,
-        max_tokens: 1000,
+        max_tokens: maxTokens,
       }),
+      timeoutMs: 20_000,
     });
 
     if (!response.ok) {
@@ -49,9 +56,9 @@ export class OpenAIProvider implements LLMProvider {
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '';
-    const candidates = task === 'profile_extraction'
-      ? this.parseProfileResponse(content)
-      : this.parseReplyResponse(content, input.styles);
+    const candidates = task === 'reply'
+      ? this.parseReplyResponse(content, input.styles)
+      : this.parseNonReplyResponse(content, input.styles, task);
 
     return {
       candidates,
@@ -98,6 +105,18 @@ export class OpenAIProvider implements LLMProvider {
 4. basicInfo 包含 ageRange, occupation, location
 5. relationshipType 用于标记关系（friend/colleague/family/other）
 6. notes 用于补充无法结构化的信息`;
+  }
+
+  private getMemorySystemPrompt(input: LLMInput): string {
+    const lang = input.language === 'zh' ? '中文' : 'English';
+    return `你是一个“联系人长期记忆”提取助手，目标是把聊天中稳定、可验证的信息提炼为可复用的记忆，供后续生成更贴合的回复。
+
+输出要求：
+1. 使用${lang}返回结果
+2. 仅返回 JSON 对象，不要输出任何额外文本
+3. 字段包含：summary(string), facts(string[]), preferences(string[]), boundaries(string[]), openLoops(string[])
+4. 只写从对话中能推断或直接表达的内容；不确定就不要写；禁止编造
+5. summary 尽量简短（<=300字），其余数组每项尽量短`;
   }
 
   private buildReplyPrompt(input: LLMInput): string {
@@ -163,6 +182,33 @@ export class OpenAIProvider implements LLMProvider {
     return prompt;
   }
 
+  private buildMemoryPrompt(input: LLMInput): string {
+    const { context, profile, memorySummary } = input;
+    const targetName = profile?.displayName || context.contactKey.peerId;
+    const relationship = profile?.relationshipType || '未知';
+    const interests = profile?.interests?.join('、') || '未知';
+
+    let prompt = `请根据聊天记录更新「${targetName}」的长期记忆，使用 JSON 输出。\n`;
+    prompt += '要求：只补充“稳定且有证据”的事实与偏好；不要编造；保持简短。\n';
+    prompt += `现有画像：关系(${relationship})，兴趣(${interests})\n`;
+    if (memorySummary) {
+      prompt += `现有长期记忆：${memorySummary}\n`;
+    }
+
+    prompt += '对话片段：\n';
+    for (const msg of context.recentMessages) {
+      const role = msg.direction === 'incoming' ? msg.senderName : '我';
+      prompt += `${role}: ${msg.text}\n`;
+    }
+    if (context.currentMessage) {
+      const role = context.currentMessage.direction === 'incoming' ? context.currentMessage.senderName : '我';
+      prompt += `${role}: ${context.currentMessage.text}\n`;
+    }
+
+    prompt += '只输出 JSON，例如：{"summary":"","facts":[],"preferences":[],"boundaries":[],"openLoops":[]}';
+    return prompt;
+  }
+
   private parseReplyResponse(content: string, styles: ReplyStyle[]): ReplyCandidate[] {
     try {
       return parseReplyContent(content, styles, 'reply');
@@ -174,16 +220,14 @@ export class OpenAIProvider implements LLMProvider {
     }
   }
 
-  private parseProfileResponse(content: string): ReplyCandidate[] {
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const text = jsonMatch ? jsonMatch[0] : content.trim();
-
-    return [
-      {
-        style: 'rational',
-        text,
-        confidence: jsonMatch ? 0.8 : 0.5,
-      },
-    ];
+  private parseNonReplyResponse(content: string, styles: ReplyStyle[], task: Exclude<LLMInput['task'], 'reply'>): ReplyCandidate[] {
+    try {
+      return parseReplyContent(content, styles, task);
+    } catch (err) {
+      if (err instanceof ReplyParseError) {
+        throw err;
+      }
+      throw new ReplyParseError((err as Error).message);
+    }
   }
 }

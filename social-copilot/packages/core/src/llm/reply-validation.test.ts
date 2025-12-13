@@ -35,6 +35,29 @@ describe('reply-validation', () => {
     expect(() => parseReplyContent(malformed, ['casual'])).toThrow(ReplyParseError);
   });
 
+  test('normalizes style aliases to allowed ReplyStyle values', () => {
+    const content = JSON.stringify([
+      { style: '幽默', text: '哈哈' },
+      { style: 'FORMAL', text: '您好。' },
+    ]);
+
+    const result = parseReplyContent(content, ['caring', 'casual']);
+
+    expect(result[0].style).toBe('humorous');
+    expect(result[1].style).toBe('formal');
+  });
+
+  test('throws ReplyParseError when candidate text is not a string', () => {
+    const content = JSON.stringify([{ style: 'caring', text: 123 }]);
+    expect(() => parseReplyContent(content, ['caring'])).toThrow(ReplyParseError);
+  });
+
+  test('tolerates bare string arrays by treating them as text candidates', () => {
+    const content = JSON.stringify(['hello']);
+    const result = parseReplyContent(content, ['caring']);
+    expect(result).toEqual([{ style: 'caring', text: 'hello', confidence: 0.8 }]);
+  });
+
   test('keeps raw JSON when running profile_extraction task', () => {
     const profileSnippet = '请整理画像： {"name":"Bob","city":"SF"}';
     const parsed = parseReplyContent(profileSnippet, [], 'profile_extraction');

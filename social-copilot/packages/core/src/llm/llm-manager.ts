@@ -36,6 +36,9 @@ export class LLMManager {
   private fallbackProvider: LLMProvider | null = null;
   private events: LLMManagerEvents;
   private primaryFailed = false;
+  private primaryFailedAt = 0;
+  private primaryFailureCount = 0;
+  private readonly primaryCooldownMs = 15_000;
 
   constructor(config: LLMManagerConfig, events: LLMManagerEvents = {}) {
     this.events = events;
@@ -64,6 +67,7 @@ export class LLMManager {
    */
   async generateReply(input: LLMInput): Promise<LLMOutput> {
     const errors: Error[] = [];
+    const now = Date.now();
 
     // helper to attempt provider call with one retry on parse error
     const invokeWithRetry = async (provider: LLMProvider, attemptInput: LLMInput): Promise<LLMOutput> => {
@@ -84,15 +88,32 @@ export class LLMManager {
 
     // If primary previously failed but we want to try recovery
     if (this.primaryFailed) {
-      try {
-        const result = await invokeWithRetry(this.primaryProvider, input);
-        // Primary recovered
-        this.primaryFailed = false;
-        this.events.onRecovery?.(this.primaryProvider.name);
-        return result;
-      } catch (error) {
-        errors.push(error instanceof Error ? error : new Error(String(error)));
-        // Primary still failing, try fallback
+      const withinCooldown = this.primaryFailureCount > 1 && (now - this.primaryFailedAt) < this.primaryCooldownMs;
+      if (withinCooldown) {
+        const cooldownError = new Error(`Primary provider in cooldown for ${this.primaryCooldownMs}ms`);
+        errors.push(cooldownError);
+        if (this.fallbackProvider) {
+          this.events.onFallback?.(
+            this.primaryProvider.name,
+            this.fallbackProvider.name,
+            cooldownError
+          );
+        }
+      } else {
+        try {
+          const result = await invokeWithRetry(this.primaryProvider, input);
+          // Primary recovered
+          this.primaryFailed = false;
+          this.primaryFailedAt = 0;
+          this.primaryFailureCount = 0;
+          this.events.onRecovery?.(this.primaryProvider.name);
+          return result;
+        } catch (error) {
+          errors.push(error instanceof Error ? error : new Error(String(error)));
+          // Primary still failing, try fallback
+          this.primaryFailedAt = Date.now();
+          this.primaryFailureCount += 1;
+        }
       }
     } else {
       // Try primary first
@@ -102,6 +123,8 @@ export class LLMManager {
         const primaryError = error instanceof Error ? error : new Error(String(error));
         errors.push(primaryError);
         this.primaryFailed = true;
+        this.primaryFailedAt = Date.now();
+        this.primaryFailureCount = 1;
 
         // Try fallback if configured
         if (this.fallbackProvider) {
@@ -143,6 +166,8 @@ export class LLMManager {
       ? this.createProvider(config.fallback) 
       : null;
     this.primaryFailed = false;
+    this.primaryFailedAt = 0;
+    this.primaryFailureCount = 0;
   }
 
   /**
@@ -167,5 +192,7 @@ export class LLMManager {
    */
   resetPrimaryState(): void {
     this.primaryFailed = false;
+    this.primaryFailedAt = 0;
+    this.primaryFailureCount = 0;
   }
 }

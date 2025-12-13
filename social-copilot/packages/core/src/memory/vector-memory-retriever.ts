@@ -6,6 +6,8 @@ import { contactKeyToString } from '../types/contact';
 export interface VectorMemoryRetrieverOptions {
   vectorStore: VectorStore;
   embeddingService: EmbeddingService;
+  /** 限制单次嵌入并发，避免压垮嵌入服务 */
+  maxConcurrentEmbeds?: number;
 }
 
 /**
@@ -14,24 +16,28 @@ export interface VectorMemoryRetrieverOptions {
 export class VectorMemoryRetriever implements MemoryRetriever {
   private store: VectorStore;
   private embedder: EmbeddingService;
+  private maxConcurrentEmbeds: number;
 
   constructor(options: VectorMemoryRetrieverOptions) {
     this.store = options.vectorStore;
     this.embedder = options.embeddingService;
+    this.maxConcurrentEmbeds = Math.max(1, options.maxConcurrentEmbeds ?? 5);
   }
 
   async addSnippets(snippets: Array<Omit<MemorySnippet, 'vector' | 'id' | 'score'>>): Promise<string[]> {
-    const enriched = await Promise.all(
-      snippets.map(async (snippet) => {
-        const vector = await this.embedder.embed(snippet.text);
-        return {
+    const enriched: MemorySnippet[] = [];
+    for (let i = 0; i < snippets.length; i += this.maxConcurrentEmbeds) {
+      const batch = snippets.slice(i, i + this.maxConcurrentEmbeds);
+      const batchVectors = await Promise.all(batch.map((snippet) => this.embedder.embed(snippet.text)));
+      batch.forEach((snippet, idx) => {
+        enriched.push({
           ...snippet,
           id: (snippet as Partial<MemorySnippet>).id ?? uuidv4(),
-          vector,
+          vector: batchVectors[idx],
           timestamp: snippet.timestamp ?? Date.now(),
-        } as MemorySnippet;
-      })
-    );
+        } as MemorySnippet);
+      });
+    }
 
     await this.store.upsert(enriched);
     return enriched.map((s) => s.id);

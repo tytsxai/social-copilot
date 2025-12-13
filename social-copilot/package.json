@@ -7,9 +7,14 @@
     "dev": "pnpm -r --filter \"./packages/*\" --if-present dev",
     "build": "pnpm -r --filter \"./packages/*\" --if-present build",
     "build:extension": "pnpm --filter @social-copilot/browser-extension build",
+    "build:extension:release": "SC_RELEASE=1 pnpm --filter @social-copilot/browser-extension build",
     "test": "pnpm -r --filter \"./packages/*\" --if-present test",
     "lint": "eslint . --ext .ts,.tsx",
-    "typecheck": "pnpm -r --filter \"./packages/*\" --if-present typecheck"
+    "typecheck": "pnpm -r --filter \"./packages/*\" --if-present typecheck",
+    "ci:local": "node scripts/ci-local.mjs",
+    "validate:release": "node scripts/validate-release.mjs",
+    "package:extension": "node scripts/package-extension.mjs",
+    "release:extension": "pnpm build:extension:release && pnpm validate:release && pnpm package:extension"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

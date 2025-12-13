@@ -74,6 +74,11 @@ corepack prepare pnpm@latest --activate
 2. 登录并创建新密钥
 3. 复制 `sk-` 开头的密钥
 
+**Claude（Anthropic）**
+1. 访问 https://console.anthropic.com/
+2. 登录并创建新密钥
+3. 复制 `sk-ant-` 开头的密钥
+
 ---
 
 ## 构建与安装
@@ -93,6 +98,27 @@ pnpm build
 
 构建成功后，输出目录为 `packages/browser-extension/dist`
 
+### 发布打包（Chrome Web Store 上传用）
+
+```bash
+# 生成 release 构建 + 校验 + zip
+pnpm release:extension
+```
+
+产物输出：`packages/browser-extension/release/social-copilot-<version>.zip`。
+
+### 本地 CI（推荐）
+
+```bash
+# 一键跑：lint + typecheck + test + release 打包
+pnpm ci:local
+```
+
+### CI/CD（GitHub Actions）
+
+- PR / Push：执行 `lint` / `typecheck` / `test` / `release:extension` 并上传 zip 产物
+- Tag：推送 `v<version>` 标签会自动创建 GitHub Release 并附带 zip；如配置以下 secrets 还会自动发布到 Chrome Web Store：`EXTENSION_ID`、`CLIENT_ID`、`CLIENT_SECRET`、`REFRESH_TOKEN`
+
 ### 3. 加载扩展到 Chrome
 
 1. 打开 Chrome 浏览器
@@ -106,9 +132,10 @@ pnpm build
 
 1. 点击工具栏的 Social Copilot 图标
 2. 在「设置」页面：
-   - 选择 AI 模型（DeepSeek 或 OpenAI）
+   - 选择模型提供商（DeepSeek / OpenAI / Claude）
+   - （可选）填写模型名称（不填则使用默认模型）
    - 输入对应的 API Key
-   - （可选）开启备用模型并填写备用 API Key，启用自动故障转移
+   - （可选）开启备用模型并填写备用 API Key，启用自动故障转移（备用模型也可指定模型名称）
    - 选择默认回复风格（可多选）和回复条数（2/3）
 3. 点击「保存设置」
 4. 状态显示「✓ 已配置，准备就绪」即可使用
@@ -119,10 +146,13 @@ Expo 客户端用于快速验证核心 LLM 流程：
 
 ```bash
 # 将 API Key 通过环境变量传递给 Expo
-EXPO_PUBLIC_LLM_API_KEY=<你的 API Key> pnpm --filter @social-copilot/mobile start
+EXPO_PUBLIC_LLM_API_KEY=<你的 API Key> \
+EXPO_PUBLIC_LLM_PROVIDER=deepseek \
+EXPO_PUBLIC_LLM_MODEL=deepseek-chat \
+pnpm --filter @social-copilot/mobile start
 ```
 
-DevTools 打开后可选择模拟器或使用 Expo Go 扫码运行。未设置密钥将回落到演示值 `DEMO_API_KEY`。
+DevTools 打开后可选择模拟器或使用 Expo Go 扫码运行。必须设置 `EXPO_PUBLIC_LLM_API_KEY`；`EXPO_PUBLIC_LLM_PROVIDER` / `EXPO_PUBLIC_LLM_MODEL` 为可选（也可在 App 内切换）。
 
 ---
 

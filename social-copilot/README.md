@@ -40,6 +40,27 @@ pnpm install
 pnpm build
 ```
 
+### 发布打包（Chrome Web Store 上传用）
+
+```bash
+# 生成 release 构建 + 校验 + zip
+pnpm release:extension
+```
+
+产物输出：`packages/browser-extension/release/social-copilot-<version>.zip`。
+
+### 本地 CI（推荐）
+
+```bash
+# 一键跑：lint + typecheck + test + release 打包
+pnpm ci:local
+```
+
+### CI/CD
+
+- PR / Push：执行 `lint` / `typecheck` / `test` / `release:extension` 并上传 zip 产物
+- Tag：推送 `v<version>` 标签会自动创建 GitHub Release 并附带 zip；如配置以下 secrets 还会自动发布到 Chrome Web Store：`EXTENSION_ID`、`CLIENT_ID`、`CLIENT_SECRET`、`REFRESH_TOKEN`
+
 ### 加载扩展
 
 1. 打开 Chrome，访问 `chrome://extensions/`
@@ -50,11 +71,12 @@ pnpm build
 ### 配置
 
 1. 点击扩展图标打开设置
-2. 选择 AI 模型（DeepSeek / OpenAI / Claude）
-3. 输入对应的 API Key
-4. （可选）开启备用模型并填写备用 API Key，实现自动故障转移
-5. 选择默认回复风格，以及每次生成的回复条数（2 或 3 条）
-6. 保存设置
+2. 选择模型提供商（DeepSeek / OpenAI / Claude）
+3. （可选）填写模型名称（不填则使用默认模型）
+4. 输入对应的 API Key
+5. （可选）开启备用模型并填写备用 API Key，实现自动故障转移（备用模型也可指定模型名称）
+6. 选择默认回复风格，以及每次生成的回复条数（2 或 3 条）
+7. 保存设置
 
 ### 使用
 
@@ -71,10 +93,13 @@ pnpm build
 
 ```bash
 # 设置公开环境变量供 Expo 读取
-EXPO_PUBLIC_LLM_API_KEY=<你的 API Key> pnpm --filter @social-copilot/mobile start
+EXPO_PUBLIC_LLM_API_KEY=<你的 API Key> \
+EXPO_PUBLIC_LLM_PROVIDER=deepseek \
+EXPO_PUBLIC_LLM_MODEL=deepseek-chat \
+pnpm --filter @social-copilot/mobile start
 ```
 
-Expo DevTools 启动后，可在模拟器或 Expo Go 扫码运行。未设置密钥时会回落到 `DEMO_API_KEY`，仅用于演示。
+Expo DevTools 启动后，可在模拟器或 Expo Go 扫码运行。需在环境变量 `EXPO_PUBLIC_LLM_API_KEY` 中提供有效密钥；`EXPO_PUBLIC_LLM_PROVIDER` / `EXPO_PUBLIC_LLM_MODEL` 为可选（也可在 App 内切换）。
 
 ## 项目结构
 

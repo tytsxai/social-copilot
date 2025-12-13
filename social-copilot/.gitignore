@@ -13,6 +13,7 @@ dist/
 
 # Build outputs
 packages/*/dist/
+packages/browser-extension/release/
 
 # Environment
 .env

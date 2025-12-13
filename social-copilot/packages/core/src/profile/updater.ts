@@ -116,9 +116,7 @@ export class ProfileUpdater {
       if (parsed.notes && parsed.notes !== existing.notes) {
         const existingNotes = existing.notes || '';
         const stampedNote = `[${this.formatDate(Date.now())}] ${parsed.notes}`;
-        updates.notes = existingNotes
-          ? `${existingNotes}\n${stampedNote}`
-          : stampedNote;
+        updates.notes = this.mergeNotes(existingNotes, stampedNote);
       }
 
       return updates;
@@ -129,5 +127,22 @@ export class ProfileUpdater {
 
   private formatDate(date: number | Date): string {
     return new Date(date).toISOString().slice(0, 10);
+  }
+
+  /**
+   * 合并备注并限制最大长度，避免无限膨胀
+   */
+  private mergeNotes(existing: string, incoming: string, maxLength = 2048): string {
+    const parts = existing ? existing.split('\n') : [];
+    if (!parts.includes(incoming)) {
+      parts.push(incoming);
+    }
+    // 只保留末尾部分，保证总长度不超过上限
+    let merged = parts.join('\n');
+    while (merged.length > maxLength && parts.length > 1) {
+      parts.shift();
+      merged = parts.join('\n');
+    }
+    return merged.slice(-maxLength);
   }
 }

@@ -2,6 +2,8 @@ import { mkdir, copyFile, stat, readdir } from 'fs/promises';
 import { defineConfig } from 'vite';
 import { dirname, join, resolve } from 'path';
 
+const isRelease = process.env.SC_RELEASE === '1';
+
 async function copyRecursive(source: string, destination: string) {
   const info = await stat(source);
 
@@ -58,8 +60,8 @@ export default defineConfig({
       },
     },
     target: 'esnext',
-    minify: false,
-    sourcemap: true,
+    minify: isRelease ? 'esbuild' : false,
+    sourcemap: isRelease ? false : true,
   },
   resolve: {
     alias: {

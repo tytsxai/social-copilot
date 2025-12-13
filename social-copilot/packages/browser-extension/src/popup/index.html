@@ -250,6 +250,24 @@
       width: 100%;
       padding-left: 48px;
     }
+    .memory-box {
+      width: 100%;
+      padding-left: 48px;
+      padding-bottom: 4px;
+      font-size: 12px;
+      color: #666;
+      line-height: 1.5;
+    }
+    .memory-title {
+      font-weight: 600;
+      color: #333;
+      margin-top: 6px;
+      margin-bottom: 2px;
+    }
+    .memory-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .style-pill {
       display: inline-flex;
       align-items: center;
@@ -297,7 +315,7 @@
     <div id="status" class="status warning">正在检查状态...</div>
 
     <div class="form-group">
-      <label for="provider">AI 模型</label>
+      <label for="provider">模型提供商</label>
       <select id="provider">
         <option value="deepseek">DeepSeek (推荐)</option>
         <option value="openai">OpenAI</option>
@@ -306,11 +324,34 @@
     </div>
 
     <div class="form-group">
+      <label for="model">模型名称（可选）</label>
+      <input type="text" id="model" placeholder="例如：deepseek-chat" list="modelSuggestions" autocomplete="off">
+      <datalist id="modelSuggestions"></datalist>
+      <small id="modelHint" class="muted">不填写则使用默认模型</small>
+    </div>
+
+    <div class="form-group">
       <label for="apiKey">API Key</label>
       <input type="password" id="apiKey" placeholder="sk-...">
       <small id="apiKeyHint">
         <a href="https://platform.deepseek.com/" target="_blank">获取 DeepSeek API Key</a>
       </small>
+    </div>
+
+    <div class="form-group inline">
+      <label for="persistApiKey" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="persistApiKey">
+        记住 API Key
+      </label>
+      <small>不勾选则密钥仅本次浏览器会话有效（重启浏览器需重新输入）</small>
+    </div>
+
+    <div class="form-group inline">
+      <label for="enableMemory" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="enableMemory">
+        启用长期记忆
+      </label>
+      <small>后台会提炼并存储联系人摘要（默认关闭）</small>
     </div>
 
     <div class="form-group inline">
@@ -329,6 +370,13 @@
           <option value="openai">OpenAI</option>
           <option value="claude">Claude</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label for="fallbackModel">备用模型名称（可选）</label>
+        <input type="text" id="fallbackModel" placeholder="例如：deepseek-reasoner" list="fallbackModelSuggestions" autocomplete="off">
+        <datalist id="fallbackModelSuggestions"></datalist>
+        <small id="fallbackModelHint" class="muted">不填写则使用该提供商默认模型</small>
       </div>
 
       <div class="form-group">
@@ -381,12 +429,25 @@
       AI 辅助社交伴侣
     </div>
     <p style="font-size: 13px; color: #666; line-height: 1.6;">
-      为聊天应用提供智能回复建议，支持 Telegram Web 和 WhatsApp Web。
+      为聊天应用提供智能回复建议，支持 Telegram Web、WhatsApp Web、Slack Web。
     </p>
     <p style="font-size: 13px; color: #666; line-height: 1.6; margin-top: 12px;">
       所有数据默认存储在本地，保护您的隐私。
     </p>
     <button id="clearDataBtn" class="secondary">清除所有数据</button>
+
+    <div class="fallback-card" style="margin-top: 12px;">
+      <div class="form-group inline" style="margin-bottom: 10px;">
+        <label for="debugEnabled" style="margin: 0; font-weight: 600;">
+          <input type="checkbox" id="debugEnabled">
+          启用诊断日志
+        </label>
+        <small class="muted">记录最近请求，便于排查问题</small>
+      </div>
+      <button id="copyDiagnosticsBtn" class="secondary">复制诊断信息</button>
+      <button id="downloadDiagnosticsBtn" class="secondary">下载诊断 JSON</button>
+      <button id="clearDiagnosticsBtn" class="secondary">清空诊断日志</button>
+    </div>
   </div>
 
   <script src="popup.js"></script>

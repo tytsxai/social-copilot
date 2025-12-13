@@ -1,5 +1,6 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
 import { parseReplyContent, ReplyParseError } from './reply-validation';
+import { fetchWithTimeout } from './fetch-with-timeout';
 
 /**
  * DeepSeek API Provider
@@ -19,11 +20,14 @@ export class DeepSeekProvider implements LLMProvider {
   async generateReply(input: LLMInput): Promise<LLMOutput> {
     const task = input.task ?? 'reply';
     const startTime = Date.now();
+    const maxTokens = Math.max(1, Math.min(input.maxLength ?? 1000, 2000));
     const prompt = task === 'profile_extraction'
       ? this.buildProfilePrompt(input)
-      : this.buildReplyPrompt(input);
+      : task === 'memory_extraction'
+        ? this.buildMemoryPrompt(input)
+        : this.buildReplyPrompt(input);
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -36,8 +40,9 @@ export class DeepSeekProvider implements LLMProvider {
           { role: 'user', content: prompt },
         ],
         temperature: 0.8,
-        max_tokens: 1000,
+        max_tokens: maxTokens,
       }),
+      timeoutMs: 20_000,
     });
 
     if (!response.ok) {
@@ -57,7 +62,8 @@ export class DeepSeekProvider implements LLMProvider {
   }
 
   private getSystemPrompt(input: LLMInput): string {
-    if ((input.task ?? 'reply') === 'profile_extraction') {
+    const task = input.task ?? 'reply';
+    if (task === 'profile_extraction') {
       const lang = input.language === 'zh' ? '中文' : 'English';
       return `你是一个社交画像分析助手，根据对话更新联系人画像。
 
@@ -68,6 +74,18 @@ export class DeepSeekProvider implements LLMProvider {
 4. basicInfo 可包含 ageRange、occupation、location
 5. relationshipType 用于标记关系（如 friend/colleague/family）
 6. notes 用于补充无法结构化的信息`;
+    }
+
+    if (task === 'memory_extraction') {
+      const lang = input.language === 'zh' ? '中文' : 'English';
+      return `你是一个“联系人长期记忆”提取助手，目标是把聊天中稳定、可验证的信息提炼为可复用的记忆，供后续生成更贴合的回复。
+
+输出要求：
+1. 使用${lang}返回结果
+2. 仅返回 JSON 对象，不要输出任何额外文本
+3. 字段包含：summary(string), facts(string[]), preferences(string[]), boundaries(string[]), openLoops(string[])
+4. 只写从对话中能推断或直接表达的内容；不确定就不要写；禁止编造
+5. summary 尽量简短（<=300字），其余数组每项尽量短`;
     }
 
     const lang = input.language === 'zh' ? '中文' : 'English';
@@ -159,6 +177,30 @@ ${recent}${current ? `\n${current}` : ''}
 
 只输出 JSON，如：
 {"interests":[],"communicationStyle":{},"basicInfo":{},"relationshipType":"","notes":""}`;
+  }
+
+  private buildMemoryPrompt(input: LLMInput): string {
+    const { context, profile, memorySummary } = input;
+    const contactName = profile?.displayName || context.contactKey.peerId;
+    const relationship = profile?.relationshipType || '未知';
+    const interests = profile?.interests?.join('、') || '未知';
+
+    const recent = context.recentMessages.map(msg => {
+      const role = msg.direction === 'incoming' ? msg.senderName : '我';
+      return `${role}: ${msg.text}`;
+    }).join('\n');
+    const current = context.currentMessage
+      ? `${context.currentMessage.direction === 'incoming' ? context.currentMessage.senderName : '我'}: ${context.currentMessage.text}`
+      : '';
+
+    return `请根据对话更新与「${contactName}」相关的长期记忆，并仅返回 JSON 对象。
+要求：只补充“稳定且有证据”的事实与偏好；不要编造；保持简短。
+现有画像：关系(${relationship})，兴趣(${interests})
+${memorySummary ? `现有长期记忆：${memorySummary}\n` : ''}对话片段：
+${recent}${current ? `\n${current}` : ''}
+
+只输出 JSON，如：
+{"summary":"","facts":[],"preferences":[],"boundaries":[],"openLoops":[]}`;
   }
 
   private parseResponse(content: string, styles: ReplyStyle[], task?: LLMInput['task']): ReplyCandidate[] {

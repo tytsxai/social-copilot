@@ -4,13 +4,18 @@ import { LLMManager } from '@social-copilot/core';
 export interface LLMConfig {
   apiKey: string;
   provider?: ProviderType;
+  model?: string;
 }
 
 let manager: LLMManager | null = null;
 
 export function initLLM(config: LLMConfig) {
+  const apiKey = (config.apiKey ?? '').trim();
+  if (!apiKey) {
+    throw new Error('LLM API key is required');
+  }
   manager = new LLMManager({
-    primary: { provider: config.provider ?? 'deepseek', apiKey: config.apiKey },
+    primary: { provider: config.provider ?? 'deepseek', apiKey, model: config.model },
   });
 }
 

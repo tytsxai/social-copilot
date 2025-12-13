@@ -11,11 +11,14 @@ class SlackContentScript {
   private unsubscribe: (() => void) | null = null;
   private lastMessageId: string | null = null;
   private isGenerating = false;
+  private queuedGenerate: { thoughtDirection?: ThoughtType; skipThoughtAnalysis: boolean } | null = null;
   private currentContactKey: ContactKey | null = null;
+  private lastUsingFallback = false;
   
   // 用于清理的引用
+  private navigationIntervalId: number | null = null;
+  private lastConversationId: string | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
-  private runtimeMessageHandler: ((message: unknown) => void) | null = null;
   private isDestroyed = false;
 
   constructor() {
@@ -40,19 +43,50 @@ class SlackContentScript {
     if (this.isDestroyed) return;
     
     this.ui.mount();
-    this.runtimeMessageHandler = (message) => this.handleRuntimeMessage(message);
-    chrome.runtime.onMessage.addListener(this.runtimeMessageHandler);
+    this.reportAdapterHealth();
     this.unsubscribe = this.adapter.onNewMessage((msg) => {
       if (!this.isDestroyed) {
         this.handleNewMessage(msg);
       }
     });
     this.setupKeyboardShortcuts();
+    this.setupNavigationListener();
     
     // 页面卸载时清理
     window.addEventListener('beforeunload', () => this.destroy());
 
     console.log('[Social Copilot] Slack adapter ready');
+  }
+
+  private reportAdapterHealth() {
+    try {
+      const input = this.adapter.getInputElement();
+      const contactKey = this.adapter.extractContactKey();
+      const messages = this.adapter.extractMessages(1);
+      const ok = Boolean(input && contactKey);
+      const reason = !input ? 'no_input' : !contactKey ? 'no_contact' : 'ok';
+
+      void chrome.runtime.sendMessage({
+        type: 'REPORT_ADAPTER_HEALTH',
+        payload: {
+          app: 'slack',
+          host: location.host,
+          pathname: location.pathname,
+          ok,
+          hasInput: Boolean(input),
+          hasContactKey: Boolean(contactKey),
+          messageCount: messages.length,
+          reason,
+        },
+      });
+
+      if (!ok) {
+        this.ui.setError('Slack 页面结构可能已变化，建议刷新页面或更新扩展。');
+        this.ui.show();
+      }
+    } catch {
+      // Ignore
+    }
   }
 
   private async waitForChat(): Promise<void> {
@@ -96,12 +130,40 @@ class SlackContentScript {
     document.addEventListener('keydown', this.keydownHandler);
   }
 
+  private setupNavigationListener() {
+    this.lastConversationId = this.adapter.extractContactKey()?.conversationId ?? null;
+
+    this.navigationIntervalId = window.setInterval(() => {
+      if (this.isDestroyed) {
+        this.clearNavigationInterval();
+        return;
+      }
+
+      const nextConversationId = this.adapter.extractContactKey()?.conversationId ?? null;
+      if (!nextConversationId || nextConversationId === this.lastConversationId) return;
+
+      this.lastConversationId = nextConversationId;
+      this.lastMessageId = null;
+      this.currentContactKey = null;
+      this.lastUsingFallback = false;
+      this.ui.hide();
+      this.ui.setThoughtCards([]);
+    }, 1000);
+  }
+
+  private clearNavigationInterval() {
+    if (this.navigationIntervalId !== null) {
+      clearInterval(this.navigationIntervalId);
+      this.navigationIntervalId = null;
+    }
+  }
+
   private handleNewMessage(message: Message) {
     if (this.isDestroyed) return;
     
     if (message.direction === 'incoming' && message.id !== this.lastMessageId) {
       this.lastMessageId = message.id;
-      console.log('[Social Copilot] New incoming message:', message.text.slice(0, 50));
+      console.log('[Social Copilot] New incoming message');
       this.analyzeAndGenerateSuggestions(message);
     }
   }
@@ -148,49 +210,64 @@ class SlackContentScript {
     await this.generateSuggestions(thought ?? undefined);
   }
 
-  private handleRuntimeMessage(message: unknown) {
-    if (this.isDestroyed || !message || typeof message !== 'object') return;
-    const payload = message as { type?: string; [key: string]: unknown };
+  private updateProviderNotice(response: { provider?: unknown; model?: unknown; usingFallback?: unknown }) {
+    const provider = typeof response.provider === 'string' ? response.provider : '';
+    const model = typeof response.model === 'string' ? response.model : '';
+    const usingFallback = Boolean(response.usingFallback);
+    const label = provider ? (model ? `${provider}/${model}` : provider) : '';
 
-    switch (payload.type) {
-      case 'FALLBACK_NOTIFICATION': {
-        const provider = (payload.toProvider as string) || (payload.provider as string) || '备用模型';
-        this.ui.setNotification(`已切换至 ${provider}`);
-        break;
-      }
-      case 'FALLBACK_RECOVERY': {
-        const provider = (payload.provider as string) || '主模型';
-        this.ui.setNotification(`已恢复使用 ${provider}`);
-        break;
-      }
-      case 'LLM_ALL_FAILED': {
-        const errors = payload.errors as string[] | undefined;
-        if (Array.isArray(errors) && errors.length > 0) {
-          this.ui.setError(`模型调用失败：${errors.join('; ')}`);
-        }
-        break;
-      }
-      default:
-        break;
+    if (usingFallback && !this.lastUsingFallback && label) {
+      this.ui.setNotification(`已切换至 ${label}`);
     }
+    if (!usingFallback && this.lastUsingFallback && label) {
+      this.ui.setNotification(`已恢复使用 ${label}`);
+    }
+    this.lastUsingFallback = usingFallback;
+  }
+
+  private pickCurrentMessage(messages: Message[]): Message {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].direction === 'incoming') {
+        return messages[i];
+      }
+    }
+    return messages[messages.length - 1];
   }
 
   private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false) {
-    if (this.isDestroyed || this.isGenerating) return;
+    if (this.isDestroyed) return;
+    if (this.isGenerating) {
+      this.queuedGenerate = { thoughtDirection, skipThoughtAnalysis };
+      return;
+    }
 
     const contactKey = this.adapter.extractContactKey();
-    if (!contactKey) return;
+    if (!contactKey) {
+      if (!skipThoughtAnalysis) {
+        this.ui.setError('无法识别当前聊天对象，请刷新页面或更新扩展。');
+        this.ui.show();
+      }
+      return;
+    }
     this.currentContactKey = contactKey;
 
     const messages = this.adapter.extractMessages(10);
-    if (messages.length === 0) return;
+    if (messages.length === 0) {
+      if (!skipThoughtAnalysis) {
+        this.ui.setError('未能读取聊天消息，请刷新页面后重试。');
+        this.ui.show();
+      }
+      return;
+    }
 
     this.isGenerating = true;
     this.ui.setLoading(true);
     this.ui.show();
 
+    const currentMessage = this.pickCurrentMessage(messages);
+
     if (!skipThoughtAnalysis) {
-      await this.updateThoughtCards(contactKey, messages, messages[messages.length - 1]);
+      await this.updateThoughtCards(contactKey, messages, currentMessage);
       if (this.isDestroyed) {
         this.isGenerating = false;
         return;
@@ -205,7 +282,7 @@ class SlackContentScript {
         payload: {
           contactKey,
           messages,
-          currentMessage: messages[messages.length - 1],
+          currentMessage,
           thoughtDirection: selectedThought,
         },
       });
@@ -216,6 +293,7 @@ class SlackContentScript {
         this.ui.setError(response.error);
       } else if (response?.candidates) {
         this.ui.setCandidates(response.candidates);
+        this.updateProviderNotice(response);
       } else {
         this.ui.setError('未收到有效响应');
       }
@@ -226,6 +304,11 @@ class SlackContentScript {
       }
     } finally {
       this.isGenerating = false;
+      if (!this.isDestroyed && this.queuedGenerate) {
+        const queued = this.queuedGenerate;
+        this.queuedGenerate = null;
+        void this.generateSuggestions(queued.thoughtDirection, queued.skipThoughtAnalysis);
+      }
     }
   }
 
@@ -266,15 +349,12 @@ class SlackContentScript {
     
     console.log('[Social Copilot] Destroying Slack adapter...');
     
+    this.clearNavigationInterval();
+
     // 清理事件监听器
     if (this.keydownHandler) {
       document.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
-    }
-    
-    if (this.runtimeMessageHandler) {
-      chrome.runtime.onMessage.removeListener(this.runtimeMessageHandler);
-      this.runtimeMessageHandler = null;
     }
 
     // 清理消息监听
