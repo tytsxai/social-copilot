@@ -296,7 +296,7 @@ DeepSeek API 实现。
 ```typescript
 interface DeepSeekConfig {
   apiKey: string;
-  model?: string;  // 默认: 'deepseek-chat'
+  model?: string;  // 默认: 'deepseek-v3.2'
   baseUrl?: string;
 }
 
@@ -314,7 +314,7 @@ OpenAI API 实现。
 ```typescript
 interface OpenAIConfig {
   apiKey: string;
-  model?: string;  // 默认: 'gpt-4o-mini'
+  model?: string;  // 默认: 'gpt-5.2-chat-latest'
   baseUrl?: string;
 }
 
@@ -332,7 +332,7 @@ Anthropic Claude API 实现。
 ```typescript
 interface ClaudeConfig {
   apiKey: string;
-  model?: string;  // 默认: 'claude-3-haiku-20240307'
+  model?: string;  // 默认: 'claude-sonnet-4-5'
 }
 
 class ClaudeProvider implements LLMProvider {
@@ -572,6 +572,28 @@ interface PlatformAdapter {
   onNewMessage(callback: (message: Message) => void): () => void;
 }
 ```
+
+### 适配器契约（必须满足）
+
+为了保证 **画像 / 偏好 / 长期记忆 / 消息存储** 不串号、不丢失，所有适配器需要满足以下约束：
+
+#### ContactKey 约束
+
+- `conversationId` **必须稳定且唯一**（优先使用平台内部会话 ID，如 Telegram chatId / WhatsApp JID / Slack channelId），不要使用“联系人显示名/群名”作为主键。
+- `accountId` 可选；当同一站点可能存在多账号/多 workspace 时建议填充（例如 Slack 的 teamId）。
+- `peerId` 仅用于展示，可随页面标题变化，不应影响存储 key（当前存储 key 已不包含 `peerId`）。
+- `isGroup` 需要尽量准确（用于决定是否做长期记忆等策略）。
+
+#### Message 约束
+
+- `id` 必须 **稳定且全局唯一**（至少在本扩展的 IndexedDB 中全局唯一）。如果平台原生 messageId 只在“单会话内唯一”，需要用 `contactKeyStr` 做命名空间前缀或做 hash。
+- `text` 必须是纯文本（不要把 HTML 直接写进输入框；适配器填充时也应避免 HTML 注入）。
+- `timestamp` 允许 best-effort，但必须能正确区分“同一会话内的先后顺序”（跨天/带日期时建议解析日期）。
+
+#### 行为约束
+
+- `extractMessages(limit)` 只能返回 **当前会话** 的消息，避免把其它会话或侧边栏的内容混入。
+- `onNewMessage(callback)` 需要尽量避免重复回调同一条消息（常见做法：监听会话容器 + 使用稳定 messageId 去重）。
 
 ### 内置适配器
 

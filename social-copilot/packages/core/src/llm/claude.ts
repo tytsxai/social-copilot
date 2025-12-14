@@ -26,7 +26,7 @@ export class ClaudeProvider implements LLMProvider {
   constructor(config: ClaudeProviderConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || 'https://api.anthropic.com';
-    this.model = config.model || 'claude-3-haiku-20240307';
+    this.model = config.model || 'claude-sonnet-4-5';
   }
 
   /**

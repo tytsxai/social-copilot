@@ -14,7 +14,7 @@ export class DeepSeekProvider implements LLMProvider {
   constructor(config: { apiKey: string; baseUrl?: string; model?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || 'https://api.deepseek.com';
-    this.model = config.model || 'deepseek-chat';
+    this.model = config.model || 'deepseek-v3.2';
   }
 
   async generateReply(input: LLMInput): Promise<LLMOutput> {

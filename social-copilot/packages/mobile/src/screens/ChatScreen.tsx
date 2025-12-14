@@ -114,7 +114,7 @@ export default function ChatScreen() {
             style={styles.modelInput}
             value={model}
             onChangeText={setModel}
-            placeholder="可选：如 gpt-4o-mini / deepseek-chat"
+            placeholder="可选：如 gpt-5.2-chat-latest / deepseek-v3.2"
           />
           <Button title="应用" onPress={handleApplyConfig} />
         </View>

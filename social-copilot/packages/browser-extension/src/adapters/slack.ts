@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { generateMessageId } from './base';
+import { buildMessageId, parseTimestampFromText } from './base';
 
 /**
  * Slack Web 适配器
@@ -19,7 +19,7 @@ export class SlackAdapter implements PlatformAdapter {
     messageText: '.c-message__body, .p-rich_text_section',
     senderName: '[data-qa="message_sender_name"]',
     chatTitle: '[data-qa="channel_name"], .p-view_header__channel_title',
-    inputBox: '[data-qa="message_input"] .ql-editor, [contenteditable="true"]',
+    inputBox: '[data-qa="message_input"] .ql-editor, [data-qa="message_input"] [contenteditable="true"]',
     time: '[data-qa="message_time"]',
   };
 
@@ -27,7 +27,43 @@ export class SlackAdapter implements PlatformAdapter {
     return window.location.hostname === 'app.slack.com';
   }
 
+  private findChatContainer(): HTMLElement | null {
+    return document.querySelector(this.selectors.chatContainer) as HTMLElement;
+  }
+
   private getCurrentUserId(): string | null {
+    const metaId =
+      document.querySelector<HTMLMetaElement>('meta[name="user_id"], meta[name="slack-user-id"], meta[name="userId"]')
+        ?.getAttribute('content');
+    if (metaId?.trim()) return metaId.trim();
+
+    const userMenu = document.querySelector<HTMLElement>(
+      '[data-qa="user_menu_button"], [data-qa="user_menu"], [data-qa="user_button"], [data-qa="profile_menu"]'
+    );
+    const domId =
+      userMenu?.getAttribute('data-member-id') ||
+      userMenu?.getAttribute('data-user-id') ||
+      userMenu?.dataset.memberId ||
+      userMenu?.dataset.userId;
+    if (domId?.trim()) return domId.trim();
+
+    try {
+      const raw = localStorage.getItem('localConfig_v2') || localStorage.getItem('localConfig');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const fromStorage = typeof parsed.user_id === 'string'
+          ? parsed.user_id
+          : typeof parsed.userId === 'string'
+            ? parsed.userId
+            : typeof parsed.user === 'string'
+              ? parsed.user
+              : undefined;
+        if (fromStorage?.trim()) return fromStorage.trim();
+      }
+    } catch {
+      // ignore
+    }
+
     const slack = window as unknown as {
       TS?: {
         boot_data?: { user_id?: string };
@@ -38,8 +74,9 @@ export class SlackAdapter implements PlatformAdapter {
   }
 
   extractContactKey(): ContactKey | null {
-    const pathMatch = window.location.pathname.match(/\/client\/[^/]+\/([^/]+)/);
-    const channelId = pathMatch?.[1] || '';
+    const pathMatch = window.location.pathname.match(/\/client\/([^/]+)\/([^/]+)/);
+    const teamId = pathMatch?.[1] || '';
+    const channelId = pathMatch?.[2] || '';
 
     const titleEl = document.querySelector(this.selectors.chatTitle);
     const peerName = titleEl?.textContent?.trim() || 'Unknown';
@@ -50,6 +87,7 @@ export class SlackAdapter implements PlatformAdapter {
       platform: 'web',
       app: 'slack',
       conversationId: channelId || peerName,
+      accountId: teamId || undefined,
       peerId: peerName,
       isGroup,
     };
@@ -60,7 +98,8 @@ export class SlackAdapter implements PlatformAdapter {
     const contactKey = this.extractContactKey();
     if (!contactKey) return messages;
 
-    const messageEls = document.querySelectorAll(this.selectors.message);
+    const container = this.findChatContainer();
+    const messageEls = (container ?? document).querySelectorAll(this.selectors.message);
     const recentEls = Array.from(messageEls).slice(-limit);
 
     for (const el of recentEls) {
@@ -91,10 +130,17 @@ export class SlackAdapter implements PlatformAdapter {
     const timeEl = el.querySelector(this.selectors.time);
     const timeText = timeEl?.textContent?.trim() || '';
 
-    const messageId = el.getAttribute('data-qa-message-id') || generateMessageId();
+    const messageId = el.getAttribute('data-qa-message-id');
 
     return {
-      id: messageId,
+      id: buildMessageId({
+        preferredId: messageId,
+        contactKey,
+        direction: isOutgoing ? 'outgoing' : 'incoming',
+        senderName: isOutgoing ? '我' : senderName,
+        text,
+        timeText,
+      }),
       contactKey,
       direction: isOutgoing ? 'outgoing' : 'incoming',
       senderName: isOutgoing ? '我' : senderName,
@@ -163,18 +209,18 @@ export class SlackAdapter implements PlatformAdapter {
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (node instanceof HTMLElement) {
-              const messageEl = node.matches(this.selectors.message)
-                ? node
-                : node.querySelector(this.selectors.message);
+              const messageEls = node.matches(this.selectors.message)
+                ? [node]
+                : Array.from(node.querySelectorAll(this.selectors.message));
 
-              if (messageEl) {
-                const contactKey = this.extractContactKey();
-                if (contactKey) {
-                  const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
-                  if (message) {
-                    callback(message);
-                  }
-                }
+              if (messageEls.length === 0) continue;
+
+              const contactKey = this.extractContactKey();
+              if (!contactKey) continue;
+
+              for (const messageEl of messageEls) {
+                const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
+                if (message) callback(message);
               }
             }
           }
@@ -201,20 +247,6 @@ export class SlackAdapter implements PlatformAdapter {
   }
 
   private parseTime(timeText: string): number {
-    const timeMatch = timeText.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-    if (timeMatch) {
-      const now = new Date();
-      let hours = parseInt(timeMatch[1], 10);
-      const minutes = parseInt(timeMatch[2], 10);
-      const period = timeMatch[3]?.toUpperCase();
-
-      if (period === 'PM' && hours !== 12) hours += 12;
-      if (period === 'AM' && hours === 12) hours = 0;
-
-      now.setHours(hours);
-      now.setMinutes(minutes);
-      return now.getTime();
-    }
-    return Date.now();
+    return parseTimestampFromText(timeText);
   }
 }

@@ -21,13 +21,29 @@ export interface ContactMemorySummary {
 }
 
 function getContactKeyStrCandidates(contactKey: ContactKey): string[] {
-  return Array.from(
-    new Set([
-      contactKeyToString(contactKey),
-      contactKeyToStringV1(contactKey),
-      legacyContactKeyToString(contactKey),
-    ])
-  );
+  const variants: ContactKey[] = [contactKey];
+
+  // Backward-compat: older versions may not include accountId in keys.
+  if (contactKey.accountId) {
+    variants.push({ ...contactKey, accountId: undefined });
+  }
+
+  // Backward-compat: some adapters historically used peerId/displayName as conversationId (not stable).
+  // Scope this heuristic to WhatsApp to avoid accidental cross-channel matches on other platforms.
+  if (contactKey.app === 'whatsapp' && contactKey.peerId && contactKey.conversationId !== contactKey.peerId) {
+    variants.push({ ...contactKey, conversationId: contactKey.peerId });
+    if (contactKey.accountId) {
+      variants.push({ ...contactKey, accountId: undefined, conversationId: contactKey.peerId });
+    }
+  }
+
+  const keys = variants.flatMap((key) => [
+    contactKeyToString(key),
+    contactKeyToStringV1(key),
+    legacyContactKeyToString(key),
+  ]);
+
+  return Array.from(new Set(keys));
 }
 
 function mergeNotes(a?: string, b?: string, maxLength = 2048): string | undefined {

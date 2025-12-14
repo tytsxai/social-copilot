@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { generateMessageId } from './base';
+import { buildMessageId, parseTimestampFromText } from './base';
 
 /**
  * WhatsApp Web 适配器
@@ -30,18 +30,69 @@ export class WhatsAppAdapter implements PlatformAdapter {
     return window.location.hostname === 'web.whatsapp.com';
   }
 
+  private findChatContainer(): HTMLElement | null {
+    return document.querySelector(this.selectors.chatContainer) as HTMLElement;
+  }
+
+  private extractChatJidFromDataId(dataId: string): { jid: string; isGroup: boolean } | null {
+    if (!dataId) return null;
+    const match = dataId.match(/(?:^|_)([0-9A-Za-z-]+@((?:c|g)\.us|s\.whatsapp\.net))(?:_|$)/);
+    if (!match) return null;
+    const jid = match[1];
+    const domain = match[2];
+    return { jid, isGroup: domain === 'g.us' };
+  }
+
+  private getConversationId(): { conversationId: string; isGroup: boolean } | null {
+    const container = this.findChatContainer();
+    const messageEl = (container ?? document).querySelector(this.selectors.message) as HTMLElement | null;
+    const dataId = messageEl?.getAttribute('data-id') || '';
+    const parsed = this.extractChatJidFromDataId(dataId);
+    if (parsed) {
+      return { conversationId: parsed.jid, isGroup: parsed.isGroup };
+    }
+    return null;
+  }
+
+  private getAccountId(): string | undefined {
+    const candidates = ['last-wid', 'last_wid', 'lastWID', 'lastLoggedInUserId'];
+    for (const key of candidates) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+
+      // Sometimes stored as JSON string.
+      let decoded: unknown = trimmed;
+      if (trimmed.startsWith('"')) {
+        try {
+          decoded = JSON.parse(trimmed) as unknown;
+        } catch {
+          decoded = trimmed;
+        }
+      }
+      const value = typeof decoded === 'string' ? decoded : String(decoded);
+      const match = value.match(/([0-9A-Za-z-]+@(?:c\.us|s\.whatsapp\.net))/);
+      if (match?.[1]) return match[1];
+    }
+    return undefined;
+  }
+
   extractContactKey(): ContactKey | null {
     const titleEl = document.querySelector(this.selectors.chatTitle);
     const peerName = titleEl?.getAttribute('title') || titleEl?.textContent?.trim() || 'Unknown';
 
     const subtitleEl = document.querySelector(this.selectors.chatSubtitle);
     const subtitleText = subtitleEl?.getAttribute('title') || '';
-    const isGroup = subtitleText.includes(',') || subtitleText.includes('participants');
+    const conv = this.getConversationId();
+    const isGroup = conv?.isGroup ?? (subtitleText.includes(',') || subtitleText.includes('participants'));
+    const accountId = this.getAccountId();
 
     return {
       platform: 'web',
       app: 'whatsapp',
-      conversationId: peerName,
+      accountId,
+      conversationId: conv?.conversationId || peerName,
       peerId: peerName,
       isGroup,
     };
@@ -52,7 +103,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
     const contactKey = this.extractContactKey();
     if (!contactKey) return messages;
 
-    const messageEls = document.querySelectorAll(this.selectors.message);
+    const container = this.findChatContainer();
+    const messageEls = (container ?? document).querySelectorAll(this.selectors.message);
     const recentEls = Array.from(messageEls).slice(-limit);
 
     for (const el of recentEls) {
@@ -78,7 +130,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
     const prePlainText = el.querySelector('[data-pre-plain-text]')?.getAttribute('data-pre-plain-text') || '';
     const match = prePlainText.match(/\[([^\]]+)\]\s*([^:]*)/);
     
-    let senderName = '我';
+    let senderName = isOutgoing ? '我' : contactKey.peerId;
     let timestamp = Date.now();
 
     if (match) {
@@ -89,23 +141,20 @@ export class WhatsAppAdapter implements PlatformAdapter {
         senderName = name;
       }
       
-      const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/);
-      if (timeMatch) {
-        const now = new Date();
-        now.setHours(parseInt(timeMatch[1], 10));
-        now.setMinutes(parseInt(timeMatch[2], 10));
-        timestamp = now.getTime();
-      }
+      timestamp = parseTimestampFromText(timeStr);
     }
 
-    if (!isOutgoing) {
-      senderName = senderName || contactKey.peerId;
-    }
-
-    const messageId = el.getAttribute('data-id') || generateMessageId();
+    const messageId = el.getAttribute('data-id');
 
     return {
-      id: messageId,
+      id: buildMessageId({
+        preferredId: messageId,
+        contactKey,
+        direction: isOutgoing ? 'outgoing' : 'incoming',
+        senderName,
+        text,
+        timeText: prePlainText,
+      }),
       contactKey,
       direction: isOutgoing ? 'outgoing' : 'incoming',
       senderName,
@@ -123,12 +172,19 @@ export class WhatsAppAdapter implements PlatformAdapter {
     if (!input) return false;
 
     input.focus();
-    document.execCommand('insertText', false, text);
-    
-    if (!input.textContent) {
+
+    input.textContent = '';
+    const inserted = typeof document.execCommand === 'function'
+      ? document.execCommand('insertText', false, text)
+      : false;
+    if (!inserted) {
       input.textContent = text;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
     }
+
+    const event = typeof InputEvent === 'function'
+      ? new InputEvent('input', { bubbles: true, data: text })
+      : new Event('input', { bubbles: true });
+    input.dispatchEvent(event);
 
     return true;
   }
@@ -137,7 +193,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
     this.isDisposed = false;
     
     const findContainer = (): HTMLElement | null => {
-      return document.querySelector(this.selectors.chatContainer) as HTMLElement;
+      return this.findChatContainer();
     };
 
     let retryCount = 0;
@@ -161,18 +217,18 @@ export class WhatsAppAdapter implements PlatformAdapter {
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (node instanceof HTMLElement) {
-              const messageEl = node.hasAttribute('data-id')
-                ? node
-                : node.querySelector('[data-id]');
+              const messageEls = node.matches(this.selectors.message)
+                ? [node]
+                : Array.from(node.querySelectorAll(this.selectors.message));
 
-              if (messageEl) {
-                const contactKey = this.extractContactKey();
-                if (contactKey) {
-                  const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
-                  if (message) {
-                    callback(message);
-                  }
-                }
+              if (messageEls.length === 0) continue;
+
+              const contactKey = this.extractContactKey();
+              if (!contactKey) continue;
+
+              for (const messageEl of messageEls) {
+                const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
+                if (message) callback(message);
               }
             }
           }

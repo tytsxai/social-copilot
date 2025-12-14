@@ -129,12 +129,12 @@ function normalizeModel(value: unknown): string | undefined {
 function getProviderDefaultModel(provider: ProviderType): string {
   switch (provider) {
     case 'openai':
-      return 'gpt-4o-mini';
+      return 'gpt-5.2-chat-latest';
     case 'claude':
-      return 'claude-3-haiku-20240307';
+      return 'claude-sonnet-4-5';
     case 'deepseek':
     default:
-      return 'deepseek-chat';
+      return 'deepseek-v3.2';
   }
 }
 
@@ -818,6 +818,8 @@ async function handleGenerateReply(payload: {
       updatedAt: Date.now(),
     };
     await store.saveProfile(profile);
+  } else {
+    profile = await maybeMigrateContactState(contactKey, profile);
   }
 
   // 检查是否需要更新画像
@@ -900,6 +902,47 @@ async function handleGenerateReply(payload: {
     }
     return { error: message };
   }
+}
+
+async function maybeMigrateContactState(contactKey: ContactKey, profile: ContactProfile): Promise<ContactProfile> {
+  const desiredKeyStr = contactKeyToString(contactKey);
+  const currentKeyStr = contactKeyToString(profile.key);
+  if (desiredKeyStr === currentKeyStr) return profile;
+
+  // Migrate profile key to the new canonical ContactKey (stable conversationId/accountId).
+  const migrated: ContactProfile = {
+    ...profile,
+    key: contactKey,
+    displayName: contactKey.peerId || profile.displayName,
+    updatedAt: Date.now(),
+  };
+
+  try {
+    await store.saveProfile(migrated);
+  } catch (err) {
+    console.warn('[Social Copilot] Failed to migrate profile key:', err);
+  }
+
+  // Best-effort: copy style preferences & memory summary to new key (do not delete old records).
+  try {
+    const pref = await store.getStylePreference(profile.key);
+    if (pref && pref.contactKeyStr !== desiredKeyStr) {
+      await store.saveStylePreference({ ...pref, contactKeyStr: desiredKeyStr, updatedAt: Date.now() });
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const memory = await store.getContactMemorySummary(profile.key);
+    if (memory && memory.summary) {
+      await store.saveContactMemorySummary(contactKey, memory.summary);
+    }
+  } catch {
+    // ignore
+  }
+
+  return migrated;
 }
 
 function toUserErrorMessage(error: unknown): string {

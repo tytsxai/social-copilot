@@ -95,7 +95,7 @@ pnpm ci:local
 # 设置公开环境变量供 Expo 读取
 EXPO_PUBLIC_LLM_API_KEY=<你的 API Key> \
 EXPO_PUBLIC_LLM_PROVIDER=deepseek \
-EXPO_PUBLIC_LLM_MODEL=deepseek-chat \
+EXPO_PUBLIC_LLM_MODEL=deepseek-v3.2 \
 pnpm --filter @social-copilot/mobile start
 ```
 

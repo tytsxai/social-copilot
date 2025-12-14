@@ -75,28 +75,27 @@ enableFallbackCheckbox.addEventListener('change', () => {
 function getProviderModelMeta(provider: string): { defaultModel: string; docsUrl: string; suggestions: string[] } {
   if (provider === 'openai') {
     return {
-      defaultModel: 'gpt-4o-mini',
+      defaultModel: 'gpt-5.2-chat-latest',
       docsUrl: 'https://platform.openai.com/docs/models',
-      suggestions: ['gpt-4o-mini', 'gpt-4o'],
+      suggestions: ['gpt-5.2-chat-latest', 'gpt-5.2', 'gpt-5.2-pro'],
     };
   }
   if (provider === 'claude') {
     return {
-      defaultModel: 'claude-3-haiku-20240307',
+      defaultModel: 'claude-sonnet-4-5',
       docsUrl: 'https://docs.anthropic.com/',
       suggestions: [
-        'claude-3-haiku-20240307',
-        'claude-3-sonnet-20240229',
-        'claude-3-opus-20240229',
-        'claude-3-5-sonnet-20240620',
+        'claude-opus-4-5',
+        'claude-sonnet-4-5',
+        'claude-haiku-4-5',
       ],
     };
   }
   // deepseek
   return {
-    defaultModel: 'deepseek-chat',
+    defaultModel: 'deepseek-v3.2',
     docsUrl: 'https://platform.deepseek.com/',
-    suggestions: ['deepseek-chat', 'deepseek-reasoner'],
+    suggestions: ['deepseek-v3.2', 'deepseek-v3.1', 'deepseek-r1-0528'],
   };
 }
 

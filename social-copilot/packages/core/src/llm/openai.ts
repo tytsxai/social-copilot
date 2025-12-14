@@ -14,7 +14,7 @@ export class OpenAIProvider implements LLMProvider {
   constructor(config: { apiKey: string; baseUrl?: string; model?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || 'https://api.openai.com';
-    this.model = config.model || 'gpt-4o-mini';
+    this.model = config.model || 'gpt-5.2-chat-latest';
   }
 
   async generateReply(input: LLMInput): Promise<LLMOutput> {

@@ -148,7 +148,7 @@ Expo 客户端用于快速验证核心 LLM 流程：
 # 将 API Key 通过环境变量传递给 Expo
 EXPO_PUBLIC_LLM_API_KEY=<你的 API Key> \
 EXPO_PUBLIC_LLM_PROVIDER=deepseek \
-EXPO_PUBLIC_LLM_MODEL=deepseek-chat \
+EXPO_PUBLIC_LLM_MODEL=deepseek-v3.2 \
 pnpm --filter @social-copilot/mobile start
 ```
 

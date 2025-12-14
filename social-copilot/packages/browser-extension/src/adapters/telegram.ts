@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { generateMessageId } from './base';
+import { buildMessageId, parseTimestampFromText } from './base';
 
 /**
  * Telegram Web 适配器
@@ -56,6 +56,34 @@ export class TelegramAdapter implements PlatformAdapter {
     return isMatch;
   }
 
+  private findChatContainer(): HTMLElement | null {
+    for (const selector of this.selectors.chatContainer.split(', ')) {
+      const el = document.querySelector(selector) as HTMLElement;
+      if (el) return el;
+    }
+    return null;
+  }
+
+  private extractConversationId(): string | null {
+    const hash = window.location.hash || '';
+
+    // Common forms:
+    // - #@username
+    // - #-123456789
+    const direct = hash.match(/^#(-?\d+|@[\w]+)/);
+    if (direct?.[1]) return direct[1];
+
+    // Forms like: #/im?p=@username or #/im?p=-123
+    const param = hash.match(/[#&?]p=(@[\w]+|-?\d+)/);
+    if (param?.[1]) return param[1];
+
+    // Best-effort: first plausible identifier after '#'
+    const any = hash.match(/#.*?(@[\w]+|-?\d+)/);
+    if (any?.[1]) return any[1];
+
+    return null;
+  }
+
   private detectVersion(): void {
     const path = window.location.pathname;
     if (path.startsWith('/a')) {
@@ -67,9 +95,6 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   extractContactKey(): ContactKey | null {
-    const hash = window.location.hash;
-    const match = hash.match(/#(-?\d+|@[\w]+)/);
-
     const titleEl = document.querySelector(this.selectors.chatTitle);
     const peerName = titleEl?.textContent?.trim() || 'Unknown';
 
@@ -84,7 +109,7 @@ export class TelegramAdapter implements PlatformAdapter {
     return {
       platform: 'web',
       app: 'telegram',
-      conversationId: match?.[1] || peerName,
+      conversationId: this.extractConversationId() || peerName,
       peerId: peerName,
       isGroup,
     };
@@ -95,7 +120,8 @@ export class TelegramAdapter implements PlatformAdapter {
     const contactKey = this.extractContactKey();
     if (!contactKey) return messages;
 
-    const messageEls = document.querySelectorAll(this.selectors.message);
+    const container = this.findChatContainer();
+    const messageEls = (container ?? document).querySelectorAll(this.selectors.message);
     const recentEls = Array.from(messageEls).slice(-limit);
 
     for (const el of recentEls) {
@@ -134,14 +160,20 @@ export class TelegramAdapter implements PlatformAdapter {
     const messageId =
       el.getAttribute(this.selectors.messageId) ||
       el.getAttribute('data-mid') ||
-      el.getAttribute('data-message-id') ||
-      generateMessageId();
+      el.getAttribute('data-message-id');
 
     const timeEl = el.querySelector(this.selectors.time);
     const timeText = timeEl?.textContent?.trim() || '';
 
     return {
-      id: messageId,
+      id: buildMessageId({
+        preferredId: messageId,
+        contactKey,
+        direction: isOutgoing ? 'outgoing' : 'incoming',
+        senderName,
+        text,
+        timeText,
+      }),
       contactKey,
       direction: isOutgoing ? 'outgoing' : 'incoming',
       senderName,
@@ -179,11 +211,7 @@ export class TelegramAdapter implements PlatformAdapter {
     this.isDisposed = false;
     
     const findContainer = (): HTMLElement | null => {
-      for (const selector of this.selectors.chatContainer.split(', ')) {
-        const el = document.querySelector(selector) as HTMLElement;
-        if (el) return el;
-      }
-      return null;
+      return this.findChatContainer();
     };
 
     let retryCount = 0;
@@ -207,18 +235,18 @@ export class TelegramAdapter implements PlatformAdapter {
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (node instanceof HTMLElement) {
-              const messageEl = node.classList.contains('message') || node.classList.contains('Message')
-                ? node
-                : node.querySelector(this.selectors.message);
+              const messageEls = node.matches(this.selectors.message)
+                ? [node]
+                : Array.from(node.querySelectorAll(this.selectors.message));
 
-              if (messageEl) {
-                const contactKey = this.extractContactKey();
-                if (contactKey) {
-                  const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
-                  if (message) {
-                    callback(message);
-                  }
-                }
+              if (messageEls.length === 0) continue;
+
+              const contactKey = this.extractContactKey();
+              if (!contactKey) continue;
+
+              for (const messageEl of messageEls) {
+                const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
+                if (message) callback(message);
               }
             }
           }
@@ -248,17 +276,6 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   private parseTime(timeText: string): number {
-    if (!timeText) return Date.now();
-
-    const timeMatch = timeText.match(/(\d{1,2}):(\d{2})/);
-    if (timeMatch) {
-      const now = new Date();
-      now.setHours(parseInt(timeMatch[1], 10));
-      now.setMinutes(parseInt(timeMatch[2], 10));
-      now.setSeconds(0);
-      return now.getTime();
-    }
-
-    return Date.now();
+    return parseTimestampFromText(timeText);
   }
 }
