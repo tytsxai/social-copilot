@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { buildMessageId, parseTimestampFromText } from './base';
+import { buildMessageId, parseTimestampFromText, queryFirst } from './base';
 
 /**
  * Telegram Web 适配器
@@ -12,9 +12,10 @@ export class TelegramAdapter implements PlatformAdapter {
   readonly platform = 'telegram' as const;
 
   private observer: MutationObserver | null = null;
-  private version: 'k' | 'a' | null = null;
+  private version: 'k' | 'a' = 'k';
   private isDisposed = false;
   private setupTimeoutId: number | null = null;
+  private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
 
   // K 版本选择器
   private readonly selectorsK = {
@@ -57,9 +58,10 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   private findChatContainer(): HTMLElement | null {
-    for (const selector of this.selectors.chatContainer.split(', ')) {
-      const el = document.querySelector(selector) as HTMLElement;
-      if (el) return el;
+    const found = queryFirst<HTMLElement>(this.selectors.chatContainer);
+    if (found) {
+      this.selectorHints.chatContainer = found.selector;
+      return found.element;
     }
     return null;
   }
@@ -119,6 +121,8 @@ export class TelegramAdapter implements PlatformAdapter {
     const messages: Message[] = [];
     const contactKey = this.extractContactKey();
     if (!contactKey) return messages;
+
+    this.selectorHints.message = this.selectors.message;
 
     const container = this.findChatContainer();
     const messageEls = (container ?? document).querySelectorAll(this.selectors.message);
@@ -183,9 +187,10 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   getInputElement(): HTMLElement | null {
-    for (const selector of this.selectors.inputBox.split(', ')) {
-      const el = document.querySelector(selector) as HTMLElement;
-      if (el) return el;
+    const found = queryFirst<HTMLElement>(this.selectors.inputBox);
+    if (found) {
+      this.selectorHints.inputBox = found.selector;
+      return found.element;
     }
     return null;
   }
@@ -277,5 +282,12 @@ export class TelegramAdapter implements PlatformAdapter {
 
   private parseTime(timeText: string): number {
     return parseTimestampFromText(timeText);
+  }
+
+  getRuntimeInfo() {
+    return {
+      variant: this.version,
+      selectorHints: { ...this.selectorHints },
+    };
   }
 }

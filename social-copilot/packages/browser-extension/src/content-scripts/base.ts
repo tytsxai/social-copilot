@@ -29,7 +29,9 @@ export class CopilotContentScript {
   private lastUsingFallback = false;
 
   private isGenerating = false;
-  private queuedGenerate: { thoughtDirection?: ThoughtType; skipThoughtAnalysis: boolean } | null = null;
+  private queuedGenerate:
+    | { thoughtDirection?: ThoughtType; skipThoughtAnalysis: boolean; source: 'manual' | 'auto' }
+    | null = null;
   private activeGenerateToken = 0;
   private inFlightGenerateToken: number | null = null;
   private inFlightEpoch: number | null = null;
@@ -39,6 +41,12 @@ export class CopilotContentScript {
   private incomingDebounceTimer: number | null = null;
   private pendingIncomingMessage: Message | null = null;
   private readonly incomingDebounceMs = 600;
+
+  private consecutiveAdapterFailures = 0;
+  private autoDisabled = false;
+  private autoRecoveryTimer: number | null = null;
+  private readonly adapterFailureThreshold = 3;
+  private readonly autoRecoveryDelayMs = 5000;
 
   constructor(options: CopilotContentScriptOptions) {
     this.options = options;
@@ -92,6 +100,11 @@ export class CopilotContentScript {
     }
     this.pendingIncomingMessage = null;
 
+    if (this.autoRecoveryTimer !== null) {
+      clearTimeout(this.autoRecoveryTimer);
+      this.autoRecoveryTimer = null;
+    }
+
     // Cancel queued/in-flight state (best-effort; does not abort background request).
     this.queuedGenerate = null;
     this.isGenerating = false;
@@ -121,6 +134,13 @@ export class CopilotContentScript {
     }
     this.pendingIncomingMessage = null;
 
+    if (this.autoRecoveryTimer !== null) {
+      clearTimeout(this.autoRecoveryTimer);
+      this.autoRecoveryTimer = null;
+    }
+    this.consecutiveAdapterFailures = 0;
+    this.autoDisabled = false;
+
     // Do not carry over any queued generation to the next conversation.
     // Also release the lock so the new conversation can generate immediately.
     this.queuedGenerate = null;
@@ -133,12 +153,20 @@ export class CopilotContentScript {
     this.lastUsingFallback = false;
     this.ui.hide();
     this.ui.setThoughtCards([]);
+
+    const epoch = this.conversationEpoch;
+    window.setTimeout(() => {
+      if (this.isDestroyed) return;
+      if (epoch !== this.conversationEpoch) return;
+      this.reportAdapterHealth();
+    }, 500);
   }
 
   private reportAdapterHealth() {
     try {
       const input = this.adapter.getInputElement();
       const contactKey = this.adapter.extractContactKey();
+      const runtimeInfo = this.adapter.getRuntimeInfo?.();
       const messages = this.adapter.extractMessages(1);
       const ok = Boolean(input && contactKey);
       const reason = !input ? 'no_input' : !contactKey ? 'no_contact' : 'ok';
@@ -161,6 +189,8 @@ export class CopilotContentScript {
           host: location.host,
           pathname: location.pathname,
           ok,
+          adapterVariant: runtimeInfo?.variant,
+          adapterSelectorHints: runtimeInfo?.selectorHints,
           hasInput: Boolean(input),
           hasContactKey: Boolean(contactKey),
           messageCount: messages.length,
@@ -197,6 +227,35 @@ export class CopilotContentScript {
       }
     } catch {
       // Ignore
+    }
+  }
+
+  private recordAdapterFailure() {
+    this.consecutiveAdapterFailures += 1;
+    if (this.consecutiveAdapterFailures < this.adapterFailureThreshold) return;
+
+    this.autoDisabled = true;
+    this.ui.setError(this.options.adapterBrokenMessage);
+    this.ui.show();
+    this.reportAdapterHealth();
+
+    if (this.autoRecoveryTimer === null) {
+      const epoch = this.conversationEpoch;
+      this.autoRecoveryTimer = window.setTimeout(() => {
+        this.autoRecoveryTimer = null;
+        if (this.isDestroyed) return;
+        if (epoch !== this.conversationEpoch) return;
+
+        const input = this.adapter.getInputElement();
+        const contactKey = this.adapter.extractContactKey();
+        if (input && contactKey) {
+          this.consecutiveAdapterFailures = 0;
+          this.autoDisabled = false;
+          this.ui.hide();
+        }
+
+        this.reportAdapterHealth();
+      }, this.autoRecoveryDelayMs);
     }
   }
 
@@ -256,6 +315,11 @@ export class CopilotContentScript {
     if (message.direction !== 'incoming') return;
     if (message.id === this.lastMessageId) return;
 
+    if (this.autoDisabled) {
+      this.lastMessageId = message.id;
+      return;
+    }
+
     this.lastMessageId = message.id;
     this.pendingIncomingMessage = message;
     const epoch = this.conversationEpoch;
@@ -281,12 +345,15 @@ export class CopilotContentScript {
     if (this.isDestroyed) return;
     if (epoch !== this.conversationEpoch) return;
     const contactKey = this.adapter.extractContactKey();
-    if (!contactKey) return;
+    if (!contactKey) {
+      this.recordAdapterFailure();
+      return;
+    }
     this.currentContactKey = contactKey;
 
     const messages = this.adapter.extractMessages(10);
     await this.updateThoughtCards(contactKey, messages, currentMessage, epoch);
-    await this.generateSuggestions(undefined, true, epoch);
+    await this.generateSuggestions(undefined, true, epoch, 'auto');
   }
 
   private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message, epoch: number) {
@@ -317,7 +384,7 @@ export class CopilotContentScript {
 
   private async handleThoughtSelect(thought: ThoughtType | null) {
     if (this.isDestroyed) return;
-    await this.generateSuggestions(thought ?? undefined);
+    await this.generateSuggestions(thought ?? undefined, false, undefined, 'manual');
   }
 
   private updateProviderNotice(response: { provider?: unknown; model?: unknown; usingFallback?: unknown }) {
@@ -344,7 +411,12 @@ export class CopilotContentScript {
     return messages[messages.length - 1];
   }
 
-  private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false, epoch?: number) {
+  private async generateSuggestions(
+    thoughtDirection?: ThoughtType,
+    skipThoughtAnalysis = false,
+    epoch?: number,
+    source: 'manual' | 'auto' = 'manual'
+  ) {
     if (this.isDestroyed) return;
     const currentEpoch = epoch ?? this.conversationEpoch;
     if (currentEpoch !== this.conversationEpoch) return;
@@ -352,13 +424,18 @@ export class CopilotContentScript {
     if (this.isGenerating) {
       // Only queue within the same conversation epoch; cross-epoch generations should not be chained.
       if (this.inFlightEpoch === currentEpoch) {
-        this.queuedGenerate = { thoughtDirection, skipThoughtAnalysis };
+        this.queuedGenerate = { thoughtDirection, skipThoughtAnalysis, source };
       }
       return;
     }
 
     const contactKey = this.adapter.extractContactKey();
     if (!contactKey) {
+      if (source === 'auto') {
+        this.recordAdapterFailure();
+        return;
+      }
+
       if (!skipThoughtAnalysis) {
         this.ui.setError('无法识别当前聊天对象，请刷新页面或更新扩展。');
         this.ui.show();
@@ -369,12 +446,20 @@ export class CopilotContentScript {
 
     const messages = this.adapter.extractMessages(10);
     if (messages.length === 0) {
+      if (source === 'auto') {
+        this.recordAdapterFailure();
+        return;
+      }
+
       if (!skipThoughtAnalysis) {
         this.ui.setError('未能读取聊天消息，请刷新页面后重试。');
         this.ui.show();
       }
       return;
     }
+
+    this.consecutiveAdapterFailures = 0;
+    if (source === 'auto') this.autoDisabled = false;
 
     this.isGenerating = true;
     this.inFlightEpoch = currentEpoch;
@@ -432,7 +517,7 @@ export class CopilotContentScript {
         if (!this.isDestroyed && this.queuedGenerate && currentEpoch === this.conversationEpoch) {
           const queued = this.queuedGenerate;
           this.queuedGenerate = null;
-          void this.generateSuggestions(queued.thoughtDirection, queued.skipThoughtAnalysis);
+          void this.generateSuggestions(queued.thoughtDirection, queued.skipThoughtAnalysis, undefined, queued.source);
         }
       }
     }

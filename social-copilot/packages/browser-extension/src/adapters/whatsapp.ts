@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { buildMessageId, parseTimestampFromText } from './base';
+import { buildMessageId, parseTimestampFromText, queryFirst } from './base';
 
 /**
  * WhatsApp Web 适配器
@@ -13,25 +13,99 @@ export class WhatsAppAdapter implements PlatformAdapter {
   private isDisposed = false;
   private setupTimeoutId: number | null = null;
 
-  private readonly selectors = {
-    chatContainer: '#main .copyable-area [role="application"]',
-    message: '[data-id]',
-    messageOut: '.message-out',
-    messageIn: '.message-in',
-    messageText: '.copyable-text [class*="selectable-text"]',
-    senderName: '[data-pre-plain-text]',
-    chatTitle: '#main header [title]',
-    chatSubtitle: '#main header span[title]',
-    inputBox: '#main footer [contenteditable="true"]',
-    time: '[data-pre-plain-text]',
+  private variant: 'legacy' | 'testid' = 'legacy';
+  private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
+
+  private readonly selectorVariants: Record<
+    'legacy' | 'testid',
+    {
+      chatContainer: string;
+      message: string;
+      messageOut: string;
+      messageIn: string;
+      messageText: string;
+      senderName: string;
+      chatTitle: string;
+      chatSubtitle: string;
+      inputBox: string;
+      time: string;
+    }
+  > = {
+    legacy: {
+      chatContainer: '#main .copyable-area [role="application"]',
+      message: '[data-id]',
+      messageOut: '.message-out',
+      messageIn: '.message-in',
+      messageText: '.copyable-text [class*="selectable-text"]',
+      senderName: '[data-pre-plain-text]',
+      chatTitle: '#main header [title]',
+      chatSubtitle: '#main header span[title]',
+      inputBox: '#main footer [contenteditable="true"]',
+      time: '[data-pre-plain-text]',
+    },
+    testid: {
+      chatContainer: '#main [data-testid="conversation-panel-body"] [role="application"], #main [role="application"]',
+      message: '[data-id], [data-testid="msg-container"]',
+      messageOut: '.message-out',
+      messageIn: '.message-in',
+      messageText: '[data-testid="msg-text"], .copyable-text [class*="selectable-text"], [class*="selectable-text"]',
+      senderName: '[data-pre-plain-text]',
+      chatTitle: '#main header [title], header [title]',
+      chatSubtitle: '#main header span[title], header span[title]',
+      inputBox:
+        '#main [data-testid="conversation-compose-box-input"][contenteditable="true"], #main [data-testid="conversation-compose-box-input"] [contenteditable="true"], #main footer [contenteditable="true"]',
+      time: '[data-pre-plain-text]',
+    },
   };
 
   isMatch(): boolean {
     return window.location.hostname === 'web.whatsapp.com';
   }
 
+  private resolveVariant(): void {
+    const current = queryFirst<HTMLElement>(this.selectorVariants[this.variant].inputBox);
+    if (current) return;
+
+    const order: Array<'legacy' | 'testid'> = ['legacy', 'testid'];
+    for (const candidate of order) {
+      const found = queryFirst<HTMLElement>(this.selectorVariants[candidate].inputBox);
+      if (found) {
+        this.variant = candidate;
+        return;
+      }
+    }
+  }
+
+  private get selectors() {
+    this.resolveVariant();
+    return this.selectorVariants[this.variant];
+  }
+
   private findChatContainer(): HTMLElement | null {
-    return document.querySelector(this.selectors.chatContainer) as HTMLElement;
+    const found = queryFirst<HTMLElement>(this.selectors.chatContainer);
+    if (found) {
+      this.selectorHints.chatContainer = found.selector;
+      return found.element;
+    }
+
+    const main = document.querySelector('#main');
+    const messageEl = queryFirst<HTMLElement>(this.selectors.message, main ?? document);
+    if (messageEl) {
+      const appRoot = messageEl.element.closest('[role="application"]') as HTMLElement | null;
+      if (appRoot) {
+        this.selectorHints.chatContainer = 'fallback:[role="application"]';
+        return appRoot;
+      }
+      this.selectorHints.chatContainer = 'fallback:message_parent';
+      return messageEl.element.parentElement as HTMLElement | null;
+    }
+
+    if (main) {
+      this.selectorHints.chatContainer = '#main';
+      return main as HTMLElement;
+    }
+
+    return null;
   }
 
   private extractChatJidFromDataId(dataId: string): { jid: string; isGroup: boolean } | null {
@@ -103,6 +177,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
     const contactKey = this.extractContactKey();
     if (!contactKey) return messages;
 
+    this.selectorHints.message = this.selectors.message;
+
     const container = this.findChatContainer();
     const messageEls = (container ?? document).querySelectorAll(this.selectors.message);
     const recentEls = Array.from(messageEls).slice(-limit);
@@ -164,7 +240,12 @@ export class WhatsAppAdapter implements PlatformAdapter {
   }
 
   getInputElement(): HTMLElement | null {
-    return document.querySelector(this.selectors.inputBox) as HTMLElement;
+    const found = queryFirst<HTMLElement>(this.selectors.inputBox);
+    if (found) {
+      this.selectorHints.inputBox = found.selector;
+      return found.element;
+    }
+    return null;
   }
 
   fillInput(text: string): boolean {
@@ -251,6 +332,13 @@ export class WhatsAppAdapter implements PlatformAdapter {
       
       this.observer?.disconnect();
       this.observer = null;
+    };
+  }
+
+  getRuntimeInfo() {
+    return {
+      variant: this.variant,
+      selectorHints: { ...this.selectorHints },
     };
   }
 }

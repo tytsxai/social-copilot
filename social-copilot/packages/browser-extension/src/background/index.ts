@@ -585,6 +585,8 @@ async function dispatchMessage(
           app: payload?.app,
           host: payload?.host,
           pathname: payload?.pathname,
+          adapterVariant: payload?.adapterVariant,
+          adapterSelectorHints: payload?.adapterSelectorHints,
           hasInput: payload?.hasInput,
           hasContactKey: payload?.hasContactKey,
           messageCount: payload?.messageCount,

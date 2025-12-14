@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { buildMessageId, parseTimestampFromText } from './base';
+import { buildMessageId, parseTimestampFromText, queryFirst } from './base';
 
 /**
  * Slack Web 适配器
@@ -12,14 +12,17 @@ export class SlackAdapter implements PlatformAdapter {
   private observer: MutationObserver | null = null;
   private isDisposed = false;
   private setupTimeoutId: number | null = null;
+  private variant: 'virtual_list' | 'scroller' | 'fallback' = 'virtual_list';
+  private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
 
   private readonly selectors = {
-    chatContainer: '.c-virtual_list__scroll_container',
+    chatContainer: '.c-virtual_list__scroll_container, .p-message_pane__scroller',
     message: '[data-qa="message_container"]',
     messageText: '.c-message__body, .p-rich_text_section',
     senderName: '[data-qa="message_sender_name"]',
     chatTitle: '[data-qa="channel_name"], .p-view_header__channel_title',
-    inputBox: '[data-qa="message_input"] .ql-editor, [data-qa="message_input"] [contenteditable="true"]',
+    inputBox:
+      '[data-qa="message_input"] .ql-editor, [data-qa="message_input"] [role="textbox"][contenteditable="true"], [data-qa="message_input"] [contenteditable="true"]',
     time: '[data-qa="message_time"]',
   };
 
@@ -28,7 +31,24 @@ export class SlackAdapter implements PlatformAdapter {
   }
 
   private findChatContainer(): HTMLElement | null {
-    return document.querySelector(this.selectors.chatContainer) as HTMLElement;
+    const found = queryFirst<HTMLElement>(this.selectors.chatContainer);
+    if (found) {
+      this.selectorHints.chatContainer = found.selector;
+      if (found.selector.includes('c-virtual_list__scroll_container')) {
+        this.variant = 'virtual_list';
+      } else if (found.selector.includes('p-message_pane__scroller')) {
+        this.variant = 'scroller';
+      }
+      return found.element;
+    }
+
+    const messageEl = queryFirst<HTMLElement>(this.selectors.message);
+    if (messageEl?.element.parentElement) {
+      this.variant = 'fallback';
+      this.selectorHints.chatContainer = 'fallback:message_parent';
+      return messageEl.element.parentElement as HTMLElement;
+    }
+    return null;
   }
 
   private getCurrentUserId(): string | null {
@@ -98,6 +118,8 @@ export class SlackAdapter implements PlatformAdapter {
     const contactKey = this.extractContactKey();
     if (!contactKey) return messages;
 
+    this.selectorHints.message = this.selectors.message;
+
     const container = this.findChatContainer();
     const messageEls = (container ?? document).querySelectorAll(this.selectors.message);
     const recentEls = Array.from(messageEls).slice(-limit);
@@ -150,9 +172,10 @@ export class SlackAdapter implements PlatformAdapter {
   }
 
   getInputElement(): HTMLElement | null {
-    for (const selector of this.selectors.inputBox.split(', ')) {
-      const el = document.querySelector(selector) as HTMLElement;
-      if (el) return el;
+    const found = queryFirst<HTMLElement>(this.selectors.inputBox);
+    if (found) {
+      this.selectorHints.inputBox = found.selector;
+      return found.element;
     }
     return null;
   }
@@ -163,20 +186,18 @@ export class SlackAdapter implements PlatformAdapter {
 
     input.focus();
 
-    if (input.classList.contains('ql-editor')) {
-      // 使用纯文本插入，避免将模型输出作为 HTML 解析
-      input.textContent = '';
-      const inserted = typeof document.execCommand === 'function'
-        ? document.execCommand('insertText', false, text)
-        : false;
-      if (!inserted) {
-        input.textContent = text;
-      }
-      input.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    } else {
+    // 使用纯文本插入，避免将模型输出作为 HTML 解析
+    input.textContent = '';
+    const inserted = typeof document.execCommand === 'function'
+      ? document.execCommand('insertText', false, text)
+      : false;
+    if (!inserted) {
       input.textContent = text;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
     }
+    const event = typeof InputEvent === 'function'
+      ? new InputEvent('input', { bubbles: true, data: text })
+      : new Event('input', { bubbles: true });
+    input.dispatchEvent(event);
 
     return true;
   }
@@ -248,5 +269,12 @@ export class SlackAdapter implements PlatformAdapter {
 
   private parseTime(timeText: string): number {
     return parseTimestampFromText(timeText);
+  }
+
+  getRuntimeInfo() {
+    return {
+      variant: this.variant,
+      selectorHints: { ...this.selectorHints },
+    };
   }
 }

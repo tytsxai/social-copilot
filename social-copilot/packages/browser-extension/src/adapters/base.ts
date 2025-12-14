@@ -1,6 +1,13 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import { contactKeyToString } from '@social-copilot/core';
 
+export interface AdapterRuntimeInfo {
+  /** Adapter layout/version variant selected at runtime */
+  variant?: string;
+  /** Which selectors actually matched on the current page */
+  selectorHints?: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>>;
+}
+
 /**
  * 平台适配器接口
  * 每个聊天平台实现一个适配器
@@ -26,6 +33,28 @@ export interface PlatformAdapter {
   
   /** 监听新消息 */
   onNewMessage(callback: (message: Message) => void): () => void;
+
+  /** Optional runtime information for diagnostics */
+  getRuntimeInfo?(): AdapterRuntimeInfo;
+}
+
+export function splitSelectors(selectors: string): string[] {
+  return selectors
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function queryFirst<T extends Element = Element>(
+  selectors: string | string[],
+  root: ParentNode = document
+): { element: T; selector: string } | null {
+  const list = Array.isArray(selectors) ? selectors : splitSelectors(selectors);
+  for (const selector of list) {
+    const el = root.querySelector(selector);
+    if (el) return { element: el as T, selector };
+  }
+  return null;
 }
 
 /**

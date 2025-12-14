@@ -73,6 +73,8 @@ describe('Platform adapters (contract)', () => {
     `;
 
     const adapter = new WhatsAppAdapter();
+    adapter.getInputElement();
+    expect(adapter.getRuntimeInfo?.()?.variant).toBe('legacy');
     const contactKey = adapter.extractContactKey();
     expect(contactKey).not.toBeNull();
     expect(contactKey!.app).toBe('whatsapp');
@@ -93,6 +95,37 @@ describe('Platform adapters (contract)', () => {
     const ok = adapter.fillInput('hello!');
     expect(ok).toBe(true);
     expect(document.querySelector('#main footer [contenteditable="true"]')?.textContent).toBe('hello!');
+  });
+
+  test('WhatsApp: selector variant fallback (testid) + fillInput', () => {
+    localStorage.setItem('last-wid', '"111@c.us"');
+    document.body.innerHTML = `
+      <div id="main">
+        <header>
+          <div title="Bob"></div>
+          <span title="participants"></span>
+        </header>
+        <div data-testid="conversation-panel-body">
+          <div role="application">
+            <div data-id="false_222@g.us_ABC" class="message-in">
+              <div data-testid="msg-text"><span class="selectable-text">hello</span></div>
+              <div data-pre-plain-text="[12:34, 12/14/2025] Alice: "></div>
+            </div>
+          </div>
+        </div>
+        <div data-testid="conversation-compose-box-input" contenteditable="true"></div>
+      </div>
+    `;
+
+    const adapter = new WhatsAppAdapter();
+    const contactKey = adapter.extractContactKey();
+    expect(adapter.getRuntimeInfo?.()?.variant).toBe('testid');
+    expect(contactKey).not.toBeNull();
+    expect(contactKey!.conversationId).toBe('222@g.us');
+
+    const ok = adapter.fillInput('hello!');
+    expect(ok).toBe(true);
+    expect(document.querySelector('#main [data-testid="conversation-compose-box-input"]')?.textContent).toBe('hello!');
   });
 
   test('Slack: includes teamId accountId + stable message ids + fillInput', () => {
@@ -118,11 +151,34 @@ describe('Platform adapters (contract)', () => {
 
     const keyStr = contactKeyToString(contactKey!);
     const messages = adapter.extractMessages(10);
+    expect(adapter.getRuntimeInfo?.()?.variant).toBe('virtual_list');
     expect(messages).toHaveLength(1);
     expect(messages[0].id).toBe(`${keyStr}::m1`);
 
     const ok = adapter.fillInput('ping');
     expect(ok).toBe(true);
     expect(document.querySelector('[data-qa="message_input"] .ql-editor')?.textContent).toBe('ping');
+  });
+
+  test('Slack: selector variant fallback (scroller) + fillInput', () => {
+    window.history.replaceState({}, '', '/client/T123/C456');
+    document.body.innerHTML = `
+      <div data-qa="channel_name">general</div>
+      <div class="p-message_pane__scroller">
+        <div data-qa="message_container" data-qa-message-id="m1" data-sender-id="U2">
+          <span data-qa="message_sender_name">Bob</span>
+          <div class="c-message__body">Hello</div>
+          <span data-qa="message_time">12:34 PM</span>
+        </div>
+      </div>
+      <div data-qa="message_input"><div role="textbox" contenteditable="true"></div></div>
+    `;
+
+    const adapter = new SlackAdapter();
+    adapter.extractMessages(1);
+    expect(adapter.getRuntimeInfo?.()?.variant).toBe('scroller');
+    const ok = adapter.fillInput('ping');
+    expect(ok).toBe(true);
+    expect(document.querySelector('[data-qa="message_input"] [role="textbox"]')?.textContent).toBe('ping');
   });
 });
