@@ -1,6 +1,7 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
 import { parseReplyContent, ReplyParseError } from './reply-validation';
 import { fetchWithTimeout } from './fetch-with-timeout';
+import { applySystemPromptHooks, applyUserPromptHooks } from './prompt-hooks';
 
 /**
  * OpenAI API Provider
@@ -32,6 +33,9 @@ export class OpenAIProvider implements LLMProvider {
         ? this.getMemorySystemPrompt(input)
         : this.getReplySystemPrompt(input);
 
+    const finalSystemPrompt = applySystemPromptHooks(systemPrompt, input);
+    const finalPrompt = applyUserPromptHooks(prompt, input);
+
     const response = await fetchWithTimeout(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -41,8 +45,8 @@ export class OpenAIProvider implements LLMProvider {
       body: JSON.stringify({
         model: this.model,
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt },
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: finalPrompt },
         ],
         temperature: 0.8,
         max_tokens: maxTokens,

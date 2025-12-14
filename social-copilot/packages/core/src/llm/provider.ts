@@ -1,6 +1,7 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
 import { parseReplyContent, ReplyParseError } from './reply-validation';
 import { fetchWithTimeout } from './fetch-with-timeout';
+import { applySystemPromptHooks, applyUserPromptHooks } from './prompt-hooks';
 
 /**
  * DeepSeek API Provider
@@ -26,6 +27,10 @@ export class DeepSeekProvider implements LLMProvider {
       : task === 'memory_extraction'
         ? this.buildMemoryPrompt(input)
         : this.buildReplyPrompt(input);
+    const systemPrompt = this.getSystemPrompt(input);
+
+    const finalSystemPrompt = applySystemPromptHooks(systemPrompt, input);
+    const finalPrompt = applyUserPromptHooks(prompt, input);
 
     const response = await fetchWithTimeout(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -36,8 +41,8 @@ export class DeepSeekProvider implements LLMProvider {
       body: JSON.stringify({
         model: this.model,
         messages: [
-          { role: 'system', content: this.getSystemPrompt(input) },
-          { role: 'user', content: prompt },
+          { role: 'system', content: finalSystemPrompt },
+          { role: 'user', content: finalPrompt },
         ],
         temperature: 0.8,
         max_tokens: maxTokens,

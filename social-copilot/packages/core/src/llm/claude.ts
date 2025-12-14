@@ -1,6 +1,7 @@
 import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
 import { parseReplyContent, ReplyParseError } from './reply-validation';
 import { fetchWithTimeout } from './fetch-with-timeout';
+import { applySystemPromptHooks, applyUserPromptHooks } from './prompt-hooks';
 
 /**
  * Claude API Provider Configuration
@@ -55,6 +56,9 @@ export class ClaudeProvider implements LLMProvider {
         ? this.getMemorySystemPrompt(input)
         : this.getReplySystemPrompt(input);
 
+    const finalSystemPrompt = applySystemPromptHooks(systemPrompt, input);
+    const finalPrompt = applyUserPromptHooks(prompt, input);
+
     const response = await fetchWithTimeout(`${this.baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -65,9 +69,9 @@ export class ClaudeProvider implements LLMProvider {
       body: JSON.stringify({
         model: this.model,
         max_tokens: maxTokens,
-        system: systemPrompt,
+        system: finalSystemPrompt,
         messages: [
-          { role: 'user', content: prompt },
+          { role: 'user', content: finalPrompt },
         ],
       }),
       timeoutMs: 20_000,

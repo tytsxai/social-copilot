@@ -1,0 +1,142 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { LLMInput } from '../types';
+import { ClaudeProvider } from './claude';
+import { OpenAIProvider } from './openai';
+import { DeepSeekProvider } from './provider';
+import { clearPromptHooks, registerPromptHook } from './prompt-hooks';
+
+const input: LLMInput = {
+  context: {
+    contactKey: {
+      platform: 'web',
+      app: 'telegram',
+      conversationId: 'c1',
+      peerId: 'p1',
+      isGroup: false,
+    },
+    recentMessages: [],
+    currentMessage: {
+      id: 'm1',
+      contactKey: {
+        platform: 'web',
+        app: 'telegram',
+        conversationId: 'c1',
+        peerId: 'p1',
+        isGroup: false,
+      },
+      direction: 'incoming',
+      senderName: 'Alice',
+      text: 'hi',
+      timestamp: 0,
+    },
+  },
+  styles: ['casual'],
+  language: 'zh',
+};
+
+afterEach(() => {
+  clearPromptHooks();
+  vi.restoreAllMocks();
+});
+
+describe('prompt-hooks (providers)', () => {
+  it('OpenAIProvider applies system and user prompt hooks', async () => {
+    registerPromptHook({
+      name: 'mark',
+      transformSystemPrompt: (p) => `${p}\n<SYS_HOOK>`,
+      transformUserPrompt: (p) => `${p}\n<USR_HOOK>`,
+    });
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          { message: { content: JSON.stringify([{ style: 'casual', text: 'ok' }]) } },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const provider = new OpenAIProvider({ apiKey: 'test-key' });
+    await provider.generateReply(input);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, options] = fetchSpy.mock.calls[0];
+    const body = JSON.parse((options as RequestInit).body as string) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[0].content).toContain('<SYS_HOOK>');
+    expect(body.messages[1].role).toBe('user');
+    expect(body.messages[1].content).toContain('<USR_HOOK>');
+  });
+
+  it('DeepSeekProvider applies system and user prompt hooks', async () => {
+    registerPromptHook({
+      name: 'mark',
+      transformSystemPrompt: (p) => `${p}\n<SYS_HOOK>`,
+      transformUserPrompt: (p) => `${p}\n<USR_HOOK>`,
+    });
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          { message: { content: JSON.stringify([{ style: 'casual', text: 'ok' }]) } },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const provider = new DeepSeekProvider({ apiKey: 'test-key' });
+    await provider.generateReply(input);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, options] = fetchSpy.mock.calls[0];
+    const body = JSON.parse((options as RequestInit).body as string) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[0].content).toContain('<SYS_HOOK>');
+    expect(body.messages[1].role).toBe('user');
+    expect(body.messages[1].content).toContain('<USR_HOOK>');
+  });
+
+  it('ClaudeProvider applies system and user prompt hooks', async () => {
+    registerPromptHook({
+      name: 'mark',
+      transformSystemPrompt: (p) => `${p}\n<SYS_HOOK>`,
+      transformUserPrompt: (p) => `${p}\n<USR_HOOK>`,
+    });
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content: [
+          { text: JSON.stringify([{ style: 'casual', text: 'ok' }]) },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const provider = new ClaudeProvider({ apiKey: 'test-key' });
+    await provider.generateReply(input);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, options] = fetchSpy.mock.calls[0];
+    const body = JSON.parse((options as RequestInit).body as string) as {
+      system: string;
+      messages: Array<{ role: string; content: string }>;
+    };
+
+    expect(body.system).toContain('<SYS_HOOK>');
+    expect(body.messages[0].role).toBe('user');
+    expect(body.messages[0].content).toContain('<USR_HOOK>');
+  });
+});
+
