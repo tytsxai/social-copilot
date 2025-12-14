@@ -20,6 +20,13 @@ packages/*/.vite/
 .idea/
 .code/
 
+# Open-core private modules (kept local)
+private/**
+!private/README.md
+
+# Public export output
+public-export/
+
 # Logs
 npm-debug.log*
 pnpm-debug.log*
