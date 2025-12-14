@@ -153,7 +153,7 @@ interface LLMInput {
   /** 最大回复长度 */
   maxLength?: number;
   /** 任务类型 */
-  task?: 'reply' | 'profile_extraction';
+  task?: 'reply' | 'profile_extraction' | 'memory_extraction';
   /** 可选的回复方向（用于思路卡片） */
   thoughtDirection?: ThoughtType;
   /** 注入到提示词的思路提示 */
@@ -333,6 +333,7 @@ Anthropic Claude API 实现。
 interface ClaudeConfig {
   apiKey: string;
   model?: string;  // 默认: 'claude-sonnet-4-5'
+  baseUrl?: string;
 }
 
 class ClaudeProvider implements LLMProvider {
@@ -340,6 +341,25 @@ class ClaudeProvider implements LLMProvider {
   readonly name: string;  // 'claude'
   generateReply(input: LLMInput): Promise<LLMOutput>;
 }
+```
+
+### Prompt Hook（Open-core）
+
+用于在不修改核心 Provider 的情况下，对不同 Provider 的 system/user prompt 做可插拔增强。
+
+```typescript
+interface PromptHook {
+  name: string;
+  transformSystemPrompt?: (prompt: string, input: LLMInput) => string;
+  transformUserPrompt?: (prompt: string, input: LLMInput) => string;
+}
+
+function registerPromptHook(hook: PromptHook): void;
+function clearPromptHooks(): void;
+function getPromptHooks(): readonly PromptHook[];
+
+function applySystemPromptHooks(prompt: string, input: LLMInput): string;
+function applyUserPromptHooks(prompt: string, input: LLMInput): string;
 ```
 
 ### LLMManager
