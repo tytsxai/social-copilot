@@ -589,6 +589,11 @@ async function dispatchMessage(
           hasContactKey: payload?.hasContactKey,
           messageCount: payload?.messageCount,
           reason: payload?.reason,
+          inputTag: payload?.inputTag,
+          inputContentEditable: payload?.inputContentEditable,
+          inputRole: payload?.inputRole,
+          contactKeySummary: payload?.contactKeySummary,
+          lastMessageSummary: payload?.lastMessageSummary,
         },
       });
       return { success: true };

@@ -30,8 +30,15 @@ export class CopilotContentScript {
 
   private isGenerating = false;
   private queuedGenerate: { thoughtDirection?: ThoughtType; skipThoughtAnalysis: boolean } | null = null;
+  private activeGenerateToken = 0;
+  private inFlightGenerateToken: number | null = null;
+  private inFlightEpoch: number | null = null;
 
   private isDestroyed = false;
+  private conversationEpoch = 0;
+  private incomingDebounceTimer: number | null = null;
+  private pendingIncomingMessage: Message | null = null;
+  private readonly incomingDebounceMs = 600;
 
   constructor(options: CopilotContentScriptOptions) {
     this.options = options;
@@ -79,6 +86,18 @@ export class CopilotContentScript {
 
     console.log(`[Social Copilot] Destroying ${this.options.app} adapter...`);
 
+    if (this.incomingDebounceTimer !== null) {
+      clearTimeout(this.incomingDebounceTimer);
+      this.incomingDebounceTimer = null;
+    }
+    this.pendingIncomingMessage = null;
+
+    // Cancel queued/in-flight state (best-effort; does not abort background request).
+    this.queuedGenerate = null;
+    this.isGenerating = false;
+    this.inFlightGenerateToken = null;
+    this.inFlightEpoch = null;
+
     this.navigationCleanup?.();
     this.navigationCleanup = null;
 
@@ -94,6 +113,21 @@ export class CopilotContentScript {
   }
 
   private resetConversationState() {
+    this.conversationEpoch += 1;
+
+    if (this.incomingDebounceTimer !== null) {
+      clearTimeout(this.incomingDebounceTimer);
+      this.incomingDebounceTimer = null;
+    }
+    this.pendingIncomingMessage = null;
+
+    // Do not carry over any queued generation to the next conversation.
+    // Also release the lock so the new conversation can generate immediately.
+    this.queuedGenerate = null;
+    this.isGenerating = false;
+    this.inFlightGenerateToken = null;
+    this.inFlightEpoch = null;
+
     this.lastMessageId = null;
     this.currentContactKey = null;
     this.lastUsingFallback = false;
@@ -109,6 +143,17 @@ export class CopilotContentScript {
       const ok = Boolean(input && contactKey);
       const reason = !input ? 'no_input' : !contactKey ? 'no_contact' : 'ok';
 
+      const summarizeConversationId = (key: ContactKey): string => {
+        const id = key.conversationId || '';
+        if (!id) return 'missing';
+        if (id.includes('@g.us')) return 'wa_group_jid';
+        if (id.includes('@c.us') || id.includes('@s.whatsapp.net')) return 'wa_dm_jid';
+        if (id.startsWith('@')) return 'at_handle';
+        if (/^-?\d+$/.test(id)) return 'numeric';
+        if (/^[CDG][A-Z0-9]+$/.test(id)) return 'slack_like';
+        return 'other';
+      };
+
       void chrome.runtime.sendMessage({
         type: 'REPORT_ADAPTER_HEALTH',
         payload: {
@@ -120,6 +165,29 @@ export class CopilotContentScript {
           hasContactKey: Boolean(contactKey),
           messageCount: messages.length,
           reason,
+          inputTag: input?.tagName,
+          inputContentEditable: input?.getAttribute?.('contenteditable'),
+          inputRole: input?.getAttribute?.('role'),
+          contactKeySummary: contactKey
+            ? {
+                platform: contactKey.platform,
+                app: contactKey.app,
+                isGroup: contactKey.isGroup,
+                hasAccountId: Boolean(contactKey.accountId),
+                accountIdLen: (contactKey.accountId ?? '').length,
+                conversationIdKind: summarizeConversationId(contactKey),
+                conversationIdLen: (contactKey.conversationId ?? '').length,
+                peerIdLen: (contactKey.peerId ?? '').length,
+              }
+            : null,
+          lastMessageSummary: messages[0]
+            ? {
+                idLen: (messages[0].id ?? '').length,
+                dir: messages[0].direction,
+                senderLen: (messages[0].senderName ?? '').length,
+                textLen: (messages[0].text ?? '').length,
+              }
+            : null,
         },
       });
 
@@ -185,25 +253,45 @@ export class CopilotContentScript {
 
   private handleNewMessage(message: Message) {
     if (this.isDestroyed) return;
-    if (message.direction === 'incoming' && message.id !== this.lastMessageId) {
-      this.lastMessageId = message.id;
-      void this.analyzeAndGenerateSuggestions(message);
+    if (message.direction !== 'incoming') return;
+    if (message.id === this.lastMessageId) return;
+
+    this.lastMessageId = message.id;
+    this.pendingIncomingMessage = message;
+    const epoch = this.conversationEpoch;
+
+    if (this.incomingDebounceTimer !== null) {
+      clearTimeout(this.incomingDebounceTimer);
     }
+
+    this.incomingDebounceTimer = window.setTimeout(() => {
+      this.incomingDebounceTimer = null;
+      if (this.isDestroyed) return;
+      if (epoch !== this.conversationEpoch) return;
+
+      const latest = this.pendingIncomingMessage;
+      this.pendingIncomingMessage = null;
+      if (!latest) return;
+
+      void this.analyzeAndGenerateSuggestions(latest, epoch);
+    }, this.incomingDebounceMs);
   }
 
-  private async analyzeAndGenerateSuggestions(currentMessage: Message) {
+  private async analyzeAndGenerateSuggestions(currentMessage: Message, epoch: number) {
     if (this.isDestroyed) return;
+    if (epoch !== this.conversationEpoch) return;
     const contactKey = this.adapter.extractContactKey();
     if (!contactKey) return;
     this.currentContactKey = contactKey;
 
     const messages = this.adapter.extractMessages(10);
-    await this.updateThoughtCards(contactKey, messages, currentMessage);
-    await this.generateSuggestions(undefined, true);
+    await this.updateThoughtCards(contactKey, messages, currentMessage, epoch);
+    await this.generateSuggestions(undefined, true, epoch);
   }
 
-  private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message) {
+  private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message, epoch: number) {
     if (this.isDestroyed) return;
+    if (epoch !== this.conversationEpoch) return;
 
     try {
       const analyzeResponse = await chrome.runtime.sendMessage({
@@ -217,7 +305,7 @@ export class CopilotContentScript {
         },
       });
 
-      if (!this.isDestroyed && analyzeResponse?.cards) {
+      if (!this.isDestroyed && epoch === this.conversationEpoch && analyzeResponse?.cards) {
         this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
       }
     } catch (error) {
@@ -256,11 +344,16 @@ export class CopilotContentScript {
     return messages[messages.length - 1];
   }
 
-  private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false) {
+  private async generateSuggestions(thoughtDirection?: ThoughtType, skipThoughtAnalysis = false, epoch?: number) {
     if (this.isDestroyed) return;
+    const currentEpoch = epoch ?? this.conversationEpoch;
+    if (currentEpoch !== this.conversationEpoch) return;
 
     if (this.isGenerating) {
-      this.queuedGenerate = { thoughtDirection, skipThoughtAnalysis };
+      // Only queue within the same conversation epoch; cross-epoch generations should not be chained.
+      if (this.inFlightEpoch === currentEpoch) {
+        this.queuedGenerate = { thoughtDirection, skipThoughtAnalysis };
+      }
       return;
     }
 
@@ -284,13 +377,16 @@ export class CopilotContentScript {
     }
 
     this.isGenerating = true;
+    this.inFlightEpoch = currentEpoch;
+    const token = (this.activeGenerateToken += 1);
+    this.inFlightGenerateToken = token;
     this.ui.setLoading(true);
     this.ui.show();
 
     const currentMessage = this.pickCurrentMessage(messages);
 
     if (!skipThoughtAnalysis) {
-      await this.updateThoughtCards(contactKey, messages, currentMessage);
+      await this.updateThoughtCards(contactKey, messages, currentMessage, currentEpoch);
       if (this.isDestroyed) {
         this.isGenerating = false;
         return;
@@ -311,6 +407,8 @@ export class CopilotContentScript {
       });
 
       if (this.isDestroyed) return;
+      if (currentEpoch !== this.conversationEpoch) return;
+      if (token !== this.inFlightGenerateToken) return;
 
       if (response?.error) {
         this.ui.setError(response.error);
@@ -326,11 +424,16 @@ export class CopilotContentScript {
         this.ui.setError('生成建议失败');
       }
     } finally {
-      this.isGenerating = false;
-      if (!this.isDestroyed && this.queuedGenerate) {
-        const queued = this.queuedGenerate;
-        this.queuedGenerate = null;
-        void this.generateSuggestions(queued.thoughtDirection, queued.skipThoughtAnalysis);
+      if (token === this.inFlightGenerateToken) {
+        this.isGenerating = false;
+        this.inFlightGenerateToken = null;
+        this.inFlightEpoch = null;
+
+        if (!this.isDestroyed && this.queuedGenerate && currentEpoch === this.conversationEpoch) {
+          const queued = this.queuedGenerate;
+          this.queuedGenerate = null;
+          void this.generateSuggestions(queued.thoughtDirection, queued.skipThoughtAnalysis);
+        }
       }
     }
   }
@@ -367,4 +470,3 @@ export class CopilotContentScript {
     void this.generateSuggestions();
   }
 }
-

@@ -12,12 +12,14 @@
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "pnpm -r --filter \"./packages/*\" --if-present typecheck",
     "ci:local": "node scripts/ci-local.mjs",
+    "e2e:smoke": "pnpm build:extension && node scripts/e2e-smoke.mjs",
     "validate:release": "node scripts/validate-release.mjs",
     "package:extension": "node scripts/package-extension.mjs",
     "release:extension": "pnpm build:extension:release && pnpm validate:release && pnpm package:extension"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "playwright-core": "^1.57.0",
     "typescript": "^5.3.0",
     "eslint": "^8.55.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",

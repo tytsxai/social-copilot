@@ -56,6 +56,21 @@ pnpm release:extension
 pnpm ci:local
 ```
 
+### 本地端到端 Smoke（可选）
+
+需要你已在目标网站登录并进入任意聊天视图（否则会判定适配器健康失败）。
+
+```bash
+# 构建扩展并跑 Telegram/WhatsApp/Slack 三个平台 smoke
+pnpm e2e:smoke
+
+# 仅跑部分平台
+SC_E2E_TARGETS=telegram,slack pnpm e2e:smoke
+
+# 指定浏览器可执行文件路径（找不到 Chrome/Edge 时使用）
+SC_E2E_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" pnpm e2e:smoke
+```
+
 ### CI/CD
 
 - PR / Push：执行 `lint` / `typecheck` / `test` / `release:extension` 并上传 zip 产物
