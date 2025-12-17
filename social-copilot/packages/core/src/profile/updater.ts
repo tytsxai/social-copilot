@@ -1,4 +1,6 @@
 import type { Message, ContactProfile, LLMProvider } from '../types';
+import { parseJsonObjectFromText } from '../utils/json';
+import type { LLMInput } from '../types';
 
 /**
  * 画像更新器 - 从对话中自动提取并更新联系人画像
@@ -24,7 +26,8 @@ export class ProfileUpdater {
    */
   async extractProfileUpdates(
     messages: Message[],
-    existingProfile: ContactProfile
+    existingProfile: ContactProfile,
+    language: LLMInput['language'] = 'auto'
   ): Promise<Partial<ContactProfile>> {
     if (messages.length === 0) {
       return {};
@@ -43,7 +46,7 @@ export class ProfileUpdater {
         profile: existingProfile,
         memorySummary,
         styles: ['rational'],
-        language: 'zh',
+        language,
       });
 
       // 解析 LLM 返回的画像更新
@@ -77,10 +80,7 @@ export class ProfileUpdater {
     existing: ContactProfile
   ): Partial<ContactProfile> {
     try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return {};
-
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = parseJsonObjectFromText(content);
       const updates: Partial<ContactProfile> = {};
 
       // 合并兴趣（去重）
@@ -108,8 +108,11 @@ export class ProfileUpdater {
       }
 
       // 更新关系类型
-      if (parsed.relationshipType && parsed.relationshipType !== existing.relationshipType) {
-        updates.relationshipType = parsed.relationshipType;
+      if (typeof parsed.relationshipType === 'string' && parsed.relationshipType !== existing.relationshipType) {
+        const allowed = new Set(['friend', 'colleague', 'family', 'acquaintance', 'romantic', 'other']);
+        if (allowed.has(parsed.relationshipType)) {
+          updates.relationshipType = parsed.relationshipType as ContactProfile['relationshipType'];
+        }
       }
 
       // 追加备注

@@ -4,4 +4,5 @@ export * from './llm';
 export * from './profile';
 export * from './preference';
 export * from './thought';
-export * from './llm/reply-validation';
+export * from './privacy/sanitize';
+export { extractJsonArrayBlock, extractJsonObjectBlock, parseJsonObjectFromText } from './utils/json';

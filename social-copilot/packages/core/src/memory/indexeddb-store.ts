@@ -298,6 +298,36 @@ export class IndexedDBStore implements MemoryStore {
     }
   }
 
+  /**
+   * 删除某个联系人的全部消息（包含历史 key 变体，best-effort）
+   */
+  async deleteMessages(contactKey: ContactKey): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const keys = getContactKeyStrCandidates(contactKey);
+
+    for (const keyStr of keys) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = this.db!.transaction(STORES.messages, 'readwrite');
+        const store = tx.objectStore(STORES.messages);
+        const index = store.index('contactKey');
+        const request = index.openCursor(IDBKeyRange.only(keyStr));
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return;
+          cursor.delete();
+          cursor.continue();
+        };
+      });
+    }
+  }
+
   async getRecentMessages(contactKey: ContactKey, limit: number): Promise<Message[]> {
     if (!this.db) throw new Error('Database not initialized');
 
@@ -310,34 +340,34 @@ export class IndexedDBStore implements MemoryStore {
       // 优先使用复合索引按时间倒序扫描，避免全表扫描
       if (store.indexNames.contains('contactKeyTimestamp')) {
         const index = store.index('contactKeyTimestamp');
-        const results: Message[] = [];
+        const fetchForKey = (key: string): Promise<Message[]> =>
+          new Promise<Message[]>((resolveKey, rejectKey) => {
+            const range = IDBKeyRange.bound(
+              [key, Number.MIN_SAFE_INTEGER],
+              [key, Number.MAX_SAFE_INTEGER]
+            );
+            const request = index.openCursor(range, 'prev');
+            const results: Message[] = [];
 
-        const iterateKeys = (keys: string[]) => {
-          if (keys.length === 0 || results.length >= limit) {
-            resolve(results.reverse().slice(-limit));
-            return;
-          }
-          const currentKey = keys.shift()!;
-          const range = IDBKeyRange.bound([currentKey, Number.MIN_SAFE_INTEGER], [currentKey, Number.MAX_SAFE_INTEGER]);
-          const request = index.openCursor(range, 'prev');
+            request.onerror = () => rejectKey(request.error);
+            request.onsuccess = () => {
+              const cursor = request.result;
+              if (cursor && results.length < limit) {
+                results.push(cursor.value as Message);
+                cursor.continue();
+                return;
+              }
+              resolveKey(results);
+            };
+          });
 
-          request.onerror = () => reject(request.error);
-          request.onsuccess = () => {
-            const cursor = request.result;
-            if (cursor && results.length < limit) {
-              results.push(cursor.value as Message);
-              cursor.continue();
-            } else if (cursor) {
-              // 已够数量，停止
-              resolve(results.reverse().slice(-limit));
-            } else {
-              // 当前 key 结束，尝试下一个（兼容旧 key）
-              iterateKeys(keys);
-            }
-          };
-        };
-
-        iterateKeys([...uniqueKeys]);
+        Promise.all(uniqueKeys.map(fetchForKey))
+          .then((lists) => {
+            const merged = lists.flat();
+            merged.sort((a, b) => a.timestamp - b.timestamp);
+            resolve(merged.slice(-limit));
+          })
+          .catch((err) => reject(err));
         return;
       }
 
@@ -410,6 +440,27 @@ export class IndexedDBStore implements MemoryStore {
 
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve();
+    });
+  }
+
+  /**
+   * 删除联系人的画像（包含历史 key 变体，best-effort）
+   */
+  async deleteProfile(contactKey: ContactKey): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    const keys = getContactKeyStrCandidates(contactKey);
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.profiles, 'readwrite');
+      const store = tx.objectStore(STORES.profiles);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
+      for (const keyStr of keys) {
+        store.delete(keyStr);
+      }
     });
   }
 

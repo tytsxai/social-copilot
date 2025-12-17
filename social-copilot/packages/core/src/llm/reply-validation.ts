@@ -1,4 +1,5 @@
 import type { ReplyCandidate, ReplyStyle, LLMInput } from '../types';
+import { extractJsonBlock as extractJsonBlockImpl } from '../utils/json';
 
 /** Error used to signal invalid or malformed reply payloads. */
 export class ReplyParseError extends Error {
@@ -44,33 +45,8 @@ function normalizeReplyStyle(raw: unknown, fallback: ReplyStyle): ReplyStyle {
   return fallback;
 }
 
-/**
- * Attempt to extract the first JSON block (array or object) from a text blob.
- * Supports bracket-balanced scan to avoid greedy regex mistakes.
- */
 export function extractJsonBlock(text: string): string | null {
-  const candidates = [
-    { start: text.indexOf('['), startChar: '[', endChar: ']' },
-    { start: text.indexOf('{'), startChar: '{', endChar: '}' },
-  ]
-    .filter((item) => item.start !== -1)
-    .sort((a, b) => a.start - b.start);
-
-  for (const { start, startChar, endChar } of candidates) {
-    let depth = 0;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (ch === startChar) depth++;
-      else if (ch === endChar) {
-        depth--;
-        if (depth === 0) {
-          return text.slice(start, i + 1);
-        }
-      }
-    }
-  }
-
-  return null;
+  return extractJsonBlockImpl(text);
 }
 
 export function validateReplyCandidates(output: unknown): ValidationResult {
