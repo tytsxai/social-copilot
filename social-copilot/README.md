@@ -86,17 +86,19 @@ SC_E2E_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 ### 配置
 
 1. 点击扩展图标打开设置
-2. 选择模型提供商（DeepSeek / OpenAI / Claude）
-3. （可选）填写模型名称（不填则使用默认模型）
-4. 输入对应的 API Key
-5. （可选）开启备用模型并填写备用 API Key，实现自动故障转移（备用模型也可指定模型名称）
-6. 选择默认回复风格，以及每次生成的回复条数（2 或 3 条）
-7. 保存设置
+2. 勾选「隐私告知」确认（首次使用必选）
+3. 选择模型提供商（DeepSeek / OpenAI / Claude）
+4. （可选）填写模型名称（不填则使用默认模型）
+5. 输入对应的 API Key
+6. （可选）开启备用模型并填写备用 API Key，实现自动故障转移（备用模型也可指定模型名称）
+7. 选择默认回复风格，以及每次生成的回复条数（2 或 3 条）
+8. （可选）关闭「收到消息自动生成建议」，仅通过 `Alt+S` 手动触发
+9. 保存设置
 
 ### 使用
 
 1. 打开支持的聊天网站
-2. 收到消息时，右下角会自动弹出建议面板
+2. 默认收到消息时，右下角会自动弹出建议面板（可在设置中关闭自动生成）
 3. 先在顶部思路卡片中选择方向（如共情/解决方案/幽默）
 4. 点击候选回复即可填充到输入框
 5. 按 `Alt+S` 可手动触发建议
@@ -177,6 +179,10 @@ pnpm build
 - [开发指南](docs/DEVELOPMENT.md) - 环境配置、构建流程、调试技巧
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构、模块设计、数据流
 - [API 文档](docs/API.md) - 核心模块 API 参考
+- [隐私政策](docs/PRIVACY.md) - 数据处理与用户告知（上架用模板）
+- [商店文案](docs/STORE_COPY.md) - Chrome Web Store 文案模板
+- [提交流程](docs/STORE_SUBMISSION.md) - 商店字段对照与提交说明
+- [上线清单](docs/RELEASE_CHECKLIST.md) - Chrome Web Store 发布检查项
 - [产品规划](docs/PRODUCT_PLAN.md) - 功能规划、迭代计划
 - [贡献指南](docs/CONTRIBUTING.md) - 如何参与贡献
 - [更新日志](CHANGELOG.md) - 版本记录与变更说明
@@ -185,8 +191,11 @@ pnpm build
 
 - 所有聊天数据默认存储在浏览器本地（IndexedDB）
 - API Key 仅存储在本地，不会上传
-- 仅在生成回复时将必要的上下文发送到 AI 服务
+- 仅在生成回复时将必要的上下文发送到 AI 服务（可配置发送条数/字符预算）
+- 默认发送前做脱敏（邮箱/手机号/链接）与昵称匿名化（我/对方），可在设置中关闭
 - 不收集任何用户行为数据
+
+更详细的说明见：`docs/PRIVACY.md`。
 
 ## 贡献指南
 

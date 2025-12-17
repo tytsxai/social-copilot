@@ -42,10 +42,11 @@ export class ThoughtCardsComponent {
    */
   setCards(cards: ThoughtCard[]): void {
     this.cards = cards;
-    const availableTypes = new Set(cards.map(card => card.type));
+    const availableTypes = new Set(cards.map((card) => card.type));
 
     // 如果当前选中的思路不再可用，则重置选择
-    if (this.selectedThought && !availableTypes.has(this.selectedThought)) {
+    // 注意：当 cards 为空时，代表“暂无推荐”，不应清除用户的历史选择。
+    if (availableTypes.size > 0 && this.selectedThought && !availableTypes.has(this.selectedThought)) {
       this.selectedThought = null;
       this.saveSelection();
     }
@@ -98,14 +99,20 @@ export class ThoughtCardsComponent {
       const isActive = this.selectedThought === card.type;
       const activeClass = isActive ? 'sc-thought-card--active' : '';
       return `
-        <div class="sc-thought-card ${activeClass}" data-type="${card.type}">
-          <span class="sc-thought-icon">${card.icon}</span>
-          <span class="sc-thought-label">${card.label}</span>
+        <div class="sc-thought-card ${activeClass}" data-type="${this.escapeHtml(card.type)}">
+          <span class="sc-thought-icon">${this.escapeHtml(card.icon)}</span>
+          <span class="sc-thought-label">${this.escapeHtml(card.label)}</span>
         </div>
       `;
     }).join('');
 
     return cardsHtml;
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   private update(): void {

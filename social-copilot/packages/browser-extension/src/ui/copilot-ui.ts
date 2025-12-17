@@ -5,6 +5,7 @@ interface CopilotUIOptions {
   onSelect: (candidate: ReplyCandidate) => void;
   onRefresh: () => void;
   onThoughtSelect?: (thought: ThoughtType | null) => void;
+  onPrivacyAcknowledge?: () => void;
 }
 
 /**
@@ -17,15 +18,16 @@ export class CopilotUI {
   private isLoading = false;
   private error: string | null = null;
   private notification: string | null = null;
+  private privacyPrompt: string | null = null;
   private position: { top: number; left: number } | null = null;
   private dragStart: { x: number; y: number; top: number; left: number } | null = null;
   private readonly positionStorageKey = `sc-panel-pos-${location.host}`;
-  
+
   // 事件处理器引用，用于清理
   private closeHandler: (() => void) | null = null;
   private refreshHandler: (() => void) | null = null;
   private candidateClickHandler: ((e: Event) => void) | null = null;
-  
+
   // 思路卡片组件
   private thoughtCards: ThoughtCardsComponent;
 
@@ -49,7 +51,7 @@ export class CopilotUI {
     void this.restorePosition();
 
     this.bindEvents();
-    
+
     // 渲染思路卡片
     const contentEl = this.container.querySelector('.sc-content');
     if (contentEl) {
@@ -81,12 +83,14 @@ export class CopilotUI {
   setLoading(loading: boolean) {
     this.isLoading = loading;
     this.error = null;
+    this.privacyPrompt = null;
     this.update();
   }
 
   setError(error: string) {
     this.error = error;
     this.isLoading = false;
+    this.privacyPrompt = null;
     this.notification = null;
     this.update();
   }
@@ -95,6 +99,7 @@ export class CopilotUI {
     this.candidates = candidates;
     this.isLoading = false;
     this.error = null;
+    this.privacyPrompt = null;
     this.update();
     this.show();
   }
@@ -107,6 +112,23 @@ export class CopilotUI {
 
   clearNotification() {
     this.notification = null;
+    this.update();
+  }
+
+  setPrivacyPrompt(message: string) {
+    this.privacyPrompt = message;
+    this.isLoading = false;
+    this.error = null;
+    this.notification = null;
+    this.candidates = [];
+    this.thoughtCards.setCards([]);
+    this.update();
+    this.show();
+  }
+
+  clearPrivacyPrompt() {
+    if (!this.privacyPrompt) return;
+    this.privacyPrompt = null;
     this.update();
   }
 
@@ -140,6 +162,16 @@ export class CopilotUI {
 
   private renderContent(): string {
     const notice = this.renderNotification();
+
+    if (this.privacyPrompt) {
+      return `${notice}
+        <div class="sc-privacy">
+          <div class="sc-privacy-title">隐私提示</div>
+          <div class="sc-privacy-text">${this.escapeHtml(this.privacyPrompt)}</div>
+          <button class="sc-privacy-ack" type="button">我已理解，继续</button>
+          <div class="sc-privacy-sub">你也可以在扩展设置中随时调整脱敏/匿名化与发送范围。</div>
+        </div>`;
+    }
 
     if (this.isLoading) {
       return `${notice}<div class="sc-loading">正在生成建议...</div>`;
@@ -212,6 +244,11 @@ export class CopilotUI {
     // 使用事件委托处理候选项点击，避免重复绑定
     this.candidateClickHandler = (e: Event) => {
       const target = e.target as HTMLElement;
+      const ackBtn = target.closest('.sc-privacy-ack');
+      if (ackBtn) {
+        this.options.onPrivacyAcknowledge?.();
+        return;
+      }
       const candidateEl = target.closest('.sc-candidate');
       if (candidateEl) {
         const index = parseInt(candidateEl.getAttribute('data-index') || '0', 10);

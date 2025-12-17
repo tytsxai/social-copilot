@@ -138,6 +138,11 @@
   flex-wrap: wrap;
 }
 
+.sc-thought-cards:empty {
+  display: none;
+  padding: 0;
+}
+
 .sc-thought-card {
   display: flex;
   align-items: center;
@@ -176,4 +181,47 @@
 .sc-thought-label {
   font-weight: 500;
   white-space: nowrap;
+}
+
+/* 隐私提示 */
+.sc-privacy {
+  padding: 16px 12px;
+  border: 1px solid #e0e3ff;
+  border-radius: 10px;
+  background: #f7f8ff;
+  color: #333;
+}
+
+.sc-privacy-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.sc-privacy-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #444;
+  margin-bottom: 12px;
+}
+
+.sc-privacy-sub {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #666;
+}
+
+.sc-privacy-ack {
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  transition: opacity 0.2s;
+}
+
+.sc-privacy-ack:hover {
+  opacity: 0.9;
 }

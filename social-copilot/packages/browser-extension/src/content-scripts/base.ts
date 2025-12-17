@@ -23,10 +23,18 @@ export class CopilotContentScript {
   private unsubscribe: (() => void) | null = null;
   private navigationCleanup: (() => void) | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private storageChangeHandler: ((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void) | null = null;
 
   private lastMessageId: string | null = null;
   private currentContactKey: ContactKey | null = null;
   private lastUsingFallback = false;
+
+  private autoInGroups = false;
+  private autoTrigger = true;
+  private privacyAcknowledged = false;
+  private pendingPrivacyAckGenerate:
+    | { thoughtDirection?: ThoughtType; skipThoughtAnalysis: boolean; source: 'manual' | 'auto' }
+    | null = null;
 
   private isGenerating = false;
   private queuedGenerate:
@@ -55,6 +63,7 @@ export class CopilotContentScript {
       onSelect: (candidate) => this.handleSelect(candidate),
       onRefresh: () => this.handleRefresh(),
       onThoughtSelect: (thought) => this.handleThoughtSelect(thought),
+      onPrivacyAcknowledge: () => this.handlePrivacyAcknowledge(),
     });
   }
 
@@ -67,6 +76,9 @@ export class CopilotContentScript {
     }
 
     await this.waitForChat();
+    if (this.isDestroyed) return;
+
+    await this.loadLocalSettings();
     if (this.isDestroyed) return;
 
     this.ui.mount();
@@ -107,6 +119,7 @@ export class CopilotContentScript {
 
     // Cancel queued/in-flight state (best-effort; does not abort background request).
     this.queuedGenerate = null;
+    this.pendingPrivacyAckGenerate = null;
     this.isGenerating = false;
     this.inFlightGenerateToken = null;
     this.inFlightEpoch = null;
@@ -117,6 +130,11 @@ export class CopilotContentScript {
     if (this.keydownHandler) {
       document.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
+    }
+
+    if (this.storageChangeHandler) {
+      chrome.storage.onChanged.removeListener(this.storageChangeHandler);
+      this.storageChangeHandler = null;
     }
 
     this.unsubscribe?.();
@@ -144,6 +162,7 @@ export class CopilotContentScript {
     // Do not carry over any queued generation to the next conversation.
     // Also release the lock so the new conversation can generate immediately.
     this.queuedGenerate = null;
+    this.pendingPrivacyAckGenerate = null;
     this.isGenerating = false;
     this.inFlightGenerateToken = null;
     this.inFlightEpoch = null;
@@ -320,6 +339,11 @@ export class CopilotContentScript {
       return;
     }
 
+    if (!this.autoTrigger) {
+      this.lastMessageId = message.id;
+      return;
+    }
+
     this.lastMessageId = message.id;
     this.pendingIncomingMessage = message;
     const epoch = this.conversationEpoch;
@@ -349,11 +373,82 @@ export class CopilotContentScript {
       this.recordAdapterFailure();
       return;
     }
+    if (contactKey.isGroup && !this.autoInGroups) {
+      return;
+    }
     this.currentContactKey = contactKey;
 
     const messages = this.adapter.extractMessages(10);
+    if (!this.privacyAcknowledged) {
+      await this.generateSuggestions(undefined, false, epoch, 'auto');
+      return;
+    }
     await this.updateThoughtCards(contactKey, messages, currentMessage, epoch);
     await this.generateSuggestions(undefined, true, epoch, 'auto');
+  }
+
+  private async loadLocalSettings(): Promise<void> {
+    try {
+      const result = await chrome.storage.local.get(['autoInGroups', 'autoTrigger', 'privacyAcknowledged']);
+      this.autoInGroups = Boolean(result.autoInGroups);
+      this.autoTrigger = result.autoTrigger === undefined ? true : Boolean(result.autoTrigger);
+      this.privacyAcknowledged = Boolean(result.privacyAcknowledged);
+    } catch {
+      this.autoInGroups = false;
+      this.autoTrigger = true;
+      this.privacyAcknowledged = false;
+    }
+
+    this.storageChangeHandler = (changes, areaName) => {
+      if (areaName !== 'local') return;
+
+      const autoInGroupsChange = changes.autoInGroups;
+      if (autoInGroupsChange) {
+        this.autoInGroups = Boolean(autoInGroupsChange.newValue);
+      }
+
+      const autoTriggerChange = changes.autoTrigger;
+      if (autoTriggerChange) {
+        this.autoTrigger = autoTriggerChange.newValue === undefined ? true : Boolean(autoTriggerChange.newValue);
+      }
+
+      const privacyChange = changes.privacyAcknowledged;
+      if (privacyChange) {
+        this.privacyAcknowledged = Boolean(privacyChange.newValue);
+        if (this.privacyAcknowledged) {
+          this.ui.clearPrivacyPrompt();
+          const pending = this.pendingPrivacyAckGenerate;
+          this.pendingPrivacyAckGenerate = null;
+          if (pending && !this.isDestroyed) {
+            void this.generateSuggestions(pending.thoughtDirection, pending.skipThoughtAnalysis, undefined, pending.source);
+          }
+        }
+      }
+    };
+
+    chrome.storage.onChanged.addListener(this.storageChangeHandler);
+  }
+
+  private async handlePrivacyAcknowledge() {
+    if (this.isDestroyed) return;
+    const pending = this.pendingPrivacyAckGenerate;
+    this.pendingPrivacyAckGenerate = null;
+
+    try {
+      await chrome.runtime.sendMessage({ type: 'ACK_PRIVACY' });
+    } catch {
+      // Fallback: best-effort persist flag locally (background may still reject if not synced).
+      try {
+        await chrome.storage.local.set({ privacyAcknowledged: true });
+      } catch {
+        // ignore
+      }
+    }
+    this.privacyAcknowledged = true;
+    this.ui.clearPrivacyPrompt();
+    if (pending) {
+      void this.generateSuggestions(pending.thoughtDirection, pending.skipThoughtAnalysis, undefined, pending.source);
+    }
   }
 
   private async updateThoughtCards(contactKey: ContactKey, messages: Message[], currentMessage: Message, epoch: number) {
@@ -420,6 +515,14 @@ export class CopilotContentScript {
     if (this.isDestroyed) return;
     const currentEpoch = epoch ?? this.conversationEpoch;
     if (currentEpoch !== this.conversationEpoch) return;
+
+    if (!this.privacyAcknowledged) {
+      this.pendingPrivacyAckGenerate = { thoughtDirection, skipThoughtAnalysis, source };
+      this.ui.setPrivacyPrompt(
+        '生成建议时会将必要的对话上下文发送到你选择的第三方模型服务（如 DeepSeek / OpenAI / Claude）。默认会脱敏与匿名化，你可以在扩展设置中调整。'
+      );
+      return;
+    }
 
     if (this.isGenerating) {
       // Only queue within the same conversation epoch; cross-epoch generations should not be chained.

@@ -11,6 +11,15 @@ const apiKeyInput = document.getElementById('apiKey') as HTMLInputElement;
 const apiKeyHint = document.getElementById('apiKeyHint')!;
 const persistApiKeyCheckbox = document.getElementById('persistApiKey') as HTMLInputElement;
 const enableMemoryCheckbox = document.getElementById('enableMemory') as HTMLInputElement;
+const languageSelect = document.getElementById('language') as HTMLSelectElement;
+const autoInGroupsCheckbox = document.getElementById('autoInGroups') as HTMLInputElement;
+const autoTriggerCheckbox = document.getElementById('autoTrigger') as HTMLInputElement;
+const privacyAcknowledgedCheckbox = document.getElementById('privacyAcknowledged') as HTMLInputElement;
+const redactPiiCheckbox = document.getElementById('redactPii') as HTMLInputElement;
+const anonymizeSendersCheckbox = document.getElementById('anonymizeSenders') as HTMLInputElement;
+const contextMessageLimitInput = document.getElementById('contextMessageLimit') as HTMLInputElement;
+const maxCharsPerMessageInput = document.getElementById('maxCharsPerMessage') as HTMLInputElement;
+const maxTotalCharsInput = document.getElementById('maxTotalChars') as HTMLInputElement;
 const enableFallbackCheckbox = document.getElementById('enableFallback') as HTMLInputElement;
 const fallbackFields = document.getElementById('fallbackFields')!;
 const fallbackProviderSelect = document.getElementById('fallbackProvider') as HTMLSelectElement;
@@ -27,8 +36,25 @@ const debugEnabledCheckbox = document.getElementById('debugEnabled') as HTMLInpu
 const copyDiagnosticsBtn = document.getElementById('copyDiagnosticsBtn')!;
 const downloadDiagnosticsBtn = document.getElementById('downloadDiagnosticsBtn')!;
 const clearDiagnosticsBtn = document.getElementById('clearDiagnosticsBtn')!;
+const aboutVersionEl = document.getElementById('aboutVersion');
 
-let lastStatus: { hasApiKey?: boolean; hasFallback?: boolean; activeProvider?: string; activeModel?: string; debugEnabled?: boolean } | null = null;
+let lastStatus: {
+  hasApiKey?: boolean;
+  hasFallback?: boolean;
+  activeProvider?: string;
+  activeModel?: string;
+  debugEnabled?: boolean;
+  privacyAcknowledged?: boolean;
+  autoTrigger?: boolean;
+} | null = null;
+
+try {
+  if (aboutVersionEl) {
+    aboutVersionEl.textContent = `Social Copilot v${chrome.runtime.getManifest().version}`;
+  }
+} catch {
+  // ignore
+}
 
 // Tab 切换
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -117,21 +143,32 @@ function updateModelUi(
 
   hintEl.innerHTML = `不填写则使用默认：<code>${escapeHtml(meta.defaultModel)}</code>，<a href="${escapeHtml(
     meta.docsUrl
-  )}" target="_blank">查看模型列表</a>`;
+  )}" target="_blank" rel="noopener noreferrer">查看模型列表</a>`;
 }
 
 function updateApiKeyHint(provider: string, hintEl: HTMLElement) {
   if (provider === 'openai') {
-    hintEl.innerHTML = '<a href="https://platform.openai.com/api-keys" target="_blank">获取 OpenAI API Key</a>';
+    hintEl.innerHTML =
+      '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">获取 OpenAI API Key</a>';
   } else if (provider === 'claude') {
-    hintEl.innerHTML = '<a href="https://console.anthropic.com/" target="_blank">获取 Claude API Key</a>';
+    hintEl.innerHTML =
+      '<a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer">获取 Claude API Key</a>';
   } else {
-    hintEl.innerHTML = '<a href="https://platform.deepseek.com/" target="_blank">获取 DeepSeek API Key</a>';
+    hintEl.innerHTML =
+      '<a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">获取 DeepSeek API Key</a>';
   }
 }
 
 function toggleFallbackFields() {
   fallbackFields.classList.toggle('hidden', !enableFallbackCheckbox.checked);
+}
+
+function parseOptionalInt(input: HTMLInputElement): number | undefined {
+  const raw = input.value.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.floor(n);
 }
 
 // 检查状态
@@ -141,11 +178,21 @@ async function checkStatus() {
     lastStatus = response ?? null;
 
     if (response?.hasApiKey) {
+      const privacyOk = Boolean(response.privacyAcknowledged);
+      const autoTrigger = response.autoTrigger === undefined ? true : Boolean(response.autoTrigger);
+
+      if (!privacyOk) {
+        statusEl.className = 'status warning';
+        statusEl.textContent = '⚠ 已配置，但需确认隐私告知才能生成建议';
+        return;
+      }
+
       statusEl.className = 'status success';
       const providerText = response.activeProvider ? `当前提供商：${response.activeProvider}` : '已配置，准备就绪';
       const modelText = response.activeModel ? ` / ${response.activeModel}` : '';
       const fallbackText = response.hasFallback ? '，已启用备用模型' : '';
-      statusEl.textContent = `✓ ${providerText}${modelText}${fallbackText}`;
+      const autoText = autoTrigger ? '' : '，自动触发已关闭';
+      statusEl.textContent = `✓ ${providerText}${modelText}${fallbackText}${autoText}`;
     } else {
       statusEl.className = 'status warning';
       statusEl.textContent = '⚠ 请设置 API Key';
@@ -163,6 +210,15 @@ async function loadSettings() {
     'provider',
     'model',
     'styles',
+    'language',
+    'autoInGroups',
+    'autoTrigger',
+    'privacyAcknowledged',
+    'redactPii',
+    'anonymizeSenders',
+    'contextMessageLimit',
+    'maxCharsPerMessage',
+    'maxTotalChars',
     'fallbackProvider',
     'fallbackModel',
     'fallbackApiKey',
@@ -204,6 +260,27 @@ async function loadSettings() {
 
   persistApiKeyCheckbox.checked = Boolean(result.persistApiKey);
   enableMemoryCheckbox.checked = Boolean(result.enableMemory);
+  if (result.language === 'zh' || result.language === 'en' || result.language === 'auto') {
+    languageSelect.value = result.language;
+  } else {
+    languageSelect.value = 'auto';
+  }
+  autoInGroupsCheckbox.checked = Boolean(result.autoInGroups);
+  autoTriggerCheckbox.checked = result.autoTrigger === undefined ? true : Boolean(result.autoTrigger);
+  privacyAcknowledgedCheckbox.checked = Boolean(result.privacyAcknowledged);
+
+  // privacy defaults: true/true if missing
+  redactPiiCheckbox.checked = result.redactPii === undefined ? true : Boolean(result.redactPii);
+  anonymizeSendersCheckbox.checked = result.anonymizeSenders === undefined ? true : Boolean(result.anonymizeSenders);
+  if (typeof result.contextMessageLimit === 'number') {
+    contextMessageLimitInput.value = String(result.contextMessageLimit);
+  }
+  if (typeof result.maxCharsPerMessage === 'number') {
+    maxCharsPerMessageInput.value = String(result.maxCharsPerMessage);
+  }
+  if (typeof result.maxTotalChars === 'number') {
+    maxTotalCharsInput.value = String(result.maxTotalChars);
+  }
 
   if (result.suggestionCount === 2 || result.suggestionCount === 3) {
     suggestionCountSelect.value = String(result.suggestionCount);
@@ -228,11 +305,25 @@ saveBtn.addEventListener('click', async () => {
   const model = modelInput.value.trim();
   const persistApiKey = persistApiKeyCheckbox.checked;
   const enableMemory = enableMemoryCheckbox.checked;
+  const language = languageSelect.value;
+  const autoInGroups = autoInGroupsCheckbox.checked;
+  const autoTrigger = autoTriggerCheckbox.checked;
+  const privacyAcknowledged = privacyAcknowledgedCheckbox.checked;
+  const redactPii = redactPiiCheckbox.checked;
+  const anonymizeSenders = anonymizeSendersCheckbox.checked;
+  const contextMessageLimit = parseOptionalInt(contextMessageLimitInput);
+  const maxCharsPerMessage = parseOptionalInt(maxCharsPerMessageInput);
+  const maxTotalChars = parseOptionalInt(maxTotalCharsInput);
   const enableFallback = enableFallbackCheckbox.checked;
   const fallbackProvider = fallbackProviderSelect.value;
   const fallbackModel = fallbackModelInput.value.trim();
   const fallbackApiKey = fallbackApiKeyInput.value.trim();
   const suggestionCount = Number(suggestionCountSelect.value);
+
+  if (!privacyAcknowledged) {
+    alert('请先勾选「我已理解并同意隐私告知」');
+    return;
+  }
 
   if (!apiKey) {
     const status = lastStatus ?? (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }));
@@ -267,8 +358,17 @@ saveBtn.addEventListener('click', async () => {
     provider,
     model,
     styles,
+    language: language === 'zh' || language === 'en' || language === 'auto' ? language : 'auto',
+    autoInGroups,
+    autoTrigger,
+    privacyAcknowledged,
     persistApiKey,
     enableMemory,
+    redactPii,
+    anonymizeSenders,
+    contextMessageLimit,
+    maxCharsPerMessage,
+    maxTotalChars,
     enableFallback,
     fallbackProvider,
     fallbackModel,
@@ -323,11 +423,12 @@ async function loadContacts() {
             <div class="contact-avatar">${escapeHtml(contact.displayName.charAt(0).toUpperCase())}</div>
             <div class="contact-info">
               <div class="contact-name">${escapeHtml(contact.displayName)}</div>
-              <div class="contact-meta">${contact.app} · ${contact.messageCount} 条消息</div>
+            <div class="contact-meta">${contact.app} · ${contact.messageCount} 条消息</div>
             </div>
             <div class="contact-actions">
-              <button class="reset-btn" data-index="${index}">重置偏好</button>
-              <button class="reset-btn clear-memory-btn" data-index="${index}">清空记忆</button>
+              <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
+              <button class="clear-memory-btn" data-index="${index}">清空记忆</button>
+              <button class="clear-contact-btn" data-index="${index}">清除数据</button>
             </div>
           </div>
           <div class="style-stats">
@@ -342,7 +443,7 @@ async function loadContacts() {
         )
         .join('');
 
-      contactListEl.querySelectorAll<HTMLButtonElement>('.reset-btn').forEach((btn) => {
+      contactListEl.querySelectorAll<HTMLButtonElement>('.reset-pref-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const index = Number(btn.getAttribute('data-index') || '-1');
           const target = contactsWithPrefs[index];
@@ -363,6 +464,20 @@ async function loadContacts() {
           if (target && confirm(`清空 ${target.displayName} 的长期记忆？`)) {
             await chrome.runtime.sendMessage({
               type: 'CLEAR_CONTACT_MEMORY',
+              contactKey: target.key,
+            });
+            await loadContacts();
+          }
+        });
+      });
+
+      contactListEl.querySelectorAll<HTMLButtonElement>('.clear-contact-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const index = Number(btn.getAttribute('data-index') || '-1');
+          const target = contactsWithPrefs[index];
+          if (target && confirm(`清除 ${target.displayName} 的全部本地数据（消息/画像/偏好/记忆）？`)) {
+            await chrome.runtime.sendMessage({
+              type: 'CLEAR_CONTACT_DATA',
               contactKey: target.key,
             });
             await loadContacts();

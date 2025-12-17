@@ -209,7 +209,9 @@
       align-items: center;
       gap: 8px;
     }
-    .reset-btn {
+    .reset-pref-btn,
+    .clear-memory-btn,
+    .clear-contact-btn {
       padding: 6px 10px;
       border: 1px solid #ddd;
       border-radius: 6px;
@@ -219,7 +221,9 @@
       font-size: 12px;
       transition: all 0.2s;
     }
-    .reset-btn:hover {
+    .reset-pref-btn:hover,
+    .clear-memory-btn:hover,
+    .clear-contact-btn:hover {
       border-color: #667eea;
       color: #667eea;
     }
@@ -314,6 +318,19 @@
   <div id="settings" class="tab-content active">
     <div id="status" class="status warning">正在检查状态...</div>
 
+    <div class="fallback-card" style="margin-top: 12px;">
+      <div class="form-group" style="margin-bottom: 10px;">
+        <label style="font-weight: 600;">隐私告知（必选）</label>
+        <small class="muted">生成建议时会将必要的对话上下文发送到你选择的第三方模型服务</small>
+      </div>
+      <div class="form-group inline" style="margin-bottom: 0;">
+        <label for="privacyAcknowledged" style="margin: 0; font-weight: 600;">
+          <input type="checkbox" id="privacyAcknowledged">
+          我已理解并同意上述说明
+        </label>
+      </div>
+    </div>
+
     <div class="form-group">
       <label for="provider">模型提供商</label>
       <select id="provider">
@@ -334,7 +351,7 @@
       <label for="apiKey">API Key</label>
       <input type="password" id="apiKey" placeholder="sk-...">
       <small id="apiKeyHint">
-        <a href="https://platform.deepseek.com/" target="_blank">获取 DeepSeek API Key</a>
+        <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">获取 DeepSeek API Key</a>
       </small>
     </div>
 
@@ -352,6 +369,69 @@
         启用长期记忆
       </label>
       <small>后台会提炼并存储联系人摘要（默认关闭）</small>
+    </div>
+
+    <div class="form-group">
+      <label for="language">回复语言</label>
+      <select id="language">
+        <option value="auto">自动（推荐）</option>
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <small class="muted">选择 auto 时按当前对话自动决定中/英文输出</small>
+    </div>
+
+    <div class="form-group inline">
+      <label for="autoInGroups" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="autoInGroups">
+        群聊自动弹出
+      </label>
+      <small>默认关闭；群聊中仍可按 Alt+S 手动触发</small>
+    </div>
+
+    <div class="form-group inline">
+      <label for="autoTrigger" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="autoTrigger" checked>
+        收到消息自动生成建议
+      </label>
+      <small>关闭后仅可按 Alt+S 手动触发</small>
+    </div>
+
+    <div class="fallback-card" style="margin-top: 12px;">
+      <div class="form-group" style="margin-bottom: 10px;">
+        <label style="font-weight: 600;">隐私与发送范围</label>
+        <small class="muted">用于控制发送给模型的上下文大小与脱敏策略（不影响本地存储）</small>
+      </div>
+
+      <div class="form-group inline" style="margin-bottom: 10px;">
+        <label for="redactPii" style="margin: 0; font-weight: 600;">
+          <input type="checkbox" id="redactPii" checked>
+          发送前脱敏（邮箱/手机号/链接）
+        </label>
+      </div>
+
+      <div class="form-group inline" style="margin-bottom: 10px;">
+        <label for="anonymizeSenders" style="margin: 0; font-weight: 600;">
+          <input type="checkbox" id="anonymizeSenders" checked>
+          不发送昵称（用「我/对方」替代）
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label for="contextMessageLimit">发送最近消息条数</label>
+        <input type="number" id="contextMessageLimit" min="1" max="50" placeholder="10">
+        <small class="muted">仅影响发送给模型的上下文（当前消息始终包含）</small>
+      </div>
+
+      <div class="form-group">
+        <label for="maxCharsPerMessage">单条消息最大字符数</label>
+        <input type="number" id="maxCharsPerMessage" min="50" max="4000" placeholder="500">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 0;">
+        <label for="maxTotalChars">上下文总字符预算</label>
+        <input type="number" id="maxTotalChars" min="200" max="20000" placeholder="4000">
+      </div>
     </div>
 
     <div class="form-group inline">
@@ -380,10 +460,10 @@
       </div>
 
       <div class="form-group">
-        <label for="fallbackApiKey">备用 API Key</label>
-        <input type="password" id="fallbackApiKey" placeholder="sk-...">
-        <small id="fallbackApiKeyHint">
-          <a href="https://platform.deepseek.com/" target="_blank">获取 DeepSeek API Key</a>
+      <label for="fallbackApiKey">备用 API Key</label>
+      <input type="password" id="fallbackApiKey" placeholder="sk-...">
+      <small id="fallbackApiKeyHint">
+          <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">获取 DeepSeek API Key</a>
         </small>
       </div>
     </div>
@@ -425,7 +505,7 @@
   <!-- 关于页 -->
   <div id="about" class="tab-content">
     <div class="status info">
-      <strong>Social Copilot v0.1.0</strong><br>
+      <strong id="aboutVersion">Social Copilot</strong><br>
       AI 辅助社交伴侣
     </div>
     <p style="font-size: 13px; color: #666; line-height: 1.6;">
@@ -433,6 +513,12 @@
     </p>
     <p style="font-size: 13px; color: #666; line-height: 1.6; margin-top: 12px;">
       所有数据默认存储在本地，保护您的隐私。
+    </p>
+    <p style="font-size: 13px; color: #666; line-height: 1.6; margin-top: 12px;">
+      提示：生成回复时会将“必要的对话上下文”发送到你选择的第三方模型服务；可在设置页的「隐私与发送范围」中配置脱敏/匿名化与发送上限。
+    </p>
+    <p style="font-size: 12px; color: #888; line-height: 1.6; margin-top: 8px;">
+      上架发布时建议提供公开的隐私政策 URL（模板见项目文档 `docs/PRIVACY.md`）。
     </p>
     <button id="clearDataBtn" class="secondary">清除所有数据</button>
 

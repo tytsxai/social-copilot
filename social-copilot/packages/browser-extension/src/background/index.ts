@@ -1,4 +1,13 @@
-import { IndexedDBStore, ProfileUpdater, LLMManager, StylePreferenceManager, ThoughtAnalyzer, ReplyParseError } from '@social-copilot/core';
+import {
+  IndexedDBStore,
+  ProfileUpdater,
+  LLMManager,
+  StylePreferenceManager,
+  ThoughtAnalyzer,
+  ReplyParseError,
+  parseJsonObjectFromText,
+  sanitizeOutboundContext,
+} from '@social-copilot/core';
 import type {
   Message,
   ContactKey,
@@ -9,13 +18,14 @@ import type {
   ThoughtType,
   ConversationContext,
 } from '@social-copilot/core';
-import { contactKeyToString, THOUGHT_CARDS } from '@social-copilot/core';
+import { contactKeyToString, contactKeyToStringV1, legacyContactKeyToString, THOUGHT_CARDS } from '@social-copilot/core';
 import type { ProviderType, LLMManagerConfig } from '@social-copilot/core';
 
 type DiagnosticEventType =
   | 'GENERATE_REPLY'
   | 'ANALYZE_THOUGHT'
   | 'SET_CONFIG'
+  | 'ACK_PRIVACY'
   | 'FALLBACK'
   | 'RECOVERY'
   | 'ALL_FAILED'
@@ -32,6 +42,7 @@ type DiagnosticEventType =
   | 'EXPORT_PREFERENCES'
   | 'GET_CONTACTS'
   | 'CLEAR_DATA'
+  | 'CLEAR_CONTACT_DATA'
   | 'SET_DEBUG_ENABLED'
   | 'GET_DIAGNOSTICS'
   | 'CLEAR_DIAGNOSTICS'
@@ -54,6 +65,22 @@ interface Config {
   /** 可选：指定模型名称（不填则使用 provider 默认） */
   model?: string;
   styles: ReplyStyle[];
+  /** 回复语言：auto 推荐，按对话自动选择 */
+  language?: 'zh' | 'en' | 'auto';
+  /** 收到消息自动生成建议（默认 true；关闭后仅手动触发） */
+  autoTrigger?: boolean;
+  /** 是否在群聊中自动弹出（默认 false，仍可手动 Alt+S） */
+  autoInGroups?: boolean;
+  /** 发送给模型的最近消息条数（当前消息始终包含） */
+  contextMessageLimit?: number;
+  /** 发送前脱敏（邮箱/手机号/链接） */
+  redactPii?: boolean;
+  /** 发送前匿名化昵称（用“我/对方”替代） */
+  anonymizeSenders?: boolean;
+  /** 单条消息最大字符数 */
+  maxCharsPerMessage?: number;
+  /** 上下文总字符预算 */
+  maxTotalChars?: number;
   fallbackProvider?: ProviderType;
   /** 可选：指定备用模型名称（不填则使用 provider 默认） */
   fallbackModel?: string;
@@ -64,6 +91,8 @@ interface Config {
   enableMemory?: boolean;
   /** 是否持久化存储 API Key（默认不持久化以降低泄漏风险） */
   persistApiKey?: boolean;
+  /** 用户是否已确认隐私告知（未确认则不调用第三方模型） */
+  privacyAcknowledged?: boolean;
 }
 
 // 初始化存储
@@ -83,6 +112,8 @@ const memoryUpdateInFlight: Set<string> = new Set();
 const PROFILE_UPDATE_COUNT_STORAGE_KEY = 'profileUpdateCounts';
 const MEMORY_UPDATE_COUNT_STORAGE_KEY = 'memoryUpdateCounts';
 const DEBUG_ENABLED_STORAGE_KEY = 'debugEnabled';
+const SESSION_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_apiKey';
+const SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_fallbackApiKey';
 const DIAGNOSTICS_MAX_EVENTS = 200;
 const MEMORY_UPDATE_THRESHOLD = 50;
 const MEMORY_CONTEXT_MESSAGE_LIMIT = 50;
@@ -109,12 +140,23 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
     provider: config.provider,
     model: config.model,
     styles: config.styles,
+    language: config.language ?? 'auto',
+    autoTrigger: config.autoTrigger ?? true,
+    autoInGroups: config.autoInGroups ?? false,
     enableFallback: config.enableFallback ?? false,
     fallbackProvider: config.fallbackProvider,
     fallbackModel: config.fallbackModel,
     suggestionCount: normalizeSuggestionCount(config.suggestionCount),
     enableMemory: config.enableMemory ?? false,
     persistApiKey: config.persistApiKey ?? false,
+    privacyAcknowledged: config.privacyAcknowledged ?? false,
+    privacy: {
+      redactPii: config.redactPii ?? true,
+      anonymizeSenders: config.anonymizeSenders ?? true,
+      contextMessageLimit: config.contextMessageLimit,
+      maxCharsPerMessage: config.maxCharsPerMessage,
+      maxTotalChars: config.maxTotalChars,
+    },
     hasApiKey: Boolean(config.apiKey?.trim()),
     hasFallbackApiKey: Boolean(config.fallbackApiKey?.trim()),
   };
@@ -124,6 +166,92 @@ function normalizeModel(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeLanguage(value: unknown): 'zh' | 'en' | 'auto' {
+  return value === 'zh' || value === 'en' || value === 'auto' ? value : 'auto';
+}
+
+function normalizeOptionalInt(value: unknown, opts: { min: number; max: number }): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const n = typeof value === 'string' ? Number(value.trim()) : typeof value === 'number' ? value : NaN;
+  if (!Number.isFinite(n)) return undefined;
+  const i = Math.floor(n);
+  if (i < opts.min || i > opts.max) return undefined;
+  return i;
+}
+
+function buildOutboundPrivacyOptions(config: Config | null) {
+  return {
+    maxRecentMessages: normalizeOptionalInt(config?.contextMessageLimit, { min: 1, max: 50 }) ?? 10,
+    maxCharsPerMessage: normalizeOptionalInt(config?.maxCharsPerMessage, { min: 50, max: 4000 }) ?? 500,
+    maxTotalChars: normalizeOptionalInt(config?.maxTotalChars, { min: 200, max: 20_000 }) ?? 4000,
+    redactPii: config?.redactPii ?? true,
+    anonymizeSenderNames: config?.anonymizeSenders ?? true,
+  } as const;
+}
+
+function buildSanitizedOutboundContext(
+  contactKey: ContactKey,
+  recentMessages: Message[],
+  currentMessage: Message
+): ConversationContext {
+  const dedupedRecent = recentMessages.filter((m) => m.id !== currentMessage.id);
+  return sanitizeOutboundContext(
+    {
+      contactKey,
+      recentMessages: dedupedRecent,
+      currentMessage,
+    },
+    buildOutboundPrivacyOptions(currentConfig)
+  );
+}
+
+function countRegexMatches(text: string, re: RegExp): number {
+  const matches = text.match(re);
+  return matches ? matches.length : 0;
+}
+
+function resolveLanguage(
+  configured: 'zh' | 'en' | 'auto' | undefined,
+  currentMessage: Message,
+  recentMessages: Message[]
+): 'zh' | 'en' {
+  const lang = normalizeLanguage(configured);
+  if (lang !== 'auto') return lang;
+
+  const sample = [currentMessage.text, ...recentMessages.slice(-10).map((m) => m.text)].join('\n');
+  const cjk = countRegexMatches(sample, /[\u4e00-\u9fff]/g);
+  const latin = countRegexMatches(sample, /[A-Za-z]/g);
+
+  if (cjk === 0 && latin === 0) return 'zh';
+  return cjk >= latin ? 'zh' : 'en';
+}
+
+function getContactKeyStrCandidates(contactKey: ContactKey): string[] {
+  const variants: ContactKey[] = [contactKey];
+
+  // Backward-compat: older versions may not include accountId in keys.
+  if (contactKey.accountId) {
+    variants.push({ ...contactKey, accountId: undefined });
+  }
+
+  // Backward-compat: some adapters historically used peerId/displayName as conversationId (not stable).
+  // Scope this heuristic to WhatsApp to avoid accidental cross-channel matches on other platforms.
+  if (contactKey.app === 'whatsapp' && contactKey.peerId && contactKey.conversationId !== contactKey.peerId) {
+    variants.push({ ...contactKey, conversationId: contactKey.peerId });
+    if (contactKey.accountId) {
+      variants.push({ ...contactKey, accountId: undefined, conversationId: contactKey.peerId });
+    }
+  }
+
+  const keys = variants.flatMap((key) => [
+    contactKeyToString(key),
+    contactKeyToStringV1(key),
+    legacyContactKeyToString(key),
+  ]);
+
+  return Array.from(new Set(keys));
 }
 
 function getProviderDefaultModel(provider: ProviderType): string {
@@ -145,29 +273,58 @@ function getSessionStorageArea(): chrome.storage.StorageArea | null {
 
 async function setSessionKeys(apiKey: string, fallbackApiKey?: string): Promise<void> {
   const session = getSessionStorageArea();
-  if (!session) return;
-  const payload: Record<string, unknown> = { apiKey };
-  if (fallbackApiKey) payload.fallbackApiKey = fallbackApiKey;
-  await session.set(payload);
+  if (session) {
+    const payload: Record<string, unknown> = { apiKey };
+    if (fallbackApiKey) payload.fallbackApiKey = fallbackApiKey;
+    await session.set(payload);
+    if (!fallbackApiKey) {
+      await session.remove(['fallbackApiKey']);
+    }
+    return;
+  }
+
+  // Fallback: store session keys in local storage and clear them on browser startup.
+  const payload: Record<string, unknown> = { [SESSION_API_KEY_FALLBACK_STORAGE_KEY]: apiKey };
+  if (fallbackApiKey) payload[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] = fallbackApiKey;
+  await chrome.storage.local.set(payload);
   if (!fallbackApiKey) {
-    await session.remove(['fallbackApiKey']);
+    await chrome.storage.local.remove([SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY]);
   }
 }
 
 async function getSessionKeys(): Promise<{ apiKey?: string; fallbackApiKey?: string }> {
   const session = getSessionStorageArea();
-  if (!session) return {};
-  const result = await session.get(['apiKey', 'fallbackApiKey']);
+  if (session) {
+    const result = await session.get(['apiKey', 'fallbackApiKey']);
+    return {
+      apiKey: typeof result.apiKey === 'string' ? result.apiKey : undefined,
+      fallbackApiKey: typeof result.fallbackApiKey === 'string' ? result.fallbackApiKey : undefined,
+    };
+  }
+
+  const result = await chrome.storage.local.get([
+    SESSION_API_KEY_FALLBACK_STORAGE_KEY,
+    SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
+  ]);
   return {
-    apiKey: typeof result.apiKey === 'string' ? result.apiKey : undefined,
-    fallbackApiKey: typeof result.fallbackApiKey === 'string' ? result.fallbackApiKey : undefined,
+    apiKey: typeof result[SESSION_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
+      ? (result[SESSION_API_KEY_FALLBACK_STORAGE_KEY] as string)
+      : undefined,
+    fallbackApiKey: typeof result[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
+      ? (result[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] as string)
+      : undefined,
   };
 }
 
 async function clearSessionKeys(): Promise<void> {
   const session = getSessionStorageArea();
-  if (!session) return;
-  await session.remove(['apiKey', 'fallbackApiKey']);
+  if (session) {
+    await session.remove(['apiKey', 'fallbackApiKey']);
+  }
+  await chrome.storage.local.remove([
+    SESSION_API_KEY_FALLBACK_STORAGE_KEY,
+    SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
+  ]);
 }
 
 function buildDiagnosticsSnapshot(): Record<string, unknown> {
@@ -278,6 +435,11 @@ chrome.runtime.onInstalled.addListener(async () => {
   await loadConfig();
 });
 
+chrome.runtime.onStartup.addListener(() => {
+  // Ensure session-only keys do not survive browser restarts (fallback path stores them in local).
+  void clearSessionKeys();
+});
+
 // 启动时初始化
 ensureStoreReady().then(loadConfig).catch(console.error);
 
@@ -342,6 +504,7 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'GENERATE_REPLY':
     case 'ANALYZE_THOUGHT':
     case 'SET_CONFIG':
+    case 'ACK_PRIVACY':
     case 'GET_STATUS':
     case 'GET_PROFILE':
     case 'UPDATE_PROFILE':
@@ -353,6 +516,7 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'EXPORT_PREFERENCES':
     case 'GET_CONTACTS':
     case 'CLEAR_DATA':
+    case 'CLEAR_CONTACT_DATA':
     case 'SET_DEBUG_ENABLED':
     case 'GET_DIAGNOSTICS':
     case 'CLEAR_DIAGNOSTICS':
@@ -505,6 +669,19 @@ async function dispatchMessage(
     case 'SET_CONFIG':
       return setConfig(request.config as Config);
 
+    case 'ACK_PRIVACY': {
+      const acknowledged = true;
+      try {
+        await chrome.storage.local.set({ privacyAcknowledged: acknowledged });
+      } catch {
+        // ignore
+      }
+      if (currentConfig) {
+        currentConfig = { ...currentConfig, privacyAcknowledged: acknowledged };
+      }
+      return { success: true, privacyAcknowledged: acknowledged };
+    }
+
     case 'SET_DEBUG_ENABLED': {
       debugEnabled = Boolean(request.enabled);
       await chrome.storage.local.set({ [DEBUG_ENABLED_STORAGE_KEY]: debugEnabled });
@@ -536,6 +713,8 @@ async function dispatchMessage(
         usingFallback,
         hasFallback,
         debugEnabled,
+        privacyAcknowledged: currentConfig?.privacyAcknowledged ?? false,
+        autoTrigger: currentConfig?.autoTrigger ?? true,
         requestId,
       };
     }
@@ -572,6 +751,9 @@ async function dispatchMessage(
 
     case 'CLEAR_DATA':
       return clearData();
+
+    case 'CLEAR_CONTACT_DATA':
+      return clearContactData(request.contactKey as ContactKey);
 
     case 'REPORT_ADAPTER_HEALTH': {
       const payload = request.payload as Record<string, unknown> | undefined;
@@ -612,6 +794,15 @@ async function loadConfig() {
     'provider',
     'model',
     'styles',
+    'language',
+    'autoTrigger',
+    'autoInGroups',
+    'privacyAcknowledged',
+    'redactPii',
+    'anonymizeSenders',
+    'contextMessageLimit',
+    'maxCharsPerMessage',
+    'maxTotalChars',
     'fallbackProvider',
     'fallbackModel',
     'fallbackApiKey',
@@ -638,6 +829,15 @@ async function loadConfig() {
       provider: result.provider || 'deepseek',
       model: normalizeModel(result.model),
       styles: (result.styles as ReplyStyle[] | undefined) || DEFAULT_STYLES,
+      language: normalizeLanguage(result.language),
+      autoTrigger: result.autoTrigger === undefined ? true : Boolean(result.autoTrigger),
+      autoInGroups: Boolean(result.autoInGroups),
+      privacyAcknowledged: Boolean(result.privacyAcknowledged),
+      redactPii: result.redactPii === undefined ? true : Boolean(result.redactPii),
+      anonymizeSenders: result.anonymizeSenders === undefined ? true : Boolean(result.anonymizeSenders),
+      contextMessageLimit: normalizeOptionalInt(result.contextMessageLimit, { min: 1, max: 50 }),
+      maxCharsPerMessage: normalizeOptionalInt(result.maxCharsPerMessage, { min: 50, max: 4000 }),
+      maxTotalChars: normalizeOptionalInt(result.maxTotalChars, { min: 200, max: 20_000 }),
       fallbackProvider: result.fallbackProvider,
       fallbackModel: normalizeModel(result.fallbackModel),
       fallbackApiKey: keys.fallbackApiKey,
@@ -668,10 +868,23 @@ async function setConfig(config: Config) {
     return { error: 'Fallback API Key is required' };
   }
 
+  const autoTrigger = config.autoTrigger === undefined ? (currentConfig?.autoTrigger ?? true) : Boolean(config.autoTrigger);
+  const privacyAcknowledged = config.privacyAcknowledged === undefined
+    ? (currentConfig?.privacyAcknowledged ?? false)
+    : Boolean(config.privacyAcknowledged);
+
   currentConfig = {
     ...config,
     apiKey,
     model: normalizeModel(config.model),
+    language: normalizeLanguage(config.language),
+    autoTrigger,
+    autoInGroups: Boolean(config.autoInGroups),
+    redactPii: config.redactPii ?? true,
+    anonymizeSenders: config.anonymizeSenders ?? true,
+    contextMessageLimit: normalizeOptionalInt(config.contextMessageLimit, { min: 1, max: 50 }),
+    maxCharsPerMessage: normalizeOptionalInt(config.maxCharsPerMessage, { min: 50, max: 4000 }),
+    maxTotalChars: normalizeOptionalInt(config.maxTotalChars, { min: 200, max: 20_000 }),
     enableFallback,
     fallbackModel: normalizeModel(config.fallbackModel),
     fallbackApiKey,
@@ -679,6 +892,7 @@ async function setConfig(config: Config) {
     suggestionCount: normalizedSuggestionCount,
     enableMemory: config.enableMemory ?? false,
     persistApiKey: config.persistApiKey ?? false,
+    privacyAcknowledged,
   };
 
   // 保存到 storage
@@ -686,6 +900,15 @@ async function setConfig(config: Config) {
     provider: currentConfig.provider,
     model: currentConfig.model,
     styles: currentConfig.styles,
+    language: currentConfig.language ?? 'auto',
+    autoTrigger: currentConfig.autoTrigger ?? true,
+    autoInGroups: currentConfig.autoInGroups ?? false,
+    privacyAcknowledged: currentConfig.privacyAcknowledged ?? false,
+    redactPii: currentConfig.redactPii ?? true,
+    anonymizeSenders: currentConfig.anonymizeSenders ?? true,
+    contextMessageLimit: currentConfig.contextMessageLimit,
+    maxCharsPerMessage: currentConfig.maxCharsPerMessage,
+    maxTotalChars: currentConfig.maxTotalChars,
     fallbackProvider: currentConfig.fallbackProvider,
     fallbackModel: currentConfig.fallbackModel,
     enableFallback: currentConfig.enableFallback ?? false,
@@ -733,7 +956,11 @@ async function setConfig(config: Config) {
       if (!llmManager) {
         throw new Error('LLM manager not initialized');
       }
-      return llmManager.generateReply(input);
+      const sanitizedInput: LLMInput = {
+        ...input,
+        context: sanitizeOutboundContext(input.context, buildOutboundPrivacyOptions(currentConfig)),
+      };
+      return llmManager.generateReply(sanitizedInput);
     },
   };
 
@@ -807,6 +1034,19 @@ async function handleGenerateReply(payload: {
   const { contactKey, messages, currentMessage, thoughtDirection } = payload;
   let memorySummary: string | undefined;
 
+  // Ensure config/LLM is available before touching local memory or calling providers.
+  if (!llmManager || !currentConfig) {
+    await loadConfig();
+  }
+  if (!llmManager || !currentConfig) {
+    return { error: '请先设置 API Key' };
+  }
+  if (!currentConfig.privacyAcknowledged) {
+    return { error: '首次使用请先在扩展设置中确认隐私告知。' };
+  }
+
+  const language = resolveLanguage(currentConfig.language, currentMessage, messages);
+
   // 保存消息
   for (const msg of messages) {
     await store.saveMessage(msg);
@@ -830,7 +1070,7 @@ async function handleGenerateReply(payload: {
   }
 
   // 检查是否需要更新画像
-  profile = await maybeUpdateProfile(contactKey, profile, messages, messageCount);
+  profile = await maybeUpdateProfile(contactKey, profile, messages, messageCount, language);
 
   // 读取长期记忆（用于增强本次回复）
   if (currentConfig?.enableMemory ?? false) {
@@ -844,14 +1084,6 @@ async function handleGenerateReply(payload: {
     }
   }
 
-  // 检查 LLM
-  if (!llmManager) {
-    await loadConfig();
-    if (!llmManager) {
-      return { error: '请先设置 API Key' };
-    }
-  }
-
   // 获取配置的风格（按偏好排序）
   const suggestionCount = normalizeSuggestionCount(currentConfig?.suggestionCount);
   const baseStyles = (currentConfig?.styles || DEFAULT_STYLES).slice(0, suggestionCount);
@@ -862,14 +1094,10 @@ async function handleGenerateReply(payload: {
 
   // 构建输入
   const input: LLMInput = {
-    context: {
-      contactKey,
-      recentMessages: messages,
-      currentMessage,
-    },
+    context: buildSanitizedOutboundContext(contactKey, messages, currentMessage),
     profile,
     styles: styles as ReplyStyle[],
-    language: 'zh',
+    language,
   };
 
   // 注入长期记忆
@@ -890,7 +1118,7 @@ async function handleGenerateReply(payload: {
 
     // 异步更新长期记忆（不阻塞本次回复）
     if (currentConfig?.enableMemory ?? false) {
-      void maybeUpdateMemory(contactKey, profile, messageCount);
+      void maybeUpdateMemory(contactKey, profile, messageCount, language);
     }
 
     return {
@@ -905,7 +1133,7 @@ async function handleGenerateReply(payload: {
     const message = toUserErrorMessage(error);
 
     if (currentConfig?.enableMemory ?? false) {
-      void maybeUpdateMemory(contactKey, profile, messageCount);
+      void maybeUpdateMemory(contactKey, profile, messageCount, language);
     }
     return { error: message };
   }
@@ -994,7 +1222,8 @@ async function maybeUpdateProfile(
   contactKey: ContactKey,
   profile: ContactProfile,
   recentMessages: Message[],
-  messageCount: number
+  messageCount: number,
+  language: 'zh' | 'en'
 ): Promise<ContactProfile> {
   if (!profileUpdater) return profile;
 
@@ -1007,7 +1236,7 @@ async function maybeUpdateProfile(
     }
 
     try {
-      const updates = await profileUpdater.extractProfileUpdates(recentMessages, profile);
+      const updates = await profileUpdater.extractProfileUpdates(recentMessages, profile, language);
       if (Object.keys(updates).length > 0) {
         await store.updateProfile(contactKey, updates);
         const refreshed = await store.getProfile(contactKey);
@@ -1028,7 +1257,12 @@ async function maybeUpdateProfile(
   return profile;
 }
 
-async function maybeUpdateMemory(contactKey: ContactKey, profile: ContactProfile, messageCount: number): Promise<void> {
+async function maybeUpdateMemory(
+  contactKey: ContactKey,
+  profile: ContactProfile,
+  messageCount: number,
+  language: 'zh' | 'en'
+): Promise<void> {
   if (!llmManager) return;
   if (!(currentConfig?.enableMemory ?? false)) return;
   // 默认不对群聊做长期记忆，避免噪声与隐私风险
@@ -1049,29 +1283,21 @@ async function maybeUpdateMemory(contactKey: ContactKey, profile: ContactProfile
     }
 
     const existing = await store.getContactMemorySummary(contactKey);
+    const currentMessage = recentMessages[recentMessages.length - 1];
     const input: LLMInput = {
       task: 'memory_extraction',
-      context: {
-        contactKey,
-        recentMessages,
-        currentMessage: recentMessages[recentMessages.length - 1],
-      },
+      context: buildSanitizedOutboundContext(contactKey, recentMessages.slice(0, -1), currentMessage),
       profile,
       memorySummary: existing?.summary,
       styles: ['rational'],
-      language: 'zh',
+      language,
       maxLength: 800,
     };
 
     const output = await llmManager.generateReply(input);
     const raw = output.candidates[0]?.text ?? '';
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      throw new Error('Memory extraction did not return valid JSON');
-    }
+    const parsed = parseJsonObjectFromText(raw);
 
     const summary = (parsed as { summary?: unknown })?.summary;
     if (typeof summary !== 'string' || summary.trim() === '') {
@@ -1136,6 +1362,31 @@ async function clearContactMemory(contactKey: ContactKey) {
   } catch (err) {
     console.warn('[Social Copilot] Failed to persist memory update counts:', err);
   }
+  return { success: true };
+}
+
+async function clearContactData(contactKey: ContactKey) {
+  await store.deleteMessages(contactKey);
+  await store.deleteProfile(contactKey);
+  await store.deleteStylePreference(contactKey);
+  await store.deleteContactMemorySummary(contactKey);
+
+  // Best-effort: clear counters for all known key variants
+  for (const keyStr of getContactKeyStrCandidates(contactKey)) {
+    lastProfileUpdateCount.delete(keyStr);
+    lastMemoryUpdateCount.delete(keyStr);
+  }
+  try {
+    await persistProfileUpdateCounts();
+  } catch (err) {
+    console.warn('[Social Copilot] Failed to persist profile update counts:', err);
+  }
+  try {
+    await persistMemoryUpdateCounts();
+  } catch (err) {
+    console.warn('[Social Copilot] Failed to persist memory update counts:', err);
+  }
+
   return { success: true };
 }
 
