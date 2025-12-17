@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>隐私政策 - Social Copilot</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; }
+      header { border-bottom: 1px solid rgba(127,127,127,.25); }
+      main { max-width: 860px; margin: 0 auto; padding: 22px 16px 48px; }
+      h1 { font-size: 22px; margin: 0; padding: 18px 16px; max-width: 860px; margin-inline: auto; }
+      h2 { margin-top: 22px; font-size: 16px; }
+      p, li { line-height: 1.75; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .muted { opacity: .8; font-size: 13px; }
+      a { text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .nav { padding: 10px 16px; max-width: 860px; margin-inline: auto; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>隐私政策（Social Copilot）</h1>
+      <div class="nav">
+        <a href="./index.html">首页</a>
+        <span class="muted"> · </span>
+        <a href="./privacy.html">English</a>
+      </div>
+    </header>
+    <main>
+      <p class="muted">最后更新：2025-12-17</p>
+
+      <h2>1. 产品说明</h2>
+      <p>Social Copilot 是一款为 Telegram Web / WhatsApp Web / Slack Web 等聊天网站提供“回复建议”的浏览器扩展。</p>
+      <p>本项目默认不包含任何自建后端；你需要自行配置第三方模型服务（如 DeepSeek / OpenAI / Anthropic Claude）的 API Key。</p>
+
+      <h2>2. 我们处理哪些数据</h2>
+      <h3>2.1 浏览器本地存储</h3>
+      <p>扩展默认在浏览器本地（IndexedDB / chrome.storage）存储：</p>
+      <ul>
+        <li>聊天消息（用于上下文与风格学习）</li>
+        <li>联系人画像（兴趣/沟通偏好等）</li>
+        <li>风格偏好（你的选择历史）</li>
+        <li>扩展设置项（提供商/模型/语言/隐私开关等）</li>
+        <li>（可选）长期记忆摘要（默认关闭，需要你开启）</li>
+      </ul>
+
+      <h3>2.2 发送到第三方模型服务</h3>
+      <p>当你触发生成（或开启相关功能）时，扩展会将“必要的对话上下文”发送到你选择的第三方模型服务，用于生成候选回复或提取结构化信息。</p>
+      <p>默认启用的发送侧保护（可在设置中调整）：</p>
+      <ul>
+        <li>仅发送最近 N 条消息（默认 10；当前消息始终包含）</li>
+        <li>限制单条消息与总上下文字符预算（默认 500 / 4000）</li>
+        <li>默认脱敏常见敏感信息（邮箱/手机号/链接）</li>
+        <li>默认匿名化昵称（用“我/对方”替代）</li>
+        <li>不发送消息的 <code>raw</code> 字段</li>
+      </ul>
+
+      <h2>3. 我们如何使用数据</h2>
+      <ul>
+        <li>生成回复建议</li>
+        <li>在本地更新联系人画像与风格偏好</li>
+        <li>（可选）在本地维护长期记忆摘要</li>
+      </ul>
+
+      <h2>4. 我们不会做什么</h2>
+      <ul>
+        <li>不会把你的 API Key 上传到任何自建服务器（默认无后端）</li>
+        <li>默认不做用户行为埋点/分析</li>
+      </ul>
+
+      <h2>5. 第三方处理者</h2>
+      <p>第三方模型服务会按其服务条款与隐私政策处理你发送的上下文。使用前请先阅读对应提供商政策。</p>
+
+      <h2>6. 你的控制权</h2>
+      <p>你可以在扩展设置中配置：模型提供商/模型名称、是否持久化 API Key、语言、长期记忆开关，以及脱敏/匿名化与发送上限。</p>
+      <p>你可以随时在“关于”页点击“清除所有数据”删除本地存储内容。</p>
+
+      <h2>7. 联系我们</h2>
+      <p class="muted">如果你将该扩展投入生产，请在此处补充运营主体名称与联系邮箱。</p>
+    </main>
+  </body>
+</html>
+

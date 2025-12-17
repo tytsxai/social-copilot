@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Privacy Policy - Social Copilot</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; }
+      header { border-bottom: 1px solid rgba(127,127,127,.25); }
+      main { max-width: 860px; margin: 0 auto; padding: 22px 16px 48px; }
+      h1 { font-size: 22px; margin: 0; padding: 18px 16px; max-width: 860px; margin-inline: auto; }
+      h2 { margin-top: 22px; font-size: 16px; }
+      p, li { line-height: 1.65; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .muted { opacity: .8; font-size: 13px; }
+      a { text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .nav { padding: 10px 16px; max-width: 860px; margin-inline: auto; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Privacy Policy (Social Copilot)</h1>
+      <div class="nav">
+        <a href="./index.html">Home</a>
+        <span class="muted"> · </span>
+        <a href="./privacy.zh-CN.html">中文</a>
+      </div>
+    </header>
+    <main>
+      <p class="muted">Last updated: 2025-12-17</p>
+
+      <h2>1. Who we are</h2>
+      <p>
+        Social Copilot is a browser extension that provides reply suggestions for chat websites
+        (Telegram Web / WhatsApp Web / Slack Web).
+      </p>
+
+      <h2>2. Data we process</h2>
+      <h3>2.1 Local storage (in your browser)</h3>
+      <p>By default, we store the following data locally (IndexedDB / chrome.storage):</p>
+      <ul>
+        <li>Chat messages (for context and style learning)</li>
+        <li>Contact profiles (e.g., interests, communication preferences)</li>
+        <li>Style preferences (your selections)</li>
+        <li>Optional long-term memory summaries (off by default)</li>
+        <li>Extension settings (provider/model/language/privacy toggles)</li>
+      </ul>
+
+      <h3>2.2 Data sent to third-party model providers</h3>
+      <p>
+        When you trigger generation (or enable optional automation), the extension sends the necessary conversation
+        context to the third-party model provider you configure (e.g., DeepSeek / OpenAI / Anthropic Claude).
+      </p>
+      <p>Default outbound minimization and protections (configurable):</p>
+      <ul>
+        <li>Only the latest N messages are sent (default 10; the current message is always included)</li>
+        <li>Per-message and total context size limits (default 500 / 4000 chars)</li>
+        <li>Redaction of common PII (email / phone / URL) by default</li>
+        <li>Sender name anonymization ("Me" / "Other") by default</li>
+        <li>The <code>raw</code> field is not sent</li>
+      </ul>
+
+      <h2>3. How we use data</h2>
+      <ul>
+        <li>Generate reply suggestions</li>
+        <li>Update local profiles and preferences</li>
+        <li>(Optional) Maintain local memory summaries</li>
+      </ul>
+
+      <h2>4. What we do not do</h2>
+      <ul>
+        <li>We do not upload your API key to any self-hosted server (there is no default backend)</li>
+        <li>We do not collect behavioral analytics by default</li>
+      </ul>
+
+      <h2>5. Third-party processors</h2>
+      <p>
+        Third-party model providers process the context you send according to their own terms and privacy policies.
+        You should review those policies before use.
+      </p>
+
+      <h2>6. Your controls</h2>
+      <p>
+        You can configure provider/model, persistence of API key, language, long-term memory, and outbound privacy
+        settings (redaction/anonymization/context limits) in the extension popup.
+      </p>
+      <p>
+        You can clear local data at any time using the "Clear all data" button.
+      </p>
+
+      <h2>7. Contact</h2>
+      <p class="muted">
+        If you distribute this extension to end users, please replace this section with your organization name and contact email.
+      </p>
+    </main>
+  </body>
+</html>
+

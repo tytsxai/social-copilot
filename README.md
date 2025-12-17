@@ -7,6 +7,11 @@
 - `social-copilot/`：开源社区版（浏览器扩展 + 核心 SDK + 可选移动端预览）
 - `private/`：私有增强（默认被 `.gitignore` 忽略，仅保留说明文件；见 `social-copilot/docs/OPEN_CORE.md`）
 
+## 生产发布提示
+
+- 隐私政策模板：`social-copilot/docs/PRIVACY.md`
+- 上线检查清单：`social-copilot/docs/RELEASE_CHECKLIST.md`
+
 ## 快速开始
 
 ```bash
