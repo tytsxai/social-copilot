@@ -24,6 +24,8 @@ export class CopilotContentScript {
   private navigationCleanup: (() => void) | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private storageChangeHandler: ((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void) | null = null;
+  private windowErrorHandler: ((event: ErrorEvent) => void) | null = null;
+  private unhandledRejectionHandler: ((event: PromiseRejectionEvent) => void) | null = null;
 
   private lastMessageId: string | null = null;
   private currentContactKey: ContactKey | null = null;
@@ -32,6 +34,7 @@ export class CopilotContentScript {
   private autoInGroups = false;
   private autoTrigger = true;
   private privacyAcknowledged = false;
+  private contextMessageLimit = 10;
   private pendingPrivacyAckGenerate:
     | { thoughtDirection?: ThoughtType; skipThoughtAnalysis: boolean; source: 'manual' | 'auto' }
     | null = null;
@@ -85,29 +88,43 @@ export class CopilotContentScript {
       return;
     }
 
-    await this.waitForChat();
-    if (this.isDestroyed) return;
+    this.setupGlobalErrorReporting();
 
-    await this.loadLocalSettings();
-    if (this.isDestroyed) return;
+    try {
+      await this.waitForChat();
+      if (this.isDestroyed) return;
 
-    this.ui.mount();
-    this.reportAdapterHealth();
+      await this.loadLocalSettings();
+      if (this.isDestroyed) return;
 
-    this.unsubscribe = this.adapter.onNewMessage((msg) => {
-      if (!this.isDestroyed) this.handleNewMessage(msg);
-    });
+      this.ui.mount();
+      this.reportAdapterHealth();
 
-    this.setupKeyboardShortcuts();
+      this.unsubscribe = this.adapter.onNewMessage((msg) => {
+        if (!this.isDestroyed) this.handleNewMessage(msg);
+      });
 
-    if (this.options.setupNavigationListener) {
-      const cleanup = this.options.setupNavigationListener(() => this.resetConversationState());
-      this.navigationCleanup = typeof cleanup === 'function' ? cleanup : null;
+      this.setupKeyboardShortcuts();
+
+      if (this.options.setupNavigationListener) {
+        const cleanup = this.options.setupNavigationListener(() => this.resetConversationState());
+        this.navigationCleanup = typeof cleanup === 'function' ? cleanup : null;
+      }
+
+      window.addEventListener('beforeunload', () => this.destroy());
+
+      console.log(`[Social Copilot] ${this.options.app} adapter ready`);
+    } catch (err) {
+      this.reportContentScriptError(err, { phase: 'init' });
+      // Best-effort: show a generic adapter-broken message so users aren't left in silence.
+      try {
+        this.ui.mount();
+        this.ui.setError(this.options.adapterBrokenMessage);
+        this.ui.show();
+      } catch {
+        // ignore
+      }
     }
-
-    window.addEventListener('beforeunload', () => this.destroy());
-
-    console.log(`[Social Copilot] ${this.options.app} adapter ready`);
   }
 
   destroy() {
@@ -147,10 +164,89 @@ export class CopilotContentScript {
       this.storageChangeHandler = null;
     }
 
+    if (this.windowErrorHandler) {
+      window.removeEventListener('error', this.windowErrorHandler);
+      this.windowErrorHandler = null;
+    }
+    if (this.unhandledRejectionHandler) {
+      window.removeEventListener('unhandledrejection', this.unhandledRejectionHandler);
+      this.unhandledRejectionHandler = null;
+    }
+
     this.unsubscribe?.();
     this.unsubscribe = null;
 
     this.ui.unmount();
+  }
+
+  private isLikelyExtensionError(filename?: string, stack?: string): boolean {
+    const file = typeof filename === 'string' ? filename : '';
+    const s = typeof stack === 'string' ? stack : '';
+    return (
+      file.startsWith('chrome-extension://') ||
+      file.startsWith('moz-extension://') ||
+      s.includes('chrome-extension://') ||
+      s.includes('moz-extension://')
+    );
+  }
+
+  private reportContentScriptError(
+    error: unknown,
+    meta: { phase?: string; filename?: string; lineno?: number; colno?: number } = {}
+  ) {
+    try {
+      const err = error instanceof Error ? error : new Error(String(error));
+      const message = (err.message || 'unknown').slice(0, 800);
+      const stack = typeof err.stack === 'string' ? err.stack.slice(0, 4000) : undefined;
+      if (!this.isLikelyExtensionError(meta.filename, stack)) return;
+
+      void chrome.runtime.sendMessage({
+        type: 'REPORT_CONTENT_SCRIPT_ERROR',
+        payload: {
+          app: this.options.app,
+          host: location.host,
+          pathname: location.pathname,
+          phase: meta.phase,
+          filename: meta.filename,
+          lineno: meta.lineno,
+          colno: meta.colno,
+          name: err.name,
+          message,
+          stack,
+        },
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  private setupGlobalErrorReporting() {
+    if (this.windowErrorHandler || this.unhandledRejectionHandler) return;
+
+    this.windowErrorHandler = (event: ErrorEvent) => {
+      if (this.isDestroyed) return;
+      const stack = event.error instanceof Error ? event.error.stack : undefined;
+      if (!this.isLikelyExtensionError(event.filename, stack)) return;
+      this.reportContentScriptError(event.error ?? event.message, {
+        phase: 'window_error',
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+      });
+      this.recordAdapterFailure();
+    };
+
+    this.unhandledRejectionHandler = (event: PromiseRejectionEvent) => {
+      if (this.isDestroyed) return;
+      const reason = event.reason;
+      const stack = reason instanceof Error ? reason.stack : undefined;
+      if (!this.isLikelyExtensionError(undefined, stack)) return;
+      this.reportContentScriptError(reason, { phase: 'unhandledrejection' });
+      this.recordAdapterFailure();
+    };
+
+    window.addEventListener('error', this.windowErrorHandler);
+    window.addEventListener('unhandledrejection', this.unhandledRejectionHandler);
   }
 
   private resetConversationState() {
@@ -388,7 +484,7 @@ export class CopilotContentScript {
     }
     this.currentContactKey = contactKey;
 
-    const messages = this.adapter.extractMessages(10);
+    const messages = this.adapter.extractMessages(this.contextMessageLimit);
     if (!this.privacyAcknowledged) {
       await this.generateSuggestions(undefined, false, epoch, 'auto');
       return;
@@ -399,14 +495,21 @@ export class CopilotContentScript {
 
   private async loadLocalSettings(): Promise<void> {
     try {
-      const result = await chrome.storage.local.get(['autoInGroups', 'autoTrigger', 'privacyAcknowledged']);
+      const result = await chrome.storage.local.get([
+        'autoInGroups',
+        'autoTrigger',
+        'privacyAcknowledged',
+        'contextMessageLimit',
+      ]);
       this.autoInGroups = Boolean(result.autoInGroups);
       this.autoTrigger = result.autoTrigger === undefined ? true : Boolean(result.autoTrigger);
       this.privacyAcknowledged = Boolean(result.privacyAcknowledged);
+      this.contextMessageLimit = this.normalizeContextMessageLimit(result.contextMessageLimit);
     } catch {
       this.autoInGroups = false;
       this.autoTrigger = true;
       this.privacyAcknowledged = false;
+      this.contextMessageLimit = 10;
     }
 
     this.storageChangeHandler = (changes, areaName) => {
@@ -434,9 +537,23 @@ export class CopilotContentScript {
           }
         }
       }
+
+      const contextLimitChange = changes.contextMessageLimit;
+      if (contextLimitChange) {
+        this.contextMessageLimit = this.normalizeContextMessageLimit(contextLimitChange.newValue);
+      }
     };
 
     chrome.storage.onChanged.addListener(this.storageChangeHandler);
+  }
+
+  private normalizeContextMessageLimit(value: unknown): number {
+    const n = typeof value === 'string' ? Number(value.trim()) : typeof value === 'number' ? value : NaN;
+    if (!Number.isFinite(n)) return 10;
+    const i = Math.floor(n);
+    if (i < 1) return 1;
+    if (i > 50) return 50;
+    return i;
   }
 
   private async handlePrivacyAcknowledge() {
@@ -557,7 +674,7 @@ export class CopilotContentScript {
     }
     this.currentContactKey = contactKey;
 
-    const messages = this.adapter.extractMessages(10);
+    const messages = this.adapter.extractMessages(this.contextMessageLimit);
     if (messages.length === 0) {
       if (source === 'auto') {
         this.recordAdapterFailure();
@@ -654,17 +771,57 @@ export class CopilotContentScript {
       return;
     }
 
-    navigator.clipboard.writeText(candidate.text).then(() => {
-      if (!this.isDestroyed) {
-        this.ui.setError('已复制到剪贴板，请手动粘贴');
+    void this.copyToClipboard(candidate.text)
+      .then(() => {
+        if (this.isDestroyed) return;
+        this.ui.setNotification('已复制到剪贴板，请手动粘贴');
         setTimeout(() => {
-          if (!this.isDestroyed) this.ui.hide();
+          if (this.isDestroyed) return;
+          this.ui.clearNotification();
+          this.ui.hide();
         }, 2000);
-      }
-    });
+      })
+      .catch((error) => {
+        console.warn('[Social Copilot] Clipboard copy failed:', error);
+        if (this.isDestroyed) return;
+        // Keep candidates visible so the user can manually select/copy from the panel.
+        this.ui.setNotification('无法自动填充输入框，且复制失败；请从面板中手动复制粘贴。');
+        this.ui.show();
+      });
   }
 
   private handleRefresh() {
     void this.generateSuggestions();
+  }
+
+  private async copyToClipboard(text: string): Promise<void> {
+    // Prefer the modern async clipboard API.
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch {
+        // fall through to legacy fallback
+      }
+    }
+
+    // Fallback: use a temporary textarea + execCommand('copy').
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '0';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    const ok = document.execCommand('copy');
+    textarea.remove();
+    if (!ok) {
+      throw new Error('Clipboard copy failed');
+    }
   }
 }

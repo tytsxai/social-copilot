@@ -32,6 +32,9 @@ const suggestionCountSelect = document.getElementById('suggestionCount') as HTML
 const saveBtn = document.getElementById('saveBtn')!;
 const contactListEl = document.getElementById('contactList')!;
 const clearDataBtn = document.getElementById('clearDataBtn')!;
+const exportUserDataBtn = document.getElementById('exportUserDataBtn')!;
+const importUserDataBtn = document.getElementById('importUserDataBtn')!;
+const importUserDataFile = document.getElementById('importUserDataFile') as HTMLInputElement;
 const debugEnabledCheckbox = document.getElementById('debugEnabled') as HTMLInputElement;
 const copyDiagnosticsBtn = document.getElementById('copyDiagnosticsBtn')!;
 const downloadDiagnosticsBtn = document.getElementById('downloadDiagnosticsBtn')!;
@@ -498,6 +501,73 @@ async function loadContacts() {
     contactListEl.innerHTML = '<div class="empty-state">加载失败</div>';
   }
 }
+
+function downloadJson(filename: string, json: string) {
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 备份导出
+exportUserDataBtn.addEventListener('click', async () => {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'EXPORT_USER_DATA' });
+    const backup = res?.backup;
+    if (!backup) {
+      throw new Error(res?.error || '导出失败');
+    }
+
+    const json = JSON.stringify(backup, null, 2);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadJson(`social-copilot-backup-${ts}.json`, json);
+    statusEl.className = 'status info';
+    statusEl.textContent = 'ℹ️ 已导出数据备份 JSON（不包含 API Key）';
+  } catch (err) {
+    statusEl.className = 'status warning';
+    statusEl.textContent = `⚠ 导出失败：${(err as Error).message}`;
+  }
+});
+
+// 备份导入
+importUserDataBtn.addEventListener('click', () => {
+  importUserDataFile.click();
+});
+
+importUserDataFile.addEventListener('change', async () => {
+  const file = importUserDataFile.files?.[0];
+  importUserDataFile.value = '';
+  if (!file) return;
+
+  if (!confirm('导入会合并/覆盖本地画像、偏好与长期记忆（不会导入 API Key）。是否继续？')) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const res = await chrome.runtime.sendMessage({ type: 'IMPORT_USER_DATA', data });
+    if (!res?.success) {
+      statusEl.className = 'status warning';
+      statusEl.textContent = `⚠ 导入失败：${res?.error || '未知错误'}`;
+      return;
+    }
+    const imported = res?.imported as Record<string, number> | undefined;
+    const summary = imported
+      ? `profiles=${imported.profiles ?? 0}, prefs=${imported.stylePreferences ?? 0}, memories=${imported.contactMemories ?? 0}`
+      : 'ok';
+    statusEl.className = 'status info';
+    statusEl.textContent = `ℹ️ 已导入数据备份（${summary}）`;
+    await loadContacts();
+    await checkStatus();
+  } catch (err) {
+    statusEl.className = 'status warning';
+    statusEl.textContent = `⚠ 导入失败：${(err as Error).message}`;
+  }
+});
 
 // 清除数据
 clearDataBtn.addEventListener('click', async () => {

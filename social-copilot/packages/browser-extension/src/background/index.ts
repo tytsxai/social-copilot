@@ -15,11 +15,19 @@ import type {
   LLMInput,
   ReplyStyle,
   ContactProfile,
+  StylePreference,
+  ContactMemorySummary,
   LLMProvider,
   ThoughtType,
   ConversationContext,
 } from '@social-copilot/core';
-import { contactKeyToString, contactKeyToStringV1, legacyContactKeyToString, THOUGHT_CARDS } from '@social-copilot/core';
+import {
+  contactKeyToString,
+  contactKeyToStringV1,
+  legacyContactKeyToString,
+  normalizeContactKeyStr,
+  THOUGHT_CARDS,
+} from '@social-copilot/core';
 import type { ProviderType, LLMManagerConfig } from '@social-copilot/core';
 
 type DiagnosticEventType =
@@ -32,6 +40,7 @@ type DiagnosticEventType =
   | 'ALL_FAILED'
   | 'MEMORY_UPDATE'
   | 'ADAPTER_HEALTH'
+  | 'CONTENT_SCRIPT_ERROR'
   | 'GET_STATUS'
   | 'GET_PROFILE'
   | 'UPDATE_PROFILE'
@@ -41,6 +50,8 @@ type DiagnosticEventType =
   | 'GET_STYLE_PREFERENCE'
   | 'RESET_STYLE_PREFERENCE'
   | 'EXPORT_PREFERENCES'
+  | 'EXPORT_USER_DATA'
+  | 'IMPORT_USER_DATA'
   | 'GET_CONTACTS'
   | 'CLEAR_DATA'
   | 'CLEAR_CONTACT_DATA'
@@ -144,6 +155,124 @@ function generateRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function summarizeConversationIdKind(conversationId: string): string {
+  const id = (conversationId ?? '').trim();
+  if (!id) return 'missing';
+  if (id.includes('@g.us')) return 'wa_group_jid';
+  if (id.includes('@c.us') || id.includes('@s.whatsapp.net')) return 'wa_dm_jid';
+  if (id.startsWith('@')) return 'at_handle';
+  if (/^-?\d+$/.test(id)) return 'numeric';
+  if (/^[CDG][A-Z0-9]+$/.test(id)) return 'slack_like';
+  return 'other';
+}
+
+function summarizeContactKeyStrForDiagnostics(contactKeyStr: string): Record<string, unknown> | null {
+  const parts = (contactKeyStr ?? '').split(':').filter((p) => p !== undefined);
+  if (parts.length < 5) return null;
+
+  const groupOrDm = parts[parts.length - 1];
+  if (groupOrDm !== 'group' && groupOrDm !== 'dm') return null;
+
+  // v2: platform:app:accountId:conversationId:(group|dm)
+  if (parts.length === 5) {
+    const platform = safeDecodeURIComponent(parts[0] ?? '');
+    const app = safeDecodeURIComponent(parts[1] ?? '');
+    const accountId = safeDecodeURIComponent(parts[2] ?? '');
+    const conversationId = safeDecodeURIComponent(parts[3] ?? '');
+
+    return {
+      platform,
+      app,
+      isGroup: groupOrDm === 'group',
+      hasAccountId: Boolean(accountId),
+      accountIdLen: accountId.length,
+      conversationIdKind: summarizeConversationIdKind(conversationId),
+      conversationIdLen: conversationId.length,
+    };
+  }
+
+  // v1: platform:app:accountId:conversationId:peerId:(group|dm)
+  if (parts.length === 6) {
+    const platform = safeDecodeURIComponent(parts[0] ?? '');
+    const app = safeDecodeURIComponent(parts[1] ?? '');
+    const accountId = safeDecodeURIComponent(parts[2] ?? '');
+    const conversationId = safeDecodeURIComponent(parts[3] ?? '');
+    const peerId = safeDecodeURIComponent(parts[4] ?? '');
+
+    return {
+      platform,
+      app,
+      isGroup: groupOrDm === 'group',
+      hasAccountId: Boolean(accountId),
+      accountIdLen: accountId.length,
+      conversationIdKind: summarizeConversationIdKind(conversationId),
+      conversationIdLen: conversationId.length,
+      peerIdLen: peerId.length,
+    };
+  }
+
+  return null;
+}
+
+function summarizeContactKeyForDiagnostics(contactKey: ContactKey): Record<string, unknown> | null {
+  try {
+    const accountId = (contactKey.accountId ?? '').toString();
+    const conversationId = (contactKey.conversationId ?? '').toString();
+    const peerId = (contactKey.peerId ?? '').toString();
+
+    return {
+      platform: contactKey.platform,
+      app: contactKey.app,
+      isGroup: Boolean(contactKey.isGroup),
+      hasAccountId: Boolean(accountId),
+      accountIdLen: accountId.length,
+      conversationIdKind: summarizeConversationIdKind(conversationId),
+      conversationIdLen: conversationId.length,
+      peerIdLen: peerId.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeDiagnosticDetails(details: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!details) return undefined;
+  const out: Record<string, unknown> = { ...details };
+
+  // Legacy persisted diagnostics may include identifiers; migrate to safe summaries.
+  if (typeof out.contactKey === 'string') {
+    const summary = summarizeContactKeyStrForDiagnostics(out.contactKey);
+    if (summary) out.contactKeySummary = summary;
+    out.contactKeyLen = out.contactKey.length;
+    delete out.contactKey;
+  }
+
+  if (Array.isArray(out.messages)) {
+    out.messages = out.messages
+      .map((m) => {
+        if (!m || typeof m !== 'object') return null;
+        const rec = m as Record<string, unknown>;
+        const next: Record<string, unknown> = { ...rec };
+        if (typeof next.id === 'string') {
+          next.idLen = next.id.length;
+          delete next.id;
+        }
+        return next;
+      })
+      .filter((v): v is Record<string, unknown> => Boolean(v));
+  }
+
+  return out;
+}
+
 function pushDiagnostic(event: DiagnosticEvent): void {
   diagnostics.push(event);
   if (diagnostics.length > DIAGNOSTICS_MAX_EVENTS) {
@@ -164,6 +293,7 @@ function coerceDiagnosticEventType(value: unknown): DiagnosticEventType {
     case 'ALL_FAILED':
     case 'MEMORY_UPDATE':
     case 'ADAPTER_HEALTH':
+    case 'CONTENT_SCRIPT_ERROR':
     case 'GET_STATUS':
     case 'GET_PROFILE':
     case 'UPDATE_PROFILE':
@@ -173,6 +303,8 @@ function coerceDiagnosticEventType(value: unknown): DiagnosticEventType {
     case 'GET_STYLE_PREFERENCE':
     case 'RESET_STYLE_PREFERENCE':
     case 'EXPORT_PREFERENCES':
+    case 'EXPORT_USER_DATA':
+    case 'IMPORT_USER_DATA':
     case 'GET_CONTACTS':
     case 'CLEAR_DATA':
     case 'CLEAR_CONTACT_DATA':
@@ -203,14 +335,14 @@ function parseDiagnosticsPayload(raw: unknown): DiagnosticEvent[] {
       ? record.durationMs
       : undefined;
     const details = record.details && typeof record.details === 'object' && !Array.isArray(record.details)
-      ? (record.details as Record<string, unknown>)
+      ? sanitizeDiagnosticDetails(record.details as Record<string, unknown>)
       : undefined;
     const error = record.error && typeof record.error === 'object' && !Array.isArray(record.error)
       ? (() => {
           const e = record.error as Record<string, unknown>;
           const name = typeof e.name === 'string' ? e.name : 'Error';
-          const message = typeof e.message === 'string' ? e.message : '';
-          const stack = typeof e.stack === 'string' ? e.stack : undefined;
+          const message = typeof e.message === 'string' ? redactSecrets(e.message) : '';
+          const stack = typeof e.stack === 'string' ? redactSecrets(e.stack) : undefined;
           return { name, message, stack };
         })()
       : undefined;
@@ -511,7 +643,11 @@ async function loadProfileUpdateCounts(): Promise<void> {
     if (stored && typeof stored === 'object') {
       for (const [key, value] of Object.entries(stored)) {
         if (typeof value === 'number' && Number.isFinite(value)) {
-          lastProfileUpdateCount.set(key, value);
+          const normalizedKey = normalizeContactKeyStr(key);
+          const prev = lastProfileUpdateCount.get(normalizedKey);
+          if (prev === undefined || value > prev) {
+            lastProfileUpdateCount.set(normalizedKey, value);
+          }
         }
       }
     }
@@ -544,7 +680,11 @@ async function loadMemoryUpdateCounts(): Promise<void> {
     if (stored && typeof stored === 'object') {
       for (const [key, value] of Object.entries(stored)) {
         if (typeof value === 'number' && Number.isFinite(value)) {
-          lastMemoryUpdateCount.set(key, value);
+          const normalizedKey = normalizeContactKeyStr(key);
+          const prev = lastMemoryUpdateCount.get(normalizedKey);
+          if (prev === undefined || value > prev) {
+            lastMemoryUpdateCount.set(normalizedKey, value);
+          }
         }
       }
     }
@@ -606,7 +746,6 @@ chrome.runtime.onStartup.addListener(() => {
 
 // 启动时初始化
 ensureStoreReady()
-  .then(loadConfig)
   .catch((err) => console.error('[Social Copilot] Init failed:', sanitizeErrorForDiagnostics(err)));
 void ensureDiagnosticsReady();
 
@@ -630,6 +769,8 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     'GET_DIAGNOSTICS',
     'CLEAR_DIAGNOSTICS',
     'SET_DEBUG_ENABLED',
+    'REPORT_ADAPTER_HEALTH',
+    'REPORT_CONTENT_SCRIPT_ERROR',
   ]);
 
   if (allowWithoutStore.has(requestType)) {
@@ -651,16 +792,20 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
   const diagType = normalizeDiagnosticType(request.type);
 
   const record = (event: Omit<DiagnosticEvent, 'requestId'>) => {
-    pushDiagnostic({ ...event, requestId });
+    const safeEvent: Omit<DiagnosticEvent, 'requestId'> = {
+      ...event,
+      details: sanitizeDiagnosticDetails(event.details),
+    };
+    pushDiagnostic({ ...safeEvent, requestId });
     if (debugEnabled) {
       const label = event.ok ? 'ok' : 'err';
-      console.log(`[Social Copilot][diag][${label}]`, event.type, requestId, event.details ?? event.error ?? {});
+      console.log(`[Social Copilot][diag][${label}]`, event.type, requestId, safeEvent.details ?? safeEvent.error ?? {});
     }
   };
 
   try {
     const result = await dispatchMessage(requestId, request);
-    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CLEAR_DIAGNOSTICS') {
+    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CONTENT_SCRIPT_ERROR' && diagType !== 'CLEAR_DIAGNOSTICS') {
       record({
         ts: Date.now(),
         type: diagType,
@@ -674,7 +819,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     const safeErr = sanitizeErrorForDiagnostics(err);
-    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CLEAR_DIAGNOSTICS') {
+    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CONTENT_SCRIPT_ERROR' && diagType !== 'CLEAR_DIAGNOSTICS') {
       record({
         ts: Date.now(),
         type: diagType,
@@ -704,14 +849,19 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'GET_STYLE_PREFERENCE':
     case 'RESET_STYLE_PREFERENCE':
     case 'EXPORT_PREFERENCES':
+    case 'EXPORT_USER_DATA':
+    case 'IMPORT_USER_DATA':
     case 'GET_CONTACTS':
     case 'CLEAR_DATA':
     case 'CLEAR_CONTACT_DATA':
     case 'SET_DEBUG_ENABLED':
     case 'GET_DIAGNOSTICS':
     case 'CLEAR_DIAGNOSTICS':
+      return type;
     case 'REPORT_ADAPTER_HEALTH':
-      return type === 'REPORT_ADAPTER_HEALTH' ? 'ADAPTER_HEALTH' : type;
+      return 'ADAPTER_HEALTH';
+    case 'REPORT_CONTENT_SCRIPT_ERROR':
+      return 'CONTENT_SCRIPT_ERROR';
     case 'SET_PREFERRED_STYLE':
     case 'SET_API_KEY':
       // Normalize legacy aliases
@@ -772,7 +922,7 @@ function buildSuccessDetails(
         : undefined,
       hasError: Boolean(r.error),
       thoughtDirection: payload?.thoughtDirection,
-      contactKey: payload?.contactKey ? contactKeyToString(payload.contactKey) : undefined,
+      contactKeySummary: payload?.contactKey ? summarizeContactKeyForDiagnostics(payload.contactKey) : undefined,
       messageCount: Array.isArray(payload?.messages) ? payload!.messages.length : undefined,
       lastMessageLen: Array.isArray(payload?.messages) && payload!.messages.length > 0
         ? payload!.messages[payload!.messages.length - 1].text.length
@@ -806,11 +956,11 @@ function buildErrorDetails(request: { type: string; [key: string]: unknown }): R
     return {
       provider: llmManager?.getActiveProvider(),
       config: sanitizeConfig(currentConfig),
-      contactKey: payload?.contactKey ? contactKeyToString(payload.contactKey) : undefined,
+      contactKeySummary: payload?.contactKey ? summarizeContactKeyForDiagnostics(payload.contactKey) : undefined,
       messageCount: Array.isArray(payload?.messages) ? payload!.messages.length : undefined,
       messages: Array.isArray(payload?.messages)
         ? payload!.messages.map((m) => ({
-            id: m.id,
+            idLen: (m.id ?? '').length,
             dir: m.direction,
             senderLen: (m.senderName ?? '').length,
             textLen: m.text.length,
@@ -886,6 +1036,13 @@ async function dispatchMessage(
       return { success: true };
 
     case 'GET_STATUS': {
+      if (!llmManager || !currentConfig) {
+        try {
+          await loadConfig();
+        } catch (err) {
+          console.warn('[Social Copilot] Failed to load config for status:', sanitizeErrorForDiagnostics(err));
+        }
+      }
       const hasApiKey = !!llmManager;
       const hasFallback = llmManager?.hasFallback() ?? false;
       const usingFallback = Boolean(fallbackModeActive && hasFallback);
@@ -940,6 +1097,12 @@ async function dispatchMessage(
     case 'EXPORT_PREFERENCES':
       return exportPreferences();
 
+    case 'EXPORT_USER_DATA':
+      return exportUserData();
+
+    case 'IMPORT_USER_DATA':
+      return importUserData(request.data);
+
     case 'GET_CONTACTS':
       return getContacts();
 
@@ -972,6 +1135,34 @@ async function dispatchMessage(
           inputRole: payload?.inputRole,
           contactKeySummary: payload?.contactKeySummary,
           lastMessageSummary: payload?.lastMessageSummary,
+        },
+      });
+      return { success: true };
+    }
+
+    case 'REPORT_CONTENT_SCRIPT_ERROR': {
+      const payload = request.payload as Record<string, unknown> | undefined;
+      const name = typeof payload?.name === 'string' ? payload.name : 'ContentScriptError';
+      const message = typeof payload?.message === 'string' ? redactSecrets(payload.message) : 'unknown';
+      const stack = typeof payload?.stack === 'string' ? redactSecrets(payload.stack) : undefined;
+
+      pushDiagnostic({
+        ts: Date.now(),
+        type: 'CONTENT_SCRIPT_ERROR',
+        requestId,
+        ok: false,
+        details: {
+          app: payload?.app,
+          host: payload?.host,
+          pathname: payload?.pathname,
+          filename: payload?.filename,
+          lineno: payload?.lineno,
+          colno: payload?.colno,
+        },
+        error: {
+          name,
+          message,
+          stack,
         },
       });
       return { success: true };
@@ -1383,6 +1574,14 @@ function toUserErrorMessage(error: unknown): string {
   }
   const message = redactSecrets(error instanceof Error ? error.message : String(error));
 
+  // IndexedDB failures are self-healable via "Clear Data" but the raw errors are confusing to users.
+  if (/Unsupported IndexedDB schema/i.test(message) || /IndexedDB migration failed/i.test(message) || /Database not initialized/i.test(message)) {
+    return '本地数据库初始化失败（可能是升级/回滚导致数据不兼容）。请在扩展设置页导出诊断后点击“清除数据”恢复。';
+  }
+  if (/IndexedDB open blocked/i.test(message) || (/blocked/i.test(message) && /IndexedDB/i.test(message))) {
+    return '本地数据库被占用（可能有聊天站点标签页阻塞）。请先关闭 Telegram/WhatsApp/Slack 等站点标签页后重试，必要时在设置页执行“清除数据”。';
+  }
+
   if (/timed out/i.test(message) || /timeout/i.test(message)) {
     return '请求超时，请检查网络后重试。';
   }
@@ -1512,7 +1711,7 @@ async function maybeUpdateMemory(
       ok: true,
       durationMs: Date.now() - startedAt,
       details: {
-        contactKey: contactKeyStr,
+        contactKeySummary: summarizeContactKeyForDiagnostics(contactKey),
         provider: llmManager.getActiveProvider(),
         model: output.model,
         latency: output.latency,
@@ -1527,7 +1726,7 @@ async function maybeUpdateMemory(
       requestId: generateRequestId(),
       ok: false,
       durationMs: Date.now() - startedAt,
-      details: { contactKey: contactKeyStr },
+      details: { contactKeySummary: summarizeContactKeyForDiagnostics(contactKey) },
       error: sanitizeErrorForDiagnostics(err),
     });
   } finally {
@@ -1707,4 +1906,134 @@ async function exportPreferences() {
   }
   const preferences = await preferenceManager.exportPreferences();
   return { preferences };
+}
+
+interface UserDataBackupV1 {
+  schemaVersion: 1;
+  exportedAt: string;
+  extensionVersion: string;
+  data: {
+    profiles: ContactProfile[];
+    stylePreferences: StylePreference[];
+    contactMemories: ContactMemorySummary[];
+    profileUpdateCounts: Record<string, number>;
+    memoryUpdateCounts: Record<string, number>;
+  };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeCountRecord(value: unknown): Record<string, number> {
+  if (!isPlainObject(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof k !== 'string' || !k) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+function normalizeCountRecordKeys(record: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(record)) {
+    const normalized = normalizeContactKeyStr(key);
+    const prev = out[normalized];
+    out[normalized] = prev === undefined ? value : Math.max(prev, value);
+  }
+  return out;
+}
+
+async function exportUserData(): Promise<{ backup: UserDataBackupV1 }> {
+  const profiles = await store.getAllProfiles();
+  const stylePreferences = await store.getAllStylePreferences();
+  const contactMemories = await store.getAllContactMemorySummaries();
+
+  const profileUpdateCounts: Record<string, number> = {};
+  for (const [key, value] of lastProfileUpdateCount.entries()) {
+    if (Number.isFinite(value)) profileUpdateCounts[key] = value;
+  }
+  const memoryUpdateCounts: Record<string, number> = {};
+  for (const [key, value] of lastMemoryUpdateCount.entries()) {
+    if (Number.isFinite(value)) memoryUpdateCounts[key] = value;
+  }
+
+  return {
+    backup: {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      extensionVersion: chrome.runtime.getManifest().version,
+      data: {
+        profiles,
+        stylePreferences,
+        contactMemories,
+        profileUpdateCounts,
+        memoryUpdateCounts,
+      },
+    },
+  };
+}
+
+async function importUserData(payload: unknown): Promise<{ success: boolean; error?: string; imported?: Record<string, number>; skipped?: Record<string, number> }> {
+  if (!isPlainObject(payload) || payload.schemaVersion !== 1) {
+    return { success: false, error: '备份文件格式不正确（schemaVersion）' };
+  }
+  if (!isPlainObject(payload.data)) {
+    return { success: false, error: '备份文件格式不正确（data）' };
+  }
+
+  const profilesRaw = Array.isArray(payload.data.profiles) ? payload.data.profiles : [];
+  const stylePreferencesRaw = Array.isArray(payload.data.stylePreferences) ? payload.data.stylePreferences : [];
+  const contactMemoriesRaw = Array.isArray(payload.data.contactMemories) ? payload.data.contactMemories : [];
+
+  const profileUpdateCounts = normalizeCountRecordKeys(normalizeCountRecord(payload.data.profileUpdateCounts));
+  const memoryUpdateCounts = normalizeCountRecordKeys(normalizeCountRecord(payload.data.memoryUpdateCounts));
+
+  let importResult:
+    | { imported: { profiles: number; stylePreferences: number; contactMemories: number }; skipped: Record<string, number> }
+    | null = null;
+  try {
+    importResult = await store.importSnapshot({
+      schemaVersion: 1,
+      exportedAt: Date.now(),
+      profiles: profilesRaw,
+      stylePreferences: stylePreferencesRaw,
+      contactMemories: contactMemoriesRaw,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `导入失败：${message}` };
+  }
+
+  const profiles = importResult.imported.profiles;
+  const stylePreferences = importResult.imported.stylePreferences;
+  const contactMemories = importResult.imported.contactMemories;
+
+  lastProfileUpdateCount.clear();
+  for (const [k, v] of Object.entries(profileUpdateCounts)) {
+    lastProfileUpdateCount.set(k, v);
+  }
+  try {
+    await persistProfileUpdateCounts();
+  } catch (err) {
+    console.warn('[Social Copilot] Failed to persist profile update counts:', err);
+  }
+
+  lastMemoryUpdateCount.clear();
+  for (const [k, v] of Object.entries(memoryUpdateCounts)) {
+    lastMemoryUpdateCount.set(k, v);
+  }
+  try {
+    await persistMemoryUpdateCounts();
+  } catch (err) {
+    console.warn('[Social Copilot] Failed to persist memory update counts:', err);
+  }
+
+  return {
+    success: true,
+    imported: { profiles, stylePreferences, contactMemories },
+    skipped: importResult.skipped,
+  };
 }

@@ -520,6 +520,18 @@
     <p style="font-size: 12px; color: #888; line-height: 1.6; margin-top: 8px;">
       上架发布时建议提供公开的隐私政策 URL（模板见项目文档 `docs/PRIVACY.md`）。
     </p>
+
+    <div class="fallback-card" style="margin-top: 12px;">
+      <div class="form-group" style="margin-bottom: 10px;">
+        <label style="font-weight: 600;">备份与恢复</label>
+        <small class="muted">导出/导入联系人画像、风格偏好与长期记忆（不包含 API Key，也不包含原文对话消息）。</small>
+      </div>
+      <button id="exportUserDataBtn" class="secondary">导出数据备份</button>
+      <button id="importUserDataBtn" class="secondary">导入数据备份</button>
+      <input id="importUserDataFile" class="hidden" type="file" accept="application/json">
+      <small class="muted">注意：备份文件包含本地画像/记忆等隐私信息，请妥善保管。</small>
+    </div>
+
     <button id="clearDataBtn" class="secondary">清除所有数据</button>
 
     <div class="fallback-card" style="margin-top: 12px;">
