@@ -21,6 +21,14 @@ export interface ContactMemorySummary {
   updatedAt: number;
 }
 
+export interface IndexedDBSnapshotV1 {
+  schemaVersion: 1;
+  exportedAt: number;
+  profiles: ContactProfile[];
+  stylePreferences: StylePreference[];
+  contactMemories: ContactMemorySummary[];
+}
+
 function getContactKeyStrCandidates(contactKey: ContactKey): string[] {
   const variants: ContactKey[] = [contactKey];
 
@@ -169,6 +177,189 @@ function mergeContactMemories(
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+}
+
+function isReplyStyle(value: unknown): value is ReplyStyle {
+  return value === 'humorous' || value === 'caring' || value === 'rational' || value === 'casual' || value === 'formal';
+}
+
+function sanitizeContactKey(raw: unknown): ContactKey | null {
+  if (!isPlainObject(raw)) return null;
+
+  const platformRaw = asTrimmedString(raw.platform);
+  const appRaw = asTrimmedString(raw.app);
+
+  const platform: ContactKey['platform'] = (
+    platformRaw === 'web' ||
+    platformRaw === 'windows' ||
+    platformRaw === 'mac' ||
+    platformRaw === 'android' ||
+    platformRaw === 'ios'
+  )
+    ? (platformRaw as ContactKey['platform'])
+    : 'web';
+
+  const app: ContactKey['app'] = (
+    appRaw === 'telegram' ||
+    appRaw === 'whatsapp' ||
+    appRaw === 'slack' ||
+    appRaw === 'discord' ||
+    appRaw === 'wechat' ||
+    appRaw === 'qq' ||
+    appRaw === 'other'
+  )
+    ? (appRaw as ContactKey['app'])
+    : 'other';
+
+  const conversationId = asTrimmedString(raw.conversationId);
+  if (!conversationId) return null;
+
+  const accountId = asTrimmedString(raw.accountId);
+  const peerId = typeof raw.peerId === 'string' ? raw.peerId : String(raw.peerId ?? '');
+  const isGroup = Boolean(raw.isGroup);
+
+  return {
+    platform,
+    app,
+    accountId: accountId ? accountId : undefined,
+    conversationId,
+    peerId,
+    isGroup,
+  };
+}
+
+function sanitizeContactProfile(raw: unknown): ContactProfile | null {
+  if (!isPlainObject(raw)) return null;
+
+  const key = sanitizeContactKey(raw.key);
+  if (!key) return null;
+
+  const now = Date.now();
+  const displayName = asTrimmedString(raw.displayName) || key.peerId || 'Unknown';
+
+  const interests = Array.isArray(raw.interests)
+    ? raw.interests.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean).slice(0, 50)
+    : [];
+
+  const createdAt = typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : now;
+  const updatedAt = typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : now;
+
+  const relationshipTypeRaw = typeof raw.relationshipType === 'string' ? raw.relationshipType : undefined;
+  const relationshipType = (
+    relationshipTypeRaw === 'friend' ||
+    relationshipTypeRaw === 'colleague' ||
+    relationshipTypeRaw === 'family' ||
+    relationshipTypeRaw === 'acquaintance' ||
+    relationshipTypeRaw === 'romantic' ||
+    relationshipTypeRaw === 'other'
+  )
+    ? (relationshipTypeRaw as ContactProfile['relationshipType'])
+    : undefined;
+
+  const notes = typeof raw.notes === 'string' ? raw.notes.slice(0, 4096) : undefined;
+
+  const basicInfoRaw = isPlainObject(raw.basicInfo) ? raw.basicInfo : null;
+  const basicInfo = basicInfoRaw
+    ? {
+        ageRange: typeof basicInfoRaw.ageRange === 'string' ? basicInfoRaw.ageRange.slice(0, 100) : undefined,
+        occupation: typeof basicInfoRaw.occupation === 'string' ? basicInfoRaw.occupation.slice(0, 100) : undefined,
+        location: typeof basicInfoRaw.location === 'string' ? basicInfoRaw.location.slice(0, 100) : undefined,
+      }
+    : undefined;
+  const normalizedBasicInfo =
+    basicInfo && (basicInfo.ageRange || basicInfo.occupation || basicInfo.location) ? basicInfo : undefined;
+
+  const commRaw = isPlainObject(raw.communicationStyle) ? raw.communicationStyle : null;
+  const communicationStyle = commRaw
+    ? {
+        prefersShortMessages: typeof commRaw.prefersShortMessages === 'boolean' ? commRaw.prefersShortMessages : undefined,
+        usesEmoji: typeof commRaw.usesEmoji === 'boolean' ? commRaw.usesEmoji : undefined,
+        formalityLevel:
+          commRaw.formalityLevel === 'casual' || commRaw.formalityLevel === 'neutral' || commRaw.formalityLevel === 'formal'
+            ? (commRaw.formalityLevel as 'casual' | 'neutral' | 'formal')
+            : undefined,
+      }
+    : undefined;
+  const normalizedCommunicationStyle =
+    communicationStyle &&
+    (communicationStyle.prefersShortMessages !== undefined ||
+      communicationStyle.usesEmoji !== undefined ||
+      communicationStyle.formalityLevel !== undefined)
+      ? communicationStyle
+      : undefined;
+
+  return {
+    key,
+    displayName,
+    basicInfo: normalizedBasicInfo,
+    interests,
+    communicationStyle: normalizedCommunicationStyle,
+    relationshipType,
+    notes,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function sanitizeStylePreference(raw: unknown): StylePreference | null {
+  if (!isPlainObject(raw)) return null;
+  const contactKeyStrRaw = asTrimmedString(raw.contactKeyStr);
+  if (!contactKeyStrRaw) return null;
+
+  const now = Date.now();
+  const updatedAt = typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : now;
+
+  const styleHistoryRaw = Array.isArray(raw.styleHistory) ? raw.styleHistory : [];
+  const styleHistory = styleHistoryRaw
+    .filter((entry): entry is Record<string, unknown> => isPlainObject(entry))
+    .map((entry) => {
+      if (!isReplyStyle(entry.style)) return null;
+      const count = typeof entry.count === 'number' && Number.isFinite(entry.count)
+        ? Math.max(1, Math.floor(entry.count))
+        : null;
+      if (count === null) return null;
+      const lastUsed = typeof entry.lastUsed === 'number' && Number.isFinite(entry.lastUsed)
+        ? Math.max(0, Math.floor(entry.lastUsed))
+        : 0;
+      return { style: entry.style, count, lastUsed };
+    })
+    .filter((v): v is { style: ReplyStyle; count: number; lastUsed: number } => v !== null)
+    .slice(0, 100);
+
+  const defaultStyle = raw.defaultStyle === null ? null : isReplyStyle(raw.defaultStyle) ? raw.defaultStyle : null;
+
+  return {
+    contactKeyStr: normalizeContactKeyStr(contactKeyStrRaw),
+    styleHistory,
+    defaultStyle,
+    updatedAt,
+  };
+}
+
+function sanitizeContactMemorySummary(raw: unknown): ContactMemorySummary | null {
+  if (!isPlainObject(raw)) return null;
+  const contactKeyStrRaw = asTrimmedString(raw.contactKeyStr);
+  if (!contactKeyStrRaw) return null;
+
+  const summary = asTrimmedString(raw.summary);
+  if (!summary) return null;
+
+  const now = Date.now();
+  const updatedAt = typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : now;
+
+  return {
+    contactKeyStr: normalizeContactKeyStr(contactKeyStrRaw),
+    summary: summary.slice(0, 4096),
+    updatedAt,
+  };
+}
+
 /**
  * IndexedDB 存储实现
  */
@@ -176,99 +367,196 @@ export class IndexedDBStore implements MemoryStore {
   private db: IDBDatabase | null = null;
 
   async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+    // Defensive: close any previous connection before (re-)opening.
+    this.db?.close();
+    this.db = null;
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
+    const requiredStores = [STORES.messages, STORES.profiles, STORES.stylePreferences, STORES.contactMemories];
 
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-        const tx = (event.target as IDBOpenDBRequest).transaction;
-        if (!tx) return;
-        const migrateTasks: Array<Promise<void>> = [];
+    const ensureSchemaCompatible = (db: IDBDatabase) => {
+      const missingStores = requiredStores.filter((name) => !db.objectStoreNames.contains(name));
+      if (missingStores.length > 0) {
+        throw new Error(`Unsupported IndexedDB schema (missing stores: ${missingStores.join(', ')})`);
+      }
 
-        // 消息存储
-        let msgStore: IDBObjectStore;
-        if (!db.objectStoreNames.contains(STORES.messages)) {
-          msgStore = db.createObjectStore(STORES.messages, { keyPath: 'id' });
-        } else {
-          msgStore = tx.objectStore(STORES.messages);
-        }
-        if (!msgStore.indexNames.contains('contactKey')) {
-          msgStore.createIndex('contactKey', 'contactKeyStr', { unique: false });
-        }
-        if (!msgStore.indexNames.contains('timestamp')) {
-          msgStore.createIndex('timestamp', 'timestamp', { unique: false });
-        }
-        if (!msgStore.indexNames.contains('contactKeyTimestamp')) {
-          msgStore.createIndex('contactKeyTimestamp', ['contactKeyStr', 'timestamp'], { unique: false });
-        }
+      // Runtime safety: ensure at least the indexes that current code relies on exist.
+      // (We cannot create indexes without an upgrade transaction.)
+      const tx = db.transaction([STORES.messages], 'readonly');
+      const msgStore = tx.objectStore(STORES.messages);
+      if (!msgStore.indexNames.contains('contactKey')) {
+        throw new Error('Unsupported IndexedDB schema (missing messages.contactKey index)');
+      }
+    };
 
-        // 联系人画像存储
-        let profileStore: IDBObjectStore;
-        if (!db.objectStoreNames.contains(STORES.profiles)) {
-          profileStore = db.createObjectStore(STORES.profiles, { keyPath: 'keyStr' });
-        } else {
-          profileStore = tx.objectStore(STORES.profiles);
-        }
-
-        // 设置存储
-        if (!db.objectStoreNames.contains(STORES.settings)) {
-          db.createObjectStore(STORES.settings, { keyPath: 'key' });
-        }
-
-        // 风格偏好存储
-        let stylePrefStore: IDBObjectStore | null = null;
-        if (!db.objectStoreNames.contains(STORES.stylePreferences)) {
-          stylePrefStore = db.createObjectStore(STORES.stylePreferences, { keyPath: 'contactKeyStr' });
-        } else {
-          stylePrefStore = tx.objectStore(STORES.stylePreferences);
-        }
-
-        // 联系人长期记忆存储
-        let memoryStore: IDBObjectStore | null = null;
-        if (!db.objectStoreNames.contains(STORES.contactMemories)) {
-          memoryStore = db.createObjectStore(STORES.contactMemories, { keyPath: 'contactKeyStr' });
-        } else {
-          memoryStore = tx.objectStore(STORES.contactMemories);
-        }
-        if (memoryStore && !memoryStore.indexNames.contains('updatedAt')) {
-          memoryStore.createIndex('updatedAt', 'updatedAt', { unique: false });
-        }
-
-        // 数据迁移：将 legacy key 迁移为转义后的 key，补充新索引字段
-        migrateTasks.push(
-          this.migrateMessageKeys(msgStore)
-        );
-        migrateTasks.push(
-          this.migrateProfileKeys(profileStore)
-        );
-        if (stylePrefStore) {
-          migrateTasks.push(this.migrateStylePreferenceKeys(stylePrefStore));
-        }
-        if (memoryStore) {
-          migrateTasks.push(this.migrateContactMemoryKeys(memoryStore));
-        }
-
-        tx.oncomplete = () => {
-          Promise.allSettled(migrateTasks).then((results) => {
-            const failed = results.filter(r => r.status === 'rejected');
-            if (failed.length > 0) {
-              console.error('[IndexedDBStore] Migration tasks failed', failed);
-              // 迁移失败时抛出，让 init 失败以便上层提示用户
-              reject(new Error('IndexedDB migration failed'));
+    const openDb = (options: { version?: number; allowUpgrade: boolean }): Promise<IDBDatabase> =>
+      new Promise((resolve, reject) => {
+        let finished = false;
+        const finishReject = (error: unknown) => {
+          if (finished) return;
+          finished = true;
+          reject(error);
+        };
+        const finishResolve = (db: IDBDatabase) => {
+          if (finished) {
+            try {
+              db.close();
+            } catch {
+              // ignore
             }
-          }).catch((err) => {
-            console.error('[IndexedDBStore] Migration tasks error', err);
-            reject(err);
+            return;
+          }
+          finished = true;
+          resolve(db);
+        };
+
+        const request = options.version === undefined
+          ? indexedDB.open(DB_NAME)
+          : indexedDB.open(DB_NAME, options.version);
+        let migrationCheck: Promise<void> | null = null;
+
+        request.onerror = () => finishReject(request.error ?? new Error('IndexedDB 打开失败（未知错误）'));
+        request.onblocked = () => finishReject(new Error('IndexedDB 打开被阻塞：请关闭相关标签页后重试'));
+        request.onsuccess = () => {
+          const db = request.result;
+          if (finished) {
+            try {
+              db.close();
+            } catch {
+              // ignore
+            }
+            return;
+          }
+          const finalize = async () => {
+            if (migrationCheck) {
+              await migrationCheck;
+            }
+
+            // Best-effort: avoid blocking future upgrades/deletes.
+            db.onversionchange = () => {
+              try {
+                db.close();
+              } finally {
+                if (this.db === db) this.db = null;
+              }
+            };
+
+            finishResolve(db);
+          };
+
+          void finalize().catch((err) => {
+            try {
+              db.close();
+            } catch {
+              // ignore
+            }
+            finishReject(err);
           });
         };
-      };
-    });
+
+        // Only attach migrations when opening with our expected DB_VERSION.
+        // When rolling back to an older extension version, the on-disk DB version may be higher,
+        // and `indexedDB.open(name, lowerVersion)` fails with VersionError.
+        if (!options.allowUpgrade) return;
+
+        request.onupgradeneeded = (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+          const tx = (event.target as IDBOpenDBRequest).transaction;
+          if (!tx) return;
+          const migrateTasks: Array<Promise<void>> = [];
+
+          // 消息存储
+          let msgStore: IDBObjectStore;
+          if (!db.objectStoreNames.contains(STORES.messages)) {
+            msgStore = db.createObjectStore(STORES.messages, { keyPath: 'id' });
+          } else {
+            msgStore = tx.objectStore(STORES.messages);
+          }
+          if (!msgStore.indexNames.contains('contactKey')) {
+            msgStore.createIndex('contactKey', 'contactKeyStr', { unique: false });
+          }
+          if (!msgStore.indexNames.contains('timestamp')) {
+            msgStore.createIndex('timestamp', 'timestamp', { unique: false });
+          }
+          if (!msgStore.indexNames.contains('contactKeyTimestamp')) {
+            msgStore.createIndex('contactKeyTimestamp', ['contactKeyStr', 'timestamp'], { unique: false });
+          }
+
+          // 联系人画像存储
+          let profileStore: IDBObjectStore;
+          if (!db.objectStoreNames.contains(STORES.profiles)) {
+            profileStore = db.createObjectStore(STORES.profiles, { keyPath: 'keyStr' });
+          } else {
+            profileStore = tx.objectStore(STORES.profiles);
+          }
+
+          // 设置存储
+          if (!db.objectStoreNames.contains(STORES.settings)) {
+            db.createObjectStore(STORES.settings, { keyPath: 'key' });
+          }
+
+          // 风格偏好存储
+          let stylePrefStore: IDBObjectStore | null = null;
+          if (!db.objectStoreNames.contains(STORES.stylePreferences)) {
+            stylePrefStore = db.createObjectStore(STORES.stylePreferences, { keyPath: 'contactKeyStr' });
+          } else {
+            stylePrefStore = tx.objectStore(STORES.stylePreferences);
+          }
+
+          // 联系人长期记忆存储
+          let memoryStore: IDBObjectStore | null = null;
+          if (!db.objectStoreNames.contains(STORES.contactMemories)) {
+            memoryStore = db.createObjectStore(STORES.contactMemories, { keyPath: 'contactKeyStr' });
+          } else {
+            memoryStore = tx.objectStore(STORES.contactMemories);
+          }
+          if (memoryStore && !memoryStore.indexNames.contains('updatedAt')) {
+            memoryStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+          }
+
+          // 数据迁移：将 legacy key 迁移为转义后的 key，补充新索引字段
+          migrateTasks.push(
+            this.migrateMessageKeys(msgStore)
+          );
+          migrateTasks.push(
+            this.migrateProfileKeys(profileStore)
+          );
+          if (stylePrefStore) {
+            migrateTasks.push(this.migrateStylePreferenceKeys(stylePrefStore));
+          }
+          if (memoryStore) {
+            migrateTasks.push(this.migrateContactMemoryKeys(memoryStore));
+          }
+
+          migrationCheck = Promise.allSettled(migrateTasks).then((results) => {
+            const failed = results.filter((r) => r.status === 'rejected');
+            if (failed.length > 0) {
+              console.error('[IndexedDBStore] Migration tasks failed', failed);
+              throw new Error('IndexedDB 迁移失败');
+            }
+          });
+          // Prevent potential unhandledrejection if the open() itself fails (e.g. transaction abort)
+          // before request.onsuccess awaits migrationCheck.
+          void migrationCheck.catch(() => {});
+        };
+      });
+
+    const isVersionError = (e: unknown): boolean =>
+      (e instanceof DOMException && e.name === 'VersionError')
+      || (e instanceof Error && e.name === 'VersionError');
+
+    try {
+      const db = await openDb({ version: DB_VERSION, allowUpgrade: true });
+      ensureSchemaCompatible(db);
+      this.db = db;
+      return;
+    } catch (err) {
+      if (!isVersionError(err)) throw err;
+    }
+
+    // Rollback-safe path: open existing DB at its current version (no migrations).
+    const db = await openDb({ allowUpgrade: false });
+    ensureSchemaCompatible(db);
+    this.db = db;
   }
 
   async close(): Promise<void> {
@@ -775,6 +1063,31 @@ export class IndexedDBStore implements MemoryStore {
   }
 
   /**
+   * Upsert a contact memory summary record (used for backup/restore flows).
+   * Preserves the provided `updatedAt` and normalizes legacy key variants to v2.
+   */
+  async saveContactMemorySummaryRecord(record: ContactMemorySummary): Promise<ContactMemorySummary> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const normalized: ContactMemorySummary = {
+      contactKeyStr: normalizeContactKeyStr(record.contactKeyStr),
+      summary: record.summary,
+      updatedAt: record.updatedAt,
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.contactMemories, 'readwrite');
+      const store = tx.objectStore(STORES.contactMemories);
+      const request = store.put(normalized);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve();
+    });
+
+    return normalized;
+  }
+
+  /**
    * 删除联系人的长期记忆摘要
    */
   async deleteContactMemorySummary(contactKey: ContactKey): Promise<void> {
@@ -814,6 +1127,126 @@ export class IndexedDBStore implements MemoryStore {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve(request.result as ContactMemorySummary[]);
     });
+  }
+
+  /**
+   * Export a portable snapshot of *derived* user data (no raw message contents).
+   */
+  async exportSnapshot(): Promise<IndexedDBSnapshotV1> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const [profiles, stylePreferences, contactMemories] = await Promise.all([
+      this.getAllProfiles(),
+      this.getAllStylePreferences(),
+      this.getAllContactMemorySummaries(),
+    ]);
+
+    return {
+      schemaVersion: 1,
+      exportedAt: Date.now(),
+      profiles,
+      stylePreferences,
+      contactMemories,
+    };
+  }
+
+  /**
+   * Import a snapshot previously produced by exportSnapshot().
+   *
+   * This is best-effort: invalid records are skipped, valid records are upserted.
+   */
+  async importSnapshot(snapshot: IndexedDBSnapshotV1): Promise<{
+    imported: { profiles: number; stylePreferences: number; contactMemories: number };
+    skipped: { profiles: number; stylePreferences: number; contactMemories: number };
+  }> {
+    if (!this.db) throw new Error('Database not initialized');
+    if (!snapshot || snapshot.schemaVersion !== 1) {
+      throw new Error('Unsupported snapshot schema version');
+    }
+
+    const incomingProfiles = Array.isArray(snapshot.profiles) ? snapshot.profiles : [];
+    const incomingStylePreferences = Array.isArray(snapshot.stylePreferences) ? snapshot.stylePreferences : [];
+    const incomingContactMemories = Array.isArray(snapshot.contactMemories) ? snapshot.contactMemories : [];
+
+    const profiles: ContactProfile[] = [];
+    let skippedProfiles = 0;
+    for (const raw of incomingProfiles) {
+      const profile = sanitizeContactProfile(raw);
+      if (profile) profiles.push(profile);
+      else skippedProfiles += 1;
+    }
+
+    const stylePreferences: StylePreference[] = [];
+    let skippedStylePreferences = 0;
+    for (const raw of incomingStylePreferences) {
+      const pref = sanitizeStylePreference(raw);
+      if (pref) stylePreferences.push(pref);
+      else skippedStylePreferences += 1;
+    }
+
+    const contactMemories: ContactMemorySummary[] = [];
+    let skippedContactMemories = 0;
+    for (const raw of incomingContactMemories) {
+      const mem = sanitizeContactMemorySummary(raw);
+      if (mem) contactMemories.push(mem);
+      else skippedContactMemories += 1;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction([STORES.profiles, STORES.stylePreferences, STORES.contactMemories], 'readwrite');
+      const profileStore = tx.objectStore(STORES.profiles);
+      const stylePrefStore = tx.objectStore(STORES.stylePreferences);
+      const memoryStore = tx.objectStore(STORES.contactMemories);
+
+      let settled = false;
+      const fail = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        try {
+          tx.abort();
+        } catch {
+          // ignore
+        }
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      tx.oncomplete = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      tx.onerror = () => fail(tx.error ?? new Error('Snapshot import failed'));
+      tx.onabort = () => fail(tx.error ?? new Error('Snapshot import aborted'));
+
+      for (const profile of profiles) {
+        const keyStr = contactKeyToString(profile.key);
+        const request = profileStore.put({ ...profile, keyStr });
+        request.onerror = () => fail(request.error);
+      }
+
+      for (const pref of stylePreferences) {
+        const request = stylePrefStore.put(pref);
+        request.onerror = () => fail(request.error);
+      }
+
+      for (const memory of contactMemories) {
+        const request = memoryStore.put(memory);
+        request.onerror = () => fail(request.error);
+      }
+    });
+
+    return {
+      imported: {
+        profiles: profiles.length,
+        stylePreferences: stylePreferences.length,
+        contactMemories: contactMemories.length,
+      },
+      skipped: {
+        profiles: skippedProfiles,
+        stylePreferences: skippedStylePreferences,
+        contactMemories: skippedContactMemories,
+      },
+    };
   }
 
   /**
