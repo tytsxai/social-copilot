@@ -174,6 +174,18 @@ function summarizeConversationIdKind(conversationId: string): string {
   return 'other';
 }
 
+function summarizePathnameKind(pathname: string): string {
+  const path = (pathname ?? '').trim();
+  if (!path || path === '/') return 'root';
+  if (path.startsWith('/client/')) return 'slack_client';
+  if (path.startsWith('/k/')) return 'telegram_k';
+  if (path.startsWith('/a/')) return 'telegram_a';
+  const seg = path.split('/').filter(Boolean)[0] ?? '';
+  if (!seg) return 'other';
+  const cleaned = seg.replace(/[^a-z0-9_-]/gi, '').slice(0, 24);
+  return cleaned ? `seg:${cleaned}` : 'other';
+}
+
 function summarizeContactKeyStrForDiagnostics(contactKeyStr: string): Record<string, unknown> | null {
   const parts = (contactKeyStr ?? '').split(':').filter((p) => p !== undefined);
   if (parts.length < 5) return null;
@@ -247,6 +259,13 @@ function sanitizeDiagnosticDetails(details: Record<string, unknown> | undefined)
   if (!details) return undefined;
   const out: Record<string, unknown> = { ...details };
 
+  // Strip potentially identifying URL paths (e.g. Slack channel IDs in /client/...).
+  if (typeof out.pathname === 'string') {
+    out.pathnameKind = summarizePathnameKind(out.pathname);
+    out.pathnameLen = out.pathname.length;
+    delete out.pathname;
+  }
+
   // Legacy persisted diagnostics may include identifiers; migrate to safe summaries.
   if (typeof out.contactKey === 'string') {
     const summary = summarizeContactKeyStrForDiagnostics(out.contactKey);
@@ -274,7 +293,8 @@ function sanitizeDiagnosticDetails(details: Record<string, unknown> | undefined)
 }
 
 function pushDiagnostic(event: DiagnosticEvent): void {
-  diagnostics.push(event);
+  const sanitized: DiagnosticEvent = event.details ? { ...event, details: sanitizeDiagnosticDetails(event.details) } : event;
+  diagnostics.push(sanitized);
   if (diagnostics.length > DIAGNOSTICS_MAX_EVENTS) {
     diagnostics = diagnostics.slice(-DIAGNOSTICS_MAX_EVENTS);
   }
@@ -403,6 +423,14 @@ async function maybePersistDiagnostics(force = false): Promise<void> {
 }
 
 async function clearPersistedDiagnostics(): Promise<void> {
+  const inFlight = diagnosticsPersistInFlight;
+  if (inFlight) {
+    try {
+      await inFlight;
+    } catch {
+      // ignore
+    }
+  }
   diagnostics = [];
   diagnosticsDirty = false;
   diagnosticsLastPersistAt = Date.now();
@@ -805,7 +833,12 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
 
   try {
     const result = await dispatchMessage(requestId, request);
-    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CONTENT_SCRIPT_ERROR' && diagType !== 'CLEAR_DIAGNOSTICS') {
+    if (
+      diagType !== 'ADAPTER_HEALTH' &&
+      diagType !== 'CONTENT_SCRIPT_ERROR' &&
+      diagType !== 'CLEAR_DIAGNOSTICS' &&
+      diagType !== 'CLEAR_DATA'
+    ) {
       record({
         ts: Date.now(),
         type: diagType,
@@ -819,7 +852,12 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     const safeErr = sanitizeErrorForDiagnostics(err);
-    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CONTENT_SCRIPT_ERROR' && diagType !== 'CLEAR_DIAGNOSTICS') {
+    if (
+      diagType !== 'ADAPTER_HEALTH' &&
+      diagType !== 'CONTENT_SCRIPT_ERROR' &&
+      diagType !== 'CLEAR_DIAGNOSTICS' &&
+      diagType !== 'CLEAR_DATA'
+    ) {
       record({
         ts: Date.now(),
         type: diagType,
@@ -1123,7 +1161,8 @@ async function dispatchMessage(
         details: {
           app: payload?.app,
           host: payload?.host,
-          pathname: payload?.pathname,
+          pathnameKind: payload?.pathnameKind,
+          pathnameLen: payload?.pathnameLen,
           adapterVariant: payload?.adapterVariant,
           adapterSelectorHints: payload?.adapterSelectorHints,
           hasInput: payload?.hasInput,
@@ -1154,7 +1193,9 @@ async function dispatchMessage(
         details: {
           app: payload?.app,
           host: payload?.host,
-          pathname: payload?.pathname,
+          pathnameKind: payload?.pathnameKind,
+          pathnameLen: payload?.pathnameLen,
+          phase: payload?.phase,
           filename: payload?.filename,
           lineno: payload?.lineno,
           colno: payload?.colno,
@@ -1575,10 +1616,20 @@ function toUserErrorMessage(error: unknown): string {
   const message = redactSecrets(error instanceof Error ? error.message : String(error));
 
   // IndexedDB failures are self-healable via "Clear Data" but the raw errors are confusing to users.
-  if (/Unsupported IndexedDB schema/i.test(message) || /IndexedDB migration failed/i.test(message) || /Database not initialized/i.test(message)) {
+  if (
+    /Unsupported IndexedDB schema/i.test(message)
+    || /IndexedDB migration failed/i.test(message)
+    || /IndexedDB 迁移失败/.test(message)
+    || /Database not initialized/i.test(message)
+  ) {
     return '本地数据库初始化失败（可能是升级/回滚导致数据不兼容）。请在扩展设置页导出诊断后点击“清除数据”恢复。';
   }
-  if (/IndexedDB open blocked/i.test(message) || (/blocked/i.test(message) && /IndexedDB/i.test(message))) {
+  if (
+    /IndexedDB open blocked/i.test(message)
+    || /IndexedDB 打开被阻塞/.test(message)
+    || (/blocked/i.test(message) && /IndexedDB/i.test(message))
+    || (/被阻塞/.test(message) && /IndexedDB/i.test(message))
+  ) {
     return '本地数据库被占用（可能有聊天站点标签页阻塞）。请先关闭 Telegram/WhatsApp/Slack 等站点标签页后重试，必要时在设置页执行“清除数据”。';
   }
 
