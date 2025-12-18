@@ -98,6 +98,7 @@ interface Config {
 // 初始化存储
 const store = new IndexedDBStore();
 let storeReady: Promise<void> | null = null;
+let storeInitError: Error | null = null;
 let llmManager: LLMManager | null = null;
 let profileUpdater: ProfileUpdater | null = null;
 let preferenceManager: StylePreferenceManager | null = null;
@@ -112,9 +113,17 @@ const memoryUpdateInFlight: Set<string> = new Set();
 const PROFILE_UPDATE_COUNT_STORAGE_KEY = 'profileUpdateCounts';
 const MEMORY_UPDATE_COUNT_STORAGE_KEY = 'memoryUpdateCounts';
 const DEBUG_ENABLED_STORAGE_KEY = 'debugEnabled';
+/**
+ * Temporary API key fallback keys stored in chrome.storage.local when
+ * chrome.storage.session is unavailable (MV3 compatibility variance).
+ *
+ * These keys are cleared on browser startup to approximate session-only storage.
+ */
 const SESSION_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_apiKey';
 const SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_fallbackApiKey';
+/** Ring buffer size for exported diagnostics snapshot. */
 const DIAGNOSTICS_MAX_EVENTS = 200;
+/** Update memory summary every N new messages (per contact) to control cost. */
 const MEMORY_UPDATE_THRESHOLD = 50;
 const MEMORY_CONTEXT_MESSAGE_LIMIT = 50;
 const MEMORY_SUMMARY_MAX_LEN = 1024;
@@ -415,11 +424,17 @@ async function setLastMemoryUpdateCount(contactKeyStr: string, count: number): P
 function ensureStoreReady(): Promise<void> {
   if (!storeReady) {
     storeReady = (async () => {
-      await store.init();
-      preferenceManager = new StylePreferenceManager(store);
-      await loadProfileUpdateCounts();
-      await loadMemoryUpdateCounts();
-      await loadDebugEnabled();
+      try {
+        await store.init();
+        preferenceManager = new StylePreferenceManager(store);
+        await loadProfileUpdateCounts();
+        await loadMemoryUpdateCounts();
+        await loadDebugEnabled();
+        storeInitError = null;
+      } catch (err) {
+        storeInitError = err instanceof Error ? err : new Error(String(err));
+        throw storeInitError;
+      }
     })().catch((err) => {
       storeReady = null;
       throw err;
@@ -455,7 +470,26 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 async function handleMessage(request: { type: string; [key: string]: unknown }) {
-  await ensureStoreReady();
+  const requestType = typeof request.type === 'string' ? request.type : 'UNKNOWN';
+  const allowWithoutStore = new Set([
+    'GET_STATUS',
+    'CLEAR_DATA',
+    'GET_DIAGNOSTICS',
+    'CLEAR_DIAGNOSTICS',
+    'SET_DEBUG_ENABLED',
+  ]);
+
+  if (allowWithoutStore.has(requestType)) {
+    try {
+      await ensureStoreReady();
+    } catch {
+      // Allow limited recovery/diagnostics even if IndexedDB init/migration fails.
+      // This ensures the extension can still export diagnostics and offer a self-healing
+      // "clear data" path instead of getting permanently bricked by a migration failure.
+    }
+  } else {
+    await ensureStoreReady();
+  }
 
   const requestId = typeof request.requestId === 'string' && request.requestId.trim()
     ? request.requestId.trim()
@@ -715,6 +749,10 @@ async function dispatchMessage(
         debugEnabled,
         privacyAcknowledged: currentConfig?.privacyAcknowledged ?? false,
         autoTrigger: currentConfig?.autoTrigger ?? true,
+        storeOk: storeInitError === null,
+        storeError: storeInitError
+          ? { name: storeInitError.name, message: storeInitError.message }
+          : undefined,
         requestId,
       };
     }
@@ -1438,10 +1476,24 @@ async function clearData() {
   preferenceManager = null;
   currentConfig = null;
   storeReady = null;
+  storeInitError = null;
 
-  // 重新初始化存储
-  await store.deleteDatabase();
-  await ensureStoreReady();
+  // 重新初始化存储（允许在迁移失败时恢复）
+  try {
+    await store.deleteDatabase();
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    storeInitError = e;
+    return { success: false, error: `无法删除本地数据库：${e.message}` };
+  }
+
+  try {
+    await ensureStoreReady();
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    storeInitError = e;
+    return { success: false, error: `无法重新初始化本地数据库：${e.message}` };
+  }
 
   return { success: true };
 }

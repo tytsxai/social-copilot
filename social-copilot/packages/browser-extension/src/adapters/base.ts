@@ -79,6 +79,8 @@ export function buildMessageId(args: {
   text: string;
   timeText?: string;
 }): string {
+  // Message IDs must be stable and globally unique within the extension DB.
+  // We namespace by contactKeyStr to avoid collisions when a platform only provides per-chat IDs.
   const contactKeyStr = contactKeyToString(args.contactKey);
   const preferred = typeof args.preferredId === 'string' ? args.preferredId.trim() : '';
   if (preferred) {
@@ -147,5 +149,8 @@ export function parseTimestampFromText(timeText: string, now: Date = new Date())
     return base.getTime();
   }
 
+  // Unknown/unparseable timestamp formats: return "now" so ordering is best-effort
+  // and the caller can still store the message. This is preferable to throwing,
+  // but may reduce chronological accuracy on some UIs.
   return Date.now();
 }

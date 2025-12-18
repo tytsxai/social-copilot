@@ -56,6 +56,16 @@ export class CopilotContentScript {
   private readonly adapterFailureThreshold = 3;
   private readonly autoRecoveryDelayMs = 5000;
 
+  /**
+   * Concurrency model (important for maintainability):
+   *
+   * - Content scripts cannot reliably keep long-lived state; Background can also be restarted by MV3.
+   * - We treat each "conversation" as an epoch. When navigation/switch happens, `conversationEpoch++`.
+   * - Generation is guarded by `isGenerating` + an increasing token. This prevents stale async results
+   *   from updating UI after conversation changes, and avoids overlapping requests.
+   * - We do not abort in-flight background requests (no AbortController wiring here), so we must rely
+   *   on epoch/token checks before applying results.
+   */
   constructor(options: CopilotContentScriptOptions) {
     this.options = options;
     this.adapter = options.adapter;

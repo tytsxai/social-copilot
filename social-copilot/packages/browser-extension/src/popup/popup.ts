@@ -177,6 +177,13 @@ async function checkStatus() {
     const response = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
     lastStatus = response ?? null;
 
+    if (response?.storeOk === false) {
+      statusEl.className = 'status warning';
+      const errMsg = response.storeError?.message ? `（${response.storeError.message}）` : '';
+      statusEl.textContent = `⚠ 本地数据库初始化失败${errMsg}：请先导出诊断并点击“清除数据”恢复`;
+      return;
+    }
+
     if (response?.hasApiKey) {
       const privacyOk = Boolean(response.privacyAcknowledged);
       const autoTrigger = response.autoTrigger === undefined ? true : Boolean(response.autoTrigger);
@@ -495,16 +502,27 @@ async function loadContacts() {
 // 清除数据
 clearDataBtn.addEventListener('click', async () => {
   if (confirm('确定要清除所有数据吗？这将删除所有联系人记录和设置。')) {
-    await chrome.storage.local.clear();
-    await chrome.runtime.sendMessage({ type: 'CLEAR_DATA' });
+    try {
+      await chrome.storage.local.clear();
+      const res = await chrome.runtime.sendMessage({ type: 'CLEAR_DATA' });
+      if (res?.success === false) {
+        statusEl.className = 'status warning';
+        statusEl.textContent = `⚠ 清除未完全成功：${res.error ?? '未知错误'}（可尝试关闭所有聊天站点标签页后重试）`;
+        return;
+      }
 
-    statusEl.className = 'status warning';
-    statusEl.textContent = '⚠ 数据已清除，请重新设置';
-    apiKeyInput.value = '';
-    fallbackApiKeyInput.value = '';
-    enableFallbackCheckbox.checked = false;
-    toggleFallbackFields();
-    loadContacts();
+      statusEl.className = 'status warning';
+      statusEl.textContent = '⚠ 数据已清除，请重新设置';
+      apiKeyInput.value = '';
+      fallbackApiKeyInput.value = '';
+      enableFallbackCheckbox.checked = false;
+      toggleFallbackFields();
+      loadContacts();
+      await checkStatus();
+    } catch (err) {
+      statusEl.className = 'status warning';
+      statusEl.textContent = `⚠ 清除失败：${(err as Error).message}`;
+    }
   }
 });
 
