@@ -10,6 +10,7 @@
 ## 生产发布提示
 
 - 隐私政策模板：`social-copilot/docs/PRIVACY.md`
+- 公开隐私政策页面（GitHub Pages）：`docs/README.md`
 - 上线检查清单：`social-copilot/docs/RELEASE_CHECKLIST.md`
 
 ## 快速开始
