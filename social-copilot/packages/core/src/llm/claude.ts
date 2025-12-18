@@ -2,6 +2,7 @@ import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } fro
 import { parseReplyContent, ReplyParseError } from './reply-validation';
 import { fetchWithTimeout } from './fetch-with-timeout';
 import { applySystemPromptHooks, applyUserPromptHooks } from './prompt-hooks';
+import { redactSecrets } from '../utils/redact';
 
 function getLanguageInstruction(language: LLMInput['language']): string {
   if (language === 'zh') return '中文';
@@ -86,7 +87,7 @@ export class ClaudeProvider implements LLMProvider {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const errorMessage = errorData.error?.message || `status ${response.status}`;
+      const errorMessage = redactSecrets(errorData.error?.message || `status ${response.status}`);
       throw new Error(`Claude API error: ${errorMessage}`);
     }
 

@@ -6,3 +6,4 @@ export * from './preference';
 export * from './thought';
 export * from './privacy/sanitize';
 export { extractJsonArrayBlock, extractJsonObjectBlock, parseJsonObjectFromText } from './utils/json';
+export { redactSecrets } from './utils/redact';
