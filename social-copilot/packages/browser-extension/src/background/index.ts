@@ -7,6 +7,7 @@ import {
   ReplyParseError,
   parseJsonObjectFromText,
   sanitizeOutboundContext,
+  redactSecrets,
 } from '@social-copilot/core';
 import type {
   Message,
@@ -123,6 +124,10 @@ const SESSION_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_apiKey';
 const SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_fallbackApiKey';
 /** Ring buffer size for exported diagnostics snapshot. */
 const DIAGNOSTICS_MAX_EVENTS = 200;
+/** Persist diagnostics across MV3 service worker restarts (local-only, no PII/raw chat text). */
+const DIAGNOSTICS_STORAGE_KEY = '__sc_diagnostics_v1';
+/** Throttle persistence to avoid excessive writes. */
+const DIAGNOSTICS_PERSIST_MIN_INTERVAL_MS = 1500;
 /** Update memory summary every N new messages (per contact) to control cost. */
 const MEMORY_UPDATE_THRESHOLD = 50;
 const MEMORY_CONTEXT_MESSAGE_LIMIT = 50;
@@ -130,6 +135,10 @@ const MEMORY_SUMMARY_MAX_LEN = 1024;
 
 let debugEnabled = false;
 let diagnostics: DiagnosticEvent[] = [];
+let diagnosticsReady: Promise<void> | null = null;
+let diagnosticsDirty = false;
+let diagnosticsLastPersistAt = 0;
+let diagnosticsPersistInFlight: Promise<void> | null = null;
 
 function generateRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -140,6 +149,146 @@ function pushDiagnostic(event: DiagnosticEvent): void {
   if (diagnostics.length > DIAGNOSTICS_MAX_EVENTS) {
     diagnostics = diagnostics.slice(-DIAGNOSTICS_MAX_EVENTS);
   }
+  diagnosticsDirty = true;
+}
+
+function coerceDiagnosticEventType(value: unknown): DiagnosticEventType {
+  if (typeof value !== 'string') return 'UNKNOWN';
+  switch (value) {
+    case 'GENERATE_REPLY':
+    case 'ANALYZE_THOUGHT':
+    case 'SET_CONFIG':
+    case 'ACK_PRIVACY':
+    case 'FALLBACK':
+    case 'RECOVERY':
+    case 'ALL_FAILED':
+    case 'MEMORY_UPDATE':
+    case 'ADAPTER_HEALTH':
+    case 'GET_STATUS':
+    case 'GET_PROFILE':
+    case 'UPDATE_PROFILE':
+    case 'GET_CONTACT_MEMORY':
+    case 'CLEAR_CONTACT_MEMORY':
+    case 'RECORD_STYLE_SELECTION':
+    case 'GET_STYLE_PREFERENCE':
+    case 'RESET_STYLE_PREFERENCE':
+    case 'EXPORT_PREFERENCES':
+    case 'GET_CONTACTS':
+    case 'CLEAR_DATA':
+    case 'CLEAR_CONTACT_DATA':
+    case 'SET_DEBUG_ENABLED':
+    case 'GET_DIAGNOSTICS':
+    case 'CLEAR_DIAGNOSTICS':
+    case 'UNKNOWN':
+      return value;
+    default:
+      return 'UNKNOWN';
+  }
+}
+
+function parseDiagnosticsPayload(raw: unknown): DiagnosticEvent[] {
+  if (!Array.isArray(raw)) return [];
+
+  const events: DiagnosticEvent[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const ts = typeof record.ts === 'number' && Number.isFinite(record.ts) ? record.ts : null;
+    const ok = typeof record.ok === 'boolean' ? record.ok : null;
+    const requestId = typeof record.requestId === 'string' ? record.requestId : null;
+    const type = coerceDiagnosticEventType(record.type);
+    if (ts === null || ok === null || requestId === null) continue;
+
+    const durationMs = typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
+      ? record.durationMs
+      : undefined;
+    const details = record.details && typeof record.details === 'object' && !Array.isArray(record.details)
+      ? (record.details as Record<string, unknown>)
+      : undefined;
+    const error = record.error && typeof record.error === 'object' && !Array.isArray(record.error)
+      ? (() => {
+          const e = record.error as Record<string, unknown>;
+          const name = typeof e.name === 'string' ? e.name : 'Error';
+          const message = typeof e.message === 'string' ? e.message : '';
+          const stack = typeof e.stack === 'string' ? e.stack : undefined;
+          return { name, message, stack };
+        })()
+      : undefined;
+
+    events.push({
+      ts,
+      type,
+      requestId,
+      ok,
+      durationMs,
+      details,
+      error,
+    });
+  }
+
+  return events.slice(-DIAGNOSTICS_MAX_EVENTS);
+}
+
+async function ensureDiagnosticsReady(): Promise<void> {
+  if (!diagnosticsReady) {
+    diagnosticsReady = (async () => {
+      try {
+        const result = await chrome.storage.local.get([DIAGNOSTICS_STORAGE_KEY]);
+        diagnostics = parseDiagnosticsPayload(result[DIAGNOSTICS_STORAGE_KEY]);
+      } catch (err) {
+        console.warn('[Social Copilot] Failed to load diagnostics:', err);
+      }
+    })();
+  }
+  return diagnosticsReady;
+}
+
+async function maybePersistDiagnostics(force = false): Promise<void> {
+  if (!diagnosticsDirty) return;
+
+  const now = Date.now();
+  if (!force && now - diagnosticsLastPersistAt < DIAGNOSTICS_PERSIST_MIN_INTERVAL_MS) return;
+  if (diagnosticsPersistInFlight) {
+    await diagnosticsPersistInFlight;
+    return;
+  }
+
+  const snapshot = diagnostics.slice(-DIAGNOSTICS_MAX_EVENTS);
+  diagnosticsPersistInFlight = (async () => {
+    diagnosticsDirty = false;
+    diagnosticsLastPersistAt = Date.now();
+    try {
+      await chrome.storage.local.set({ [DIAGNOSTICS_STORAGE_KEY]: snapshot });
+    } catch (err) {
+      diagnosticsDirty = true;
+      console.warn('[Social Copilot] Failed to persist diagnostics:', err);
+    } finally {
+      diagnosticsPersistInFlight = null;
+    }
+  })();
+
+  await diagnosticsPersistInFlight;
+}
+
+async function clearPersistedDiagnostics(): Promise<void> {
+  diagnostics = [];
+  diagnosticsDirty = false;
+  diagnosticsLastPersistAt = Date.now();
+  diagnosticsPersistInFlight = null;
+  try {
+    await chrome.storage.local.remove([DIAGNOSTICS_STORAGE_KEY]);
+  } catch (err) {
+    console.warn('[Social Copilot] Failed to clear persisted diagnostics:', err);
+  }
+}
+
+function sanitizeErrorForDiagnostics(error: unknown): { name: string; message: string; stack?: string } {
+  const err = error instanceof Error ? error : new Error(String(error));
+  return {
+    name: err.name,
+    message: redactSecrets(err.message),
+    stack: err.stack ? redactSecrets(err.stack) : undefined,
+  };
 }
 
 function sanitizeConfig(config: Config | null): Record<string, unknown> {
@@ -456,20 +605,24 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // 启动时初始化
-ensureStoreReady().then(loadConfig).catch(console.error);
+ensureStoreReady()
+  .then(loadConfig)
+  .catch((err) => console.error('[Social Copilot] Init failed:', sanitizeErrorForDiagnostics(err)));
+void ensureDiagnosticsReady();
 
 // 监听消息
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   handleMessage(request)
     .then(sendResponse)
     .catch((error) => {
-      console.error('[Social Copilot] Error:', error);
-      sendResponse({ error: error.message });
+      console.error('[Social Copilot] Error:', sanitizeErrorForDiagnostics(error));
+      sendResponse({ error: toUserErrorMessage(error) });
     });
   return true;
 });
 
 async function handleMessage(request: { type: string; [key: string]: unknown }) {
+  await ensureDiagnosticsReady();
   const requestType = typeof request.type === 'string' ? request.type : 'UNKNOWN';
   const allowWithoutStore = new Set([
     'GET_STATUS',
@@ -507,7 +660,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
 
   try {
     const result = await dispatchMessage(requestId, request);
-    if (diagType !== 'ADAPTER_HEALTH') {
+    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CLEAR_DIAGNOSTICS') {
       record({
         ts: Date.now(),
         type: diagType,
@@ -516,19 +669,22 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
         details: debugEnabled ? buildSuccessDetails(request, result) : buildMinimalSuccessDetails(request, result),
       });
     }
+    await maybePersistDiagnostics();
     return result;
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
-    if (diagType !== 'ADAPTER_HEALTH') {
+    const safeErr = sanitizeErrorForDiagnostics(err);
+    if (diagType !== 'ADAPTER_HEALTH' && diagType !== 'CLEAR_DIAGNOSTICS') {
       record({
         ts: Date.now(),
         type: diagType,
         ok: false,
         durationMs: Date.now() - startedAt,
         details: debugEnabled ? buildErrorDetails(request) : buildMinimalErrorDetails(request),
-        error: { name: err.name, message: err.message, stack: err.stack },
+        error: safeErr,
       });
     }
+    await maybePersistDiagnostics();
     throw err;
   }
 }
@@ -726,7 +882,7 @@ async function dispatchMessage(
       return buildDiagnosticsSnapshot();
 
     case 'CLEAR_DIAGNOSTICS':
-      diagnostics = [];
+      await clearPersistedDiagnostics();
       return { success: true };
 
     case 'GET_STATUS': {
@@ -974,7 +1130,10 @@ async function setConfig(config: Config) {
     try {
       await setSessionKeys(currentConfig.apiKey, currentConfig.enableFallback ? currentConfig.fallbackApiKey : undefined);
     } catch (err) {
-      console.warn('[Social Copilot] Failed to persist session keys (service worker may lose key on restart):', err);
+      console.warn(
+        '[Social Copilot] Failed to persist session keys (service worker may lose key on restart):',
+        sanitizeErrorForDiagnostics(err)
+      );
     }
   }
 
@@ -1024,14 +1183,14 @@ function buildManagerConfig(config: Config): LLMManagerConfig {
 }
 
 async function handleFallbackEvent(fromProvider: string, toProvider: string, error: Error) {
-  console.warn('[Social Copilot] Fallback triggered:', error);
+  console.warn('[Social Copilot] Fallback triggered:', sanitizeErrorForDiagnostics(error));
   fallbackModeActive = true;
   pushDiagnostic({
     ts: Date.now(),
     type: 'FALLBACK',
     requestId: generateRequestId(),
     ok: true,
-    details: { fromProvider, toProvider, message: error.message },
+    details: { fromProvider, toProvider, message: redactSecrets(error.message) },
   });
 }
 
@@ -1052,7 +1211,7 @@ async function handleAllFailedEvent(errors: Error[]) {
     type: 'ALL_FAILED',
     requestId: generateRequestId(),
     ok: false,
-    error: { name: 'AllProvidersFailed', message: errors.map((e) => e.message).join('; ') },
+    error: { name: 'AllProvidersFailed', message: redactSecrets(errors.map((e) => e.message).join('; ')) },
   });
 }
 
@@ -1167,7 +1326,7 @@ async function handleGenerateReply(payload: {
       usingFallback: Boolean(fallbackModeActive && llmManager.hasFallback()),
     };
   } catch (error) {
-    console.error('[Social Copilot] Failed to generate reply:', error);
+    console.error('[Social Copilot] Failed to generate reply:', sanitizeErrorForDiagnostics(error));
     const message = toUserErrorMessage(error);
 
     if (currentConfig?.enableMemory ?? false) {
@@ -1222,7 +1381,7 @@ function toUserErrorMessage(error: unknown): string {
   if (error instanceof ReplyParseError) {
     return 'AI 回复格式不正确，请重试。';
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSecrets(error instanceof Error ? error.message : String(error));
 
   if (/timed out/i.test(message) || /timeout/i.test(message)) {
     return '请求超时，请检查网络后重试。';
@@ -1286,7 +1445,7 @@ async function maybeUpdateProfile(
         }
       }
     } catch (error) {
-      console.error('[Social Copilot] Failed to update profile:', error);
+      console.error('[Social Copilot] Failed to update profile:', sanitizeErrorForDiagnostics(error));
     } finally {
       await setLastProfileUpdateCount(contactKeyStr, messageCount);
     }
@@ -1369,7 +1528,7 @@ async function maybeUpdateMemory(
       ok: false,
       durationMs: Date.now() - startedAt,
       details: { contactKey: contactKeyStr },
-      error: { name: err.name, message: err.message, stack: err.stack },
+      error: sanitizeErrorForDiagnostics(err),
     });
   } finally {
     memoryUpdateInFlight.delete(contactKeyStr);
@@ -1447,7 +1606,7 @@ async function getContacts() {
     );
     return { contacts };
   } catch (error) {
-    console.error('[Social Copilot] Failed to get contacts:', error);
+    console.error('[Social Copilot] Failed to get contacts:', sanitizeErrorForDiagnostics(error));
     return { contacts: [] };
   }
 }
