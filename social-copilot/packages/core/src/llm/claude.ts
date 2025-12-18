@@ -87,8 +87,13 @@ export class ClaudeProvider implements LLMProvider {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const errorMessage = redactSecrets(errorData.error?.message || `status ${response.status}`);
-      throw new Error(`Claude API error: ${errorMessage}`);
+      const apiMessage = redactSecrets(
+        typeof (errorData as { error?: { message?: unknown } } | undefined)?.error?.message === 'string'
+          ? String((errorData as { error?: { message?: unknown } }).error!.message)
+          : ''
+      );
+      const suffix = apiMessage ? ` ${apiMessage}` : '';
+      throw new Error(`Claude API error: ${response.status}${suffix}`);
     }
 
     const data = await response.json();

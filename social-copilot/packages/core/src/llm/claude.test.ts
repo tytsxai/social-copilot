@@ -175,8 +175,19 @@ describe('ClaudeProvider', () => {
         json: async () => maybeMessage ? { error: { message: maybeMessage } } : {},
       }));
 
-      const expectedFragment = maybeMessage ?? `status ${status}`;
-      await expect(provider.generateReply(baseInput)).rejects.toThrow(expectedFragment);
+      let thrown: unknown = null;
+      try {
+        await provider.generateReply(baseInput);
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).toContain(`Claude API error: ${status}`);
+      if (maybeMessage) {
+        expect(message).toContain(maybeMessage);
+      }
     });
   });
 });
