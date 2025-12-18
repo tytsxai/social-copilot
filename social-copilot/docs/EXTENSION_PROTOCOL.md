@@ -163,7 +163,7 @@
 **`REPORT_ADAPTER_HEALTH`**
 - Request:
   - `payload.ok: boolean`
-  - `payload.app/host/pathname/...`（仅包含摘要信息，不包含原文消息）
+  - `payload.app/host/pathnameKind/pathnameLen/...`（仅包含摘要信息，不包含原文消息/路径中的 ID）
 - Response: `{ success: true }`
 
 ### 3.8 数据备份与恢复
@@ -205,7 +205,7 @@
 **`REPORT_CONTENT_SCRIPT_ERROR`**
 
 - Request:
-  - `payload.app/host/pathname/...`
+  - `payload.app/host/pathnameKind/pathnameLen/...`
   - `payload.name/message/stack`
   - `payload.filename/lineno/colno`（可选）
 - Response: `{ success: true }`
