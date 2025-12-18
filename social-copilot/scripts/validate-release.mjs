@@ -66,6 +66,30 @@ if (!permissions.includes('storage')) {
   fail('manifest.permissions must include "storage"');
 }
 
+const hostPermissions = Array.isArray(manifest.host_permissions) ? manifest.host_permissions : [];
+if (hostPermissions.some((p) => typeof p !== 'string')) {
+  fail('manifest.host_permissions must be string[]');
+}
+if (hostPermissions.some((p) => p === '<all_urls>')) {
+  fail('host_permissions must not include <all_urls>');
+}
+if (hostPermissions.length === 0) {
+  fail('manifest.host_permissions must not be empty');
+}
+const hasNonHttpsHost = hostPermissions.some((p) => !p.startsWith('https://'));
+if (hasNonHttpsHost) {
+  fail(`host_permissions must use https:// match patterns: ${hostPermissions.join(', ')}`);
+}
+const broadHostPatterns = new Set(['*://*/*', 'https://*/*', 'http://*/*', '*://*/']);
+const hasBroadHost = hostPermissions.some((p) => broadHostPatterns.has(p) || p.includes('*://*/*'));
+if (hasBroadHost) {
+  fail(`host_permissions too broad (found wildcard): ${hostPermissions.join(', ')}`);
+}
+const hasInsecureHost = hostPermissions.some((p) => p.startsWith('http://'));
+if (hasInsecureHost) {
+  fail(`host_permissions must use https: ${hostPermissions.join(', ')}`);
+}
+
 if (!existsSync(distDir) || !statSync(distDir).isDirectory()) {
   fail('dist not found, run `pnpm build:extension:release` first');
 }
