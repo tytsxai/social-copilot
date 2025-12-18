@@ -21,6 +21,25 @@ function computeBackoffMs(attempt: number, baseDelayMs: number, maxDelayMs: numb
   return Math.min(maxDelayMs, exp + jitter);
 }
 
+function parseRetryAfterMs(retryAfter: string | null): number | null {
+  if (!retryAfter) return null;
+
+  const trimmed = retryAfter.trim();
+  if (!trimmed) return null;
+
+  // "Retry-After: <delay-seconds>"
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.floor(seconds * 1000);
+  }
+
+  // "Retry-After: <http-date>"
+  const date = Date.parse(trimmed);
+  if (!Number.isFinite(date)) return null;
+  const delta = date - Date.now();
+  return delta > 0 ? Math.floor(delta) : 0;
+}
+
 /**
  * Fetch helper with AbortController-based timeout protection.
  */
@@ -59,7 +78,11 @@ export async function fetchWithTimeout(
         return response;
       }
 
-      const delay = computeBackoffMs(attempt, baseDelayMs, maxDelayMs);
+      const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+      const baseDelay = computeBackoffMs(attempt, baseDelayMs, maxDelayMs);
+      const delay = retryAfterMs === null
+        ? baseDelay
+        : Math.min(maxDelayMs, Math.max(retryAfterMs, baseDelay));
       await sleep(delay);
       continue;
     } catch (error) {
@@ -68,6 +91,14 @@ export async function fetchWithTimeout(
         if (attempt >= retries) {
           throw new Error(`Request timed out after ${timeoutMs}ms`);
         }
+        const delay = computeBackoffMs(attempt, baseDelayMs, maxDelayMs);
+        await sleep(delay);
+        continue;
+      }
+      // Network errors from fetch are commonly surfaced as TypeError.
+      // Treat these as retryable (when configured) for better resilience.
+      const isNetworkError = error instanceof TypeError;
+      if (isNetworkError && attempt < retries) {
         const delay = computeBackoffMs(attempt, baseDelayMs, maxDelayMs);
         await sleep(delay);
         continue;

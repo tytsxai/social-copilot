@@ -9,6 +9,7 @@ const MAX_MESSAGES_PER_CONTACT = 2000;
 const STORES = {
   messages: 'messages',
   profiles: 'profiles',
+  // Reserved for legacy/future usage. Runtime config lives in chrome.storage.local.
   settings: 'settings',
   stylePreferences: 'stylePreferences',
   contactMemories: 'contactMemories',
