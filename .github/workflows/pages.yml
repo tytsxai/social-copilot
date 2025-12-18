@@ -20,8 +20,34 @@ permissions:
   id-token: write
 
 jobs:
+  check:
+    name: Check Pages Enabled
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check Pages enabled
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.repos.getPages({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              core.setOutput('enabled', 'true');
+            } catch (err) {
+              // If Pages is not enabled, the API returns 404. We treat it as a non-fatal
+              // configuration gap so that this workflow doesn't stay red forever.
+              core.warning(`GitHub Pages is not enabled for this repository yet: ${err?.message ?? err}`);
+              core.setOutput('enabled', 'false');
+            }
+
   deploy:
     runs-on: ubuntu-latest
+    needs: check
+    if: ${{ needs.check.outputs.enabled == 'true' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -40,4 +66,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
