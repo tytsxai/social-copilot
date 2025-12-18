@@ -46,8 +46,14 @@
   - 写入 `chrome.storage.local` 的 `apiKey` / `fallbackApiKey`
   - 同时会清理 session key，确保只有一个来源
 
+诊断日志（可观测性）：
+- `chrome.storage.local` 内部 key：`__sc_diagnostics_v1`
+- 内容：最近 N 条诊断事件（ring buffer，默认 N=200），不包含原文对话与 API Key（仅长度/枚举/错误栈）
+- 用途：设置页「复制诊断 / 下载诊断 JSON」；可通过「清空诊断日志」或「清除所有数据」删除
+
 风险提示：
 - `persistApiKey=true` 便于长期使用，但 API Key 会长期驻留在本地存储中；建议仅在可信设备上启用。
+- 即使第三方服务在错误信息中回显密钥，扩展的诊断导出也会对 `sk-...` / `sk-ant-...` 等片段做打码处理，避免泄漏。
 
 ### 1.3 面板位置存储
 
@@ -57,6 +63,17 @@
 - Value：`{ top?: number; left?: number }`
 
 代码位置：`packages/browser-extension/src/ui/copilot-ui.ts`
+
+### 1.4 数据备份与恢复（重要：避免清库导致数据丢失）
+
+扩展提供“本地数据备份/恢复”能力，用于在迁移失败、误清数据、换机等场景下尽量保留个性化数据。
+
+- 入口：设置页「关于」→「备份与恢复」
+- 导出内容（JSON）：联系人画像、风格偏好、长期记忆、以及更新计数器
+- 不包含：API Key、原文对话消息（不会导出 IndexedDB 的 `messages` 内容）
+
+风险提示：
+- 备份文件仍可能包含敏感信息（画像/记忆为对话提炼结果），请妥善保管
 
 ## 2. IndexedDB（本地数据存储）
 
@@ -113,4 +130,3 @@ Chrome Web Store 自动发布（可选）依赖以下 secrets（见 `.github/wor
 - `CLIENT_ID`
 - `CLIENT_SECRET`
 - `REFRESH_TOKEN`
-

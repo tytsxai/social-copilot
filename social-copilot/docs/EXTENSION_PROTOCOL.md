@@ -16,6 +16,8 @@
 ## 2. 诊断与可恢复性
 
 - Background 维护一个 ring buffer 诊断事件队列（用于导出/排障）
+- 诊断会 best-effort 持久化到 `chrome.storage.local`，以抵抗 MV3 Service Worker 的重启/回收
+- 为避免第三方服务在错误信息中回显密钥，诊断会对类似 `sk-...` / `sk-ant-...` 的片段自动打码为 `***REDACTED***`
 - 当 IndexedDB 初始化/迁移失败时，扩展仍需要能：
   - `GET_STATUS` 告知错误原因
   - `GET_DIAGNOSTICS` 导出诊断
@@ -164,3 +166,50 @@
   - `payload.app/host/pathname/...`（仅包含摘要信息，不包含原文消息）
 - Response: `{ success: true }`
 
+### 3.8 数据备份与恢复
+
+> 用于迁移失败、误清数据、换机等场景下尽量保留个性化数据。备份文件**不包含 API Key，也不包含原文对话消息**。
+
+**`EXPORT_USER_DATA`**
+
+- Request: 无
+- Response（成功）:
+  - `{ backup: UserDataBackupV1 }`
+- Response（失败）:
+  - `{ error: string }`
+
+`UserDataBackupV1`（摘要）：
+
+- `schemaVersion: 1`
+- `exportedAt: string`（ISO 时间）
+- `extensionVersion: string`
+- `data.profiles: ContactProfile[]`
+- `data.stylePreferences: StylePreference[]`
+- `data.contactMemories: ContactMemorySummary[]`
+- `data.profileUpdateCounts/memoryUpdateCounts: Record<string, number>`
+
+**`IMPORT_USER_DATA`**
+
+- Request:
+  - `data: UserDataBackupV1`
+- Response:
+  - 成功：`{ success: true, imported: { profiles: number; stylePreferences: number; contactMemories: number } }`
+  - 失败：`{ success: false, error: string }`
+
+说明：
+- 导入为“合并/覆盖”策略：同 key 的记录会被 upsert
+- 导入会做数据清洗：非法记录会被跳过
+
+### 3.9 Content Script 错误上报
+
+**`REPORT_CONTENT_SCRIPT_ERROR`**
+
+- Request:
+  - `payload.app/host/pathname/...`
+  - `payload.name/message/stack`
+  - `payload.filename/lineno/colno`（可选）
+- Response: `{ success: true }`
+
+说明：
+- 仅用于诊断与排障；Background 会记录为 `CONTENT_SCRIPT_ERROR` 事件
+- `message/stack` 会对可能的密钥片段做打码处理（`***REDACTED***`）
