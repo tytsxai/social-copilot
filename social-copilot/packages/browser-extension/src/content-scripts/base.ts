@@ -59,6 +59,24 @@ export class CopilotContentScript {
   private readonly adapterFailureThreshold = 3;
   private readonly autoRecoveryDelayMs = 5000;
 
+  private summarizePathnameKind(pathname: string): string {
+    const path = (pathname ?? '').trim();
+    if (!path || path === '/') return 'root';
+
+    // Slack: /client/<teamId>/<conversationId>
+    if (path.startsWith('/client/')) return 'slack_client';
+
+    // Telegram Web variants often use /k/ or /a/ prefixes; conversation identity is usually in hash.
+    if (path.startsWith('/k/')) return 'telegram_k';
+    if (path.startsWith('/a/')) return 'telegram_a';
+
+    // Keep only a short, safe prefix hint (no IDs).
+    const seg = path.split('/').filter(Boolean)[0] ?? '';
+    if (!seg) return 'other';
+    const cleaned = seg.replace(/[^a-z0-9_-]/gi, '').slice(0, 24);
+    return cleaned ? `seg:${cleaned}` : 'other';
+  }
+
   /**
    * Concurrency model (important for maintainability):
    *
@@ -205,7 +223,8 @@ export class CopilotContentScript {
         payload: {
           app: this.options.app,
           host: location.host,
-          pathname: location.pathname,
+          pathnameKind: this.summarizePathnameKind(location.pathname),
+          pathnameLen: (location.pathname ?? '').length,
           phase: meta.phase,
           filename: meta.filename,
           lineno: meta.lineno,
@@ -312,7 +331,8 @@ export class CopilotContentScript {
         payload: {
           app: this.options.app,
           host: location.host,
-          pathname: location.pathname,
+          pathnameKind: this.summarizePathnameKind(location.pathname),
+          pathnameLen: (location.pathname ?? '').length,
           ok,
           adapterVariant: runtimeInfo?.variant,
           adapterSelectorHints: runtimeInfo?.selectorHints,
