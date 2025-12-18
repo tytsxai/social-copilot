@@ -187,17 +187,18 @@ interface PlatformAdapter {
 3.5 ThoughtAnalyzer 分析当前消息 → 推荐思路卡片给 UI
    │
    ▼
-4. 发送消息到 Background Service Worker
+4. 发送消息到 Background Service Worker（包含 recentMessages/currentMessage/contactKey）
    │
    ▼
-5. Background 从 IndexedDB 获取：
-   - 最近 10 条历史消息
-   - 联系人画像
-   - 风格偏好
-   - 选中的思路提示（thoughtHint）
+5. Background 校验配置与隐私告知，并持久化消息到 IndexedDB（用于后续画像/记忆）
+   - 若未配置 API Key：返回提示错误
+   - 若未确认隐私告知：返回提示错误（不会调用第三方模型）
    │
    ▼
-6. LLMManager 调用 AI 模型生成候选回复（附带思路提示）
+6. Background 构造 LLMInput，并在出站前做隐私处理（脱敏/匿名化/长度预算）
+   - `sanitizeOutboundContext(...)` 控制发送条数与字符预算
+   - `thoughtHint` 注入用于控制回复方向
+   - `LLMManager` 负责主备切换与故障转移
    │
    ▼
 7. 返回候选回复到 Content Script
@@ -256,14 +257,16 @@ interface PlatformAdapter {
 ```
 Database: social-copilot
 ├── messages          # 消息存储
-│   ├── key: contactKeyStr + messageId
-│   └── indexes: contactKeyStr, timestamp
+│   ├── key: id（建议包含 contactKeyStr 命名空间，避免跨会话冲突）
+│   └── indexes: contactKey, timestamp, contactKeyTimestamp
 │
 ├── profiles          # 联系人画像
-│   ├── key: contactKeyStr
-│   └── indexes: updatedAt
+│   └── key: keyStr（contactKeyStr）
 │
-└── stylePreferences  # 风格偏好
+├── stylePreferences  # 风格偏好
+│   └── key: contactKeyStr
+│
+└── contactMemories   # 长期记忆摘要（可选功能）
     ├── key: contactKeyStr
     └── indexes: updatedAt
 ```
@@ -272,15 +275,14 @@ Database: social-copilot
 
 ```
 chrome.storage.local
-├── settings          # 用户设置
-│   ├── primaryProvider
-│   ├── primaryApiKey
-│   ├── fallbackProvider
-│   ├── fallbackApiKey
-│   └── defaultStyles
-│
-└── panelPosition     # 面板位置记忆
+├── provider/model/styles/...    # 用户设置（见 docs/CONFIGURATION.md）
+├── debugEnabled                # 诊断日志开关
+├── profileUpdateCounts         # 画像更新阈值计数（best-effort）
+├── memoryUpdateCounts          # 记忆更新阈值计数（best-effort）
+└── sc-panel-pos-<host>         # 面板位置记忆（按站点 host 分开）
 ```
+
+> API Key 默认不持久化：优先使用 `chrome.storage.session`；若不可用则退化到 local 的临时 key，并在浏览器启动时清理。详见 `docs/CONFIGURATION.md`。
 
 ## 扩展指南
 
@@ -301,7 +303,7 @@ chrome.storage.local
 
 ## 安全考虑
 
-- API Key 仅存储在本地 `chrome.storage.local`
+- API Key 默认不持久化（降低泄漏风险）；仅在用户显式开启时才写入 `chrome.storage.local`
 - 消息数据存储在浏览器 IndexedDB，不上传
-- LLM 调用仅发送必要的上下文（最近 10 条消息）
+- LLM 调用仅发送必要的上下文（条数/单条/总字符预算可配置；默认有上限）
 - 不收集用户行为数据

@@ -10,6 +10,7 @@
 - [Preference 偏好模块](#preference-偏好模块)
 - [Thought 思路模块](#thought-思路模块)
 - [Platform Adapter 平台适配器](#platform-adapter-平台适配器)
+- [Browser Extension 协议与配置](#browser-extension-协议与配置)
 
 ---
 
@@ -684,3 +685,12 @@ export class DiscordAdapter implements PlatformAdapter {
   }
 }
 ```
+
+---
+
+## Browser Extension 协议与配置
+
+本 API 文档主要描述 `@social-copilot/core`。但在实际维护中，扩展的“内部消息协议”和“运行时配置项”同样是高频改动点：
+
+- 内部消息协议（Popup/Content Script/Background）：见 `docs/EXTENSION_PROTOCOL.md`
+- 运行时配置项与环境变量：见 `docs/CONFIGURATION.md`

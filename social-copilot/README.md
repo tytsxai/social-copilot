@@ -179,6 +179,9 @@ pnpm build
 - [开发指南](docs/DEVELOPMENT.md) - 环境配置、构建流程、调试技巧
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构、模块设计、数据流
 - [API 文档](docs/API.md) - 核心模块 API 参考
+- [配置说明](docs/CONFIGURATION.md) - 配置项、环境变量与安全注意事项
+- [内部协议](docs/EXTENSION_PROTOCOL.md) - Popup/Content Script/Background 消息协议
+- [运行手册](docs/RUNBOOK.md) - 线上排障、恢复与回滚流程
 - [隐私政策](docs/PRIVACY.md) - 数据处理与用户告知（上架用模板）
 - [商店文案](docs/STORE_COPY.md) - Chrome Web Store 文案模板
 - [提交流程](docs/STORE_SUBMISSION.md) - 商店字段对照与提交说明
