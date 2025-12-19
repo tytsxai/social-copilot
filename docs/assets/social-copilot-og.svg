@@ -1,0 +1,28 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#101C2E"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(980 120) rotate(135) scale(420 320)">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <rect x="120" y="170" width="360" height="220" rx="46" fill="#22D3EE"/>
+  <path d="M240 390L195 500L320 430" fill="#22D3EE"/>
+  <circle cx="210" cy="280" r="18" fill="#0B1220"/>
+  <circle cx="270" cy="280" r="18" fill="#0B1220"/>
+  <circle cx="330" cy="280" r="18" fill="#0B1220"/>
+  <circle cx="420" cy="190" r="20" fill="#F97316"/>
+
+  <text x="560" y="270" fill="#E2E8F0" font-size="64" font-family="Space Grotesk, Segoe UI, Arial, sans-serif" font-weight="600">Social Copilot</text>
+  <text x="560" y="330" fill="#CBD5F5" font-size="30" font-family="Space Grotesk, Segoe UI, Arial, sans-serif">AI 辅助社交伴侣浏览器扩展</text>
+  <text x="560" y="380" fill="#94A3B8" font-size="22" font-family="Space Grotesk, Segoe UI, Arial, sans-serif">Open-core · Local-first · Multi-model</text>
+
+  <rect x="560" y="420" width="360" height="2" fill="#1F2A44"/>
+  <text x="560" y="460" fill="#94A3B8" font-size="20" font-family="Space Grotesk, Segoe UI, Arial, sans-serif">https://tytsxai.github.io/social-copilot/</text>
+</svg>

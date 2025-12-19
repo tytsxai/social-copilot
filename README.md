@@ -1,4 +1,20 @@
-# Social Copilot（聊天导师）
+<p align="center">
+  <img src="docs/assets/social-copilot-mark.svg" width="96" height="96" alt="Social Copilot logo" />
+</p>
+<h1 align="center">Social Copilot（聊天导师）</h1>
+<p align="center">AI 辅助社交伴侣浏览器扩展 · Open-core</p>
+<p align="center">
+  <a href="https://tytsxai.github.io/social-copilot/">主页</a> ·
+  <a href="social-copilot/README.md">使用文档</a> ·
+  <a href="social-copilot/docs/README.md">研发文档</a> ·
+  <a href="docs/README.md">隐私政策</a> ·
+  <a href="https://github.com/tytsxai/social-copilot/issues">Issues</a>
+</p>
+<p align="center">
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/tytsxai/social-copilot/ci.yml?branch=main&label=ci" />
+  <img alt="Release" src="https://img.shields.io/github/v/release/tytsxai/social-copilot" />
+  <img alt="License" src="https://img.shields.io/github/license/tytsxai/social-copilot" />
+</p>
 
 本仓库采用 **open-core**：公共核心与客户端开源（MIT），可选的商业/私有增强以“插件”方式接入，不影响开源版构建与使用。
 

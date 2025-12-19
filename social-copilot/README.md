@@ -1,6 +1,12 @@
 # Social Copilot
 
+[![CI](https://img.shields.io/github/actions/workflow/status/tytsxai/social-copilot/ci.yml?branch=main&label=ci)](https://github.com/tytsxai/social-copilot/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/tytsxai/social-copilot)](https://github.com/tytsxai/social-copilot/releases)
+[![License](https://img.shields.io/github/license/tytsxai/social-copilot)](../LICENSE)
+
 AI 辅助社交伴侣 - 为聊天应用提供智能回复建议
+
+快速入口： [主页](https://tytsxai.github.io/social-copilot/) · [隐私政策](https://tytsxai.github.io/social-copilot/privacy.zh-CN.html) · [Issues](https://github.com/tytsxai/social-copilot/issues) · [研发文档](docs/README.md)
 
 ## 功能特性
 
