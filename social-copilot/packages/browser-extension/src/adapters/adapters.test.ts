@@ -5,10 +5,34 @@ import { TelegramAdapter } from './telegram';
 import { WhatsAppAdapter } from './whatsapp';
 import { SlackAdapter } from './slack';
 
+function createMemoryStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    getItem: (key: string) => (data.has(key) ? data.get(key)! : null),
+    setItem: (key: string, value: string) => {
+      data.set(String(key), String(value));
+    },
+    removeItem: (key: string) => {
+      data.delete(String(key));
+    },
+    clear: () => {
+      data.clear();
+    },
+    key: (index: number) => Array.from(data.keys())[index] ?? null,
+    get length() {
+      return data.size;
+    },
+  } as Storage;
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
-  localStorage.clear();
-  sessionStorage.clear();
+  Object.defineProperty(window, 'localStorage', { value: createMemoryStorage(), configurable: true });
+  Object.defineProperty(window, 'sessionStorage', { value: createMemoryStorage(), configurable: true });
+  Object.defineProperty(globalThis, 'localStorage', { value: window.localStorage, configurable: true });
+  Object.defineProperty(globalThis, 'sessionStorage', { value: window.sessionStorage, configurable: true });
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   window.location.hash = '';
   window.history.replaceState({}, '', '/');
 });
