@@ -13,13 +13,20 @@
 - Chrome Web Store 要求隐私政策 URL 可公开访问；如果仓库是私有仓库，请确认你的账号/计划支持对外提供 GitHub Pages，或改用独立的公开站点托管（例如单独的 public repo / 自有域名）。
 - 若访问返回 404：通常是 Pages 未启用或尚未完成首次部署；先检查 Settings → Pages 与 Actions workflow 的运行结果。
 
+## 更新流程
+
+1. 更新 `social-copilot/docs/PRIVACY.md` 与 `social-copilot/docs/PRIVACY.zh-CN.md`
+2. 同步更新 `docs/privacy.html` 与 `docs/privacy.zh-CN.html`（对外发布 HTML）
+3. 如新增语言或新增页面，更新 `docs/index.html` 的入口列表
+4. 本地预览可直接打开 `docs/index.html`，或使用任意静态服务器
+
 ## 访问 URL
 
 页面地址一般为：
 
-- `https://tytsxai.github.io/liaotiandaoshi/privacy.html`
-- `https://tytsxai.github.io/liaotiandaoshi/privacy.zh-CN.html`
+- `https://tytsxai.github.io/social-copilot/privacy.html`
+- `https://tytsxai.github.io/social-copilot/privacy.zh-CN.html`
 
 入口页：
 
-- `https://tytsxai.github.io/liaotiandaoshi/`
+- `https://tytsxai.github.io/social-copilot/`

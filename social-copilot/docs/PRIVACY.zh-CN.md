@@ -3,7 +3,7 @@
 > 本文件为 Social Copilot（浏览器扩展）的隐私政策模板与数据处理说明（中文版本）。
 > 若你计划发布到 Chrome Web Store：通常需要在商店后台提供一个可公开访问的隐私政策 URL。
 
-最后更新：2025-12-19
+最后更新：2025-12-20
 
 ## 1. 产品说明
 
@@ -77,4 +77,4 @@ Social Copilot 是一款为聊天网站（Telegram Web / WhatsApp Web / Slack We
 
 联系与反馈：GitHub Issues
 
-- https://github.com/tytsxai/liaotiandaoshi/issues
+- https://github.com/tytsxai/social-copilot/issues
