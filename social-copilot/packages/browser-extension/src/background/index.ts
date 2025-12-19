@@ -1867,7 +1867,7 @@ async function clearData() {
   lastProfileUpdateCount.clear();
   lastMemoryUpdateCount.clear();
   memoryUpdateInFlight.clear();
-  diagnostics = [];
+  await clearPersistedDiagnostics();
   debugEnabled = false;
   try {
     await chrome.storage.local.remove(PROFILE_UPDATE_COUNT_STORAGE_KEY);
