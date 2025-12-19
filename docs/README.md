@@ -17,9 +17,9 @@
 
 页面地址一般为：
 
-- `https://<owner>.github.io/<repo>/privacy.html`
-- `https://<owner>.github.io/<repo>/privacy.zh-CN.html`
+- `https://tytsxai.github.io/liaotiandaoshi/privacy.html`
+- `https://tytsxai.github.io/liaotiandaoshi/privacy.zh-CN.html`
 
 入口页：
 
-- `https://<owner>.github.io/<repo>/`
+- `https://tytsxai.github.io/liaotiandaoshi/`

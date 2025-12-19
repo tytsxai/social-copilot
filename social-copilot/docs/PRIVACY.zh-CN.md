@@ -3,13 +3,14 @@
 > 本文件为 Social Copilot（浏览器扩展）的隐私政策模板与数据处理说明（中文版本）。
 > 若你计划发布到 Chrome Web Store：通常需要在商店后台提供一个可公开访问的隐私政策 URL。
 
-最后更新：2025-12-17
+最后更新：2025-12-19
 
 ## 1. 产品说明
 
 Social Copilot 是一款为聊天网站（Telegram Web / WhatsApp Web / Slack Web 等）提供“回复建议”的浏览器扩展。
 
 本开源仓库中，扩展默认不包含任何自建后端；用户需要自行配置第三方模型服务（例如 DeepSeek / OpenAI / Anthropic Claude）的 API Key。
+运营主体/维护者：Social Copilot 开源项目维护者。
 
 ## 2. 我们处理哪些数据
 
@@ -74,9 +75,6 @@ Social Copilot 是一款为聊天网站（Telegram Web / WhatsApp Web / Slack We
 
 ## 8. 联系我们
 
-如果你将该扩展投入生产并提供给用户，请在此处补充：
+联系与反馈：GitHub Issues
 
-- 运营主体名称
-- 联系邮箱
-- 数据保护联系渠道（如适用）
-
+- https://github.com/tytsxai/liaotiandaoshi/issues
