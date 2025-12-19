@@ -176,6 +176,7 @@ pnpm build
 
 ## 文档
 
+- [文档导航](docs/README.md) - 文档入口与常见任务
 - [开发指南](docs/DEVELOPMENT.md) - 环境配置、构建流程、调试技巧
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构、模块设计、数据流
 - [API 文档](docs/API.md) - 核心模块 API 参考

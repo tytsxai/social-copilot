@@ -1,4 +1,4 @@
-# 聊天导师（Social Copilot）
+# Social Copilot（聊天导师）
 
 本仓库采用 **open-core**：公共核心与客户端开源（MIT），可选的商业/私有增强以“插件”方式接入，不影响开源版构建与使用。
 
@@ -12,6 +12,12 @@
 - 隐私政策模板：`social-copilot/docs/PRIVACY.md`
 - 公开隐私政策页面（GitHub Pages）：`docs/README.md`
 - 上线检查清单：`social-copilot/docs/RELEASE_CHECKLIST.md`
+
+## 文档导航
+
+- 项目总览与使用：`social-copilot/README.md`
+- 研发与架构文档索引：`social-copilot/docs/README.md`
+- 公开隐私政策站点：`docs/README.md`
 
 ## 快速开始
 
