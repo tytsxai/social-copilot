@@ -2,7 +2,7 @@
   <img src="docs/assets/social-copilot-mark.svg" width="96" height="96" alt="Social Copilot logo" />
 </p>
 <h1 align="center">Social Copilot（聊天导师）</h1>
-<p align="center">AI 辅助社交伴侣浏览器扩展 · Open-core</p>
+<p align="center">AI 辅助社交伴侣浏览器扩展 · 让每一次回复更得体 · Open-core</p>
 <p align="center">
   <a href="https://tytsxai.github.io/social-copilot/">主页</a> ·
   <a href="social-copilot/README.md">使用文档</a> ·
@@ -34,6 +34,7 @@
 - 项目总览与使用：`social-copilot/README.md`
 - 研发与架构文档索引：`social-copilot/docs/README.md`
 - 公开隐私政策站点：`docs/README.md`
+- 品牌与传播：`social-copilot/docs/BRAND.md`
 
 ## 快速开始
 

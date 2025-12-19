@@ -8,6 +8,7 @@
 - 研发/调试：`DEVELOPMENT.md`、`CONFIGURATION.md`、`ARCHITECTURE.md`、`API.md`
 - 发布/运维：`RELEASE_CHECKLIST.md`、`RUNBOOK.md`、`STORE_SUBMISSION.md`、`STORE_COPY.md`
 - 合规/隐私：`PRIVACY.md`、`PRIVACY.zh-CN.md`（对外页面见 `../../docs/README.md`）
+- 品牌与传播：`BRAND.md`、`STORE_COPY.md`
 - Open-core 边界：`OPEN_CORE.md`
 - 贡献：`CONTRIBUTING.md`
 - 变更记录：`../CHANGELOG.md`
@@ -19,6 +20,7 @@
 - 新增模型接入：`API.md`（LLM 模块）
 - 发布到商店：`RELEASE_CHECKLIST.md` + `STORE_SUBMISSION.md`
 - 更新隐私政策：先改 `PRIVACY*.md`，再同步 `../../docs/privacy*.html`
+- 更新品牌素材或文案口径：`BRAND.md` + `STORE_COPY.md`
 
 ## 文档维护约定
 

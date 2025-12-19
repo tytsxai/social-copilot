@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/tytsxai/social-copilot)](https://github.com/tytsxai/social-copilot/releases)
 [![License](https://img.shields.io/github/license/tytsxai/social-copilot)](../LICENSE)
 
-AI 辅助社交伴侣 - 为聊天应用提供智能回复建议
+AI 辅助社交伴侣 - 让每一次回复更得体（本地优先、隐私可控）
 
 快速入口： [主页](https://tytsxai.github.io/social-copilot/) · [隐私政策](https://tytsxai.github.io/social-copilot/privacy.zh-CN.html) · [Issues](https://github.com/tytsxai/social-copilot/issues) · [研发文档](docs/README.md)
 
@@ -183,6 +183,7 @@ pnpm build
 ## 文档
 
 - [文档导航](docs/README.md) - 文档入口与常见任务
+- [品牌指南](docs/BRAND.md) - 定位、语气与品牌资产
 - [开发指南](docs/DEVELOPMENT.md) - 环境配置、构建流程、调试技巧
 - [架构设计](docs/ARCHITECTURE.md) - 系统架构、模块设计、数据流
 - [API 文档](docs/API.md) - 核心模块 API 参考
