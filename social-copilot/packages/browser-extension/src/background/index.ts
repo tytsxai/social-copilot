@@ -39,6 +39,7 @@ type DiagnosticEventType =
   | 'RECOVERY'
   | 'ALL_FAILED'
   | 'MEMORY_UPDATE'
+  | 'BACKGROUND_ERROR'
   | 'ADAPTER_HEALTH'
   | 'CONTENT_SCRIPT_ERROR'
   | 'GET_STATUS'
@@ -312,6 +313,7 @@ function coerceDiagnosticEventType(value: unknown): DiagnosticEventType {
     case 'RECOVERY':
     case 'ALL_FAILED':
     case 'MEMORY_UPDATE':
+    case 'BACKGROUND_ERROR':
     case 'ADAPTER_HEALTH':
     case 'CONTENT_SCRIPT_ERROR':
     case 'GET_STATUS':
@@ -440,6 +442,43 @@ async function clearPersistedDiagnostics(): Promise<void> {
   } catch (err) {
     console.warn('[Social Copilot] Failed to clear persisted diagnostics:', err);
   }
+}
+
+function setupBackgroundErrorReporting(): void {
+  const report = (error: unknown, details: Record<string, unknown>) => {
+    void ensureDiagnosticsReady()
+      .then(() => {
+        pushDiagnostic({
+          ts: Date.now(),
+          type: 'BACKGROUND_ERROR',
+          requestId: generateRequestId(),
+          ok: false,
+          details,
+          error: sanitizeErrorForDiagnostics(error),
+        });
+        void maybePersistDiagnostics(true);
+      })
+      .catch(() => {
+        // ignore
+      });
+  };
+
+  self.addEventListener('error', (event) => {
+    const errEvent = event as ErrorEvent;
+    report(errEvent.error ?? errEvent.message, {
+      phase: 'background_error',
+      filename: errEvent.filename,
+      lineno: errEvent.lineno,
+      colno: errEvent.colno,
+    });
+  });
+
+  self.addEventListener('unhandledrejection', (event) => {
+    const rejEvent = event as PromiseRejectionEvent;
+    report(rejEvent.reason, {
+      phase: 'unhandledrejection',
+    });
+  });
 }
 
 function sanitizeErrorForDiagnostics(error: unknown): { name: string; message: string; stack?: string } {
@@ -652,6 +691,11 @@ function buildDiagnosticsSnapshot(): Record<string, unknown> {
     maxEvents: DIAGNOSTICS_MAX_EVENTS,
     eventCount: diagnostics.length,
     events: diagnostics,
+    storeOk: storeInitError === null,
+    storeError: storeInitError
+      ? { name: storeInitError.name, message: redactSecrets(storeInitError.message) }
+      : undefined,
+    config: sanitizeConfig(currentConfig),
   };
 }
 
@@ -776,6 +820,7 @@ chrome.runtime.onStartup.addListener(() => {
 ensureStoreReady()
   .catch((err) => console.error('[Social Copilot] Init failed:', sanitizeErrorForDiagnostics(err)));
 void ensureDiagnosticsReady();
+setupBackgroundErrorReporting();
 
 // 监听消息
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
