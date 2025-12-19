@@ -18,6 +18,7 @@
 - Background 维护一个 ring buffer 诊断事件队列（用于导出/排障）
 - 诊断会 best-effort 持久化到 `chrome.storage.local`，以抵抗 MV3 Service Worker 的重启/回收
 - 为避免第三方服务在错误信息中回显密钥，诊断会对类似 `sk-...` / `sk-ant-...` 的片段自动打码为 `***REDACTED***`
+- Background 会记录未捕获异常/Promise 拒绝为 `BACKGROUND_ERROR` 事件，便于定位隐藏故障
 - 当 IndexedDB 初始化/迁移失败时，扩展仍需要能：
   - `GET_STATUS` 告知错误原因
   - `GET_DIAGNOSTICS` 导出诊断
@@ -153,6 +154,9 @@
   - `maxEvents: number`
   - `eventCount: number`
   - `events: DiagnosticEvent[]`
+  - `storeOk: boolean`
+  - `storeError?: { name: string; message: string }`
+  - `config: Record<string, unknown>`（脱敏后的配置摘要，不含 API Key）
 
 **`CLEAR_DIAGNOSTICS`**
 - Request: 无
