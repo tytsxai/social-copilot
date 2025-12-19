@@ -5,11 +5,18 @@
 
 ## 简短说明（Short description，最多 132 字符）
 
-为 Telegram/WhatsApp/Slack 提供 AI 回复建议：本地存储、可选长期记忆、支持 DeepSeek/OpenAI/Claude，支持脱敏与发送范围控制。
+Social Copilot 为 Telegram/WhatsApp/Slack 提供 AI 回复建议：本地优先、隐私可控、多模型支持。
 
 ## 详细说明（Detailed description）
 
-Social Copilot 是一款浏览器扩展，为 Telegram Web、WhatsApp Web、Slack Web 的聊天输入框提供“多风格回复建议”。你可以在收到消息后快速生成 2~3 条候选回复，点击即可填充。
+Social Copilot（聊天导师）是一款面向聊天网站的 AI 回复助手，强调分寸感与效率。你可以在收到消息后快速生成 2~3 条候选回复，点击即可填充。
+
+为什么适合你：
+
+- 更得体：思路卡片推荐回复方向，避免“硬尬”或“过度”
+- 更可控：自动/手动触发可选，群聊默认不自动弹出
+- 更隐私：默认本地存储，发送前可脱敏与限制上下文
+- 更稳妥：多模型可选，主备切换降低失败率
 
 主要功能：
 
@@ -40,5 +47,4 @@ Social Copilot 是一款浏览器扩展，为 Telegram Web、WhatsApp Web、Slac
 
 ## 隐私政策（Privacy policy URL）
 
-请提供可公开访问的隐私政策 URL（模板见仓库 `docs/PRIVACY.md` / `docs/PRIVACY.zh-CN.md`）。
-
+请提供可公开访问的隐私政策 URL（模板见仓库 `social-copilot/docs/PRIVACY.md` / `social-copilot/docs/PRIVACY.zh-CN.md`）。

@@ -24,3 +24,7 @@
 
 - `social-copilot/packages/browser-extension/src/icons/`
 
+## 品牌资产与口径
+
+- 品牌指南：`social-copilot/docs/BRAND.md`
+- 社交预览与 Logo：`docs/assets/`
