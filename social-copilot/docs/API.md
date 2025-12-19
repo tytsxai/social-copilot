@@ -233,8 +233,19 @@ interface MemoryStore {
 IndexedDB 实现的持久化存储。
 
 ```typescript
+interface IndexedDBStoreOptions {
+  /** 单联系人消息上限（默认：2000） */
+  maxMessagesPerContact?: number;
+  /** 全局消息上限（默认：50000） */
+  maxTotalMessages?: number;
+  /** 全局修剪最小间隔（毫秒，默认：300000） */
+  totalTrimIntervalMs?: number;
+  /** 写入触发修剪阈值（默认：200） */
+  totalTrimWriteThreshold?: number;
+}
+
 class IndexedDBStore implements MemoryStore {
-  constructor();
+  constructor(options?: IndexedDBStoreOptions);
   
   // 实现 MemoryStore 接口的所有方法
   

@@ -81,6 +81,9 @@
 
 - DB 名：`social-copilot`
 - 主要对象仓库：`messages` / `profiles` / `stylePreferences` / `contactMemories`
+- 消息保留策略（防止长期膨胀）：
+  - 单联系人上限：`MAX_MESSAGES_PER_CONTACT = 2000`
+  - 全局上限：`MAX_TOTAL_MESSAGES = 50000`（按时间淘汰最旧消息）
 
 说明：
 - 本项目在 IndexedDB 中还创建了 `settings` store（历史/预留）；目前运行时配置仍以 `chrome.storage.local` 为准。
