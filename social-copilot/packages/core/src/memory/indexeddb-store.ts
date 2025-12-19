@@ -5,6 +5,9 @@ import { contactKeyToString, contactKeyToStringV1, legacyContactKeyToString, nor
 const DB_NAME = 'social-copilot';
 const DB_VERSION = 6;
 const MAX_MESSAGES_PER_CONTACT = 2000;
+const MAX_TOTAL_MESSAGES = 50000;
+const TOTAL_TRIM_MIN_INTERVAL_MS = 5 * 60_000;
+const TOTAL_TRIM_WRITE_THRESHOLD = 200;
 
 const STORES = {
   messages: 'messages',
@@ -27,6 +30,25 @@ export interface IndexedDBSnapshotV1 {
   profiles: ContactProfile[];
   stylePreferences: StylePreference[];
   contactMemories: ContactMemorySummary[];
+}
+
+export interface IndexedDBStoreOptions {
+  maxMessagesPerContact?: number;
+  maxTotalMessages?: number;
+  totalTrimIntervalMs?: number;
+  totalTrimWriteThreshold?: number;
+}
+
+function normalizePositiveInt(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : fallback;
+}
+
+function normalizeNonNegativeInt(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const normalized = Math.floor(value);
+  return normalized >= 0 ? normalized : fallback;
 }
 
 function getContactKeyStrCandidates(contactKey: ContactKey): string[] {
@@ -365,6 +387,19 @@ function sanitizeContactMemorySummary(raw: unknown): ContactMemorySummary | null
  */
 export class IndexedDBStore implements MemoryStore {
   private db: IDBDatabase | null = null;
+  private readonly maxMessagesPerContact: number;
+  private readonly maxTotalMessages: number;
+  private readonly totalTrimIntervalMs: number;
+  private readonly totalTrimWriteThreshold: number;
+  private totalTrimWriteCount = 0;
+  private lastTotalTrimAt = 0;
+
+  constructor(options: IndexedDBStoreOptions = {}) {
+    this.maxMessagesPerContact = normalizePositiveInt(options.maxMessagesPerContact, MAX_MESSAGES_PER_CONTACT);
+    this.maxTotalMessages = normalizeNonNegativeInt(options.maxTotalMessages, MAX_TOTAL_MESSAGES);
+    this.totalTrimIntervalMs = normalizeNonNegativeInt(options.totalTrimIntervalMs, TOTAL_TRIM_MIN_INTERVAL_MS);
+    this.totalTrimWriteThreshold = normalizeNonNegativeInt(options.totalTrimWriteThreshold, TOTAL_TRIM_WRITE_THRESHOLD);
+  }
 
   async init(): Promise<void> {
     // Defensive: close any previous connection before (re-)opening.
@@ -581,9 +616,18 @@ export class IndexedDBStore implements MemoryStore {
 
     // 清理超出上限的历史消息（best-effort，不影响主流程）
     try {
-      await this.trimOldMessages(contactKeyStr, MAX_MESSAGES_PER_CONTACT);
+      await this.trimOldMessages(contactKeyStr, this.maxMessagesPerContact);
     } catch (err) {
       console.warn('[IndexedDBStore] trim messages failed', err);
+    }
+
+    this.totalTrimWriteCount += 1;
+    if (this.shouldTrimTotal(Date.now())) {
+      try {
+        await this.trimTotalMessages(this.maxTotalMessages);
+      } catch (err) {
+        console.warn('[IndexedDBStore] trim total messages failed', err);
+      }
     }
   }
 
@@ -1413,7 +1457,48 @@ export class IndexedDBStore implements MemoryStore {
   }
 
   /**
-   * 清理超出上限的旧消息
+   * 全局消息上限：按时间删除最旧记录
+   */
+  private shouldTrimTotal(now: number): boolean {
+    if (this.maxTotalMessages <= 0) return false;
+    const byWrites = this.totalTrimWriteCount >= this.totalTrimWriteThreshold;
+    const byTime = this.lastTotalTrimAt > 0 && (now - this.lastTotalTrimAt) >= this.totalTrimIntervalMs;
+    if (!byWrites && !byTime) return false;
+    this.totalTrimWriteCount = 0;
+    this.lastTotalTrimAt = now;
+    return true;
+  }
+
+  private async trimTotalMessages(maxCount: number): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    if (maxCount <= 0) return;
+    const tx = this.db.transaction(STORES.messages, 'readwrite');
+    const store = tx.objectStore(STORES.messages);
+    const cursorRequest = store.indexNames.contains('timestamp')
+      ? store.index('timestamp').openCursor(null, 'prev')
+      : store.openCursor(null, 'prev');
+    let count = 0;
+
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
+      cursorRequest.onerror = () => reject(cursorRequest.error);
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        count += 1;
+        if (count > maxCount) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+    });
+  }
+
+  /**
+   * 清理超出单联系人上限的旧消息
    */
   private async trimOldMessages(contactKeyStr: string, maxCount: number): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');

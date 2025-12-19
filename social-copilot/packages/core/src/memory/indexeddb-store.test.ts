@@ -91,6 +91,74 @@ describe('IndexedDBStore - Messages', () => {
     expect(recent[0].text).toBe('later message');
   });
 
+  test('trims oldest messages when exceeding global limit', async () => {
+    await store.close();
+    store = new IndexedDBStore({ maxTotalMessages: 3, totalTrimWriteThreshold: 1 });
+    await store.init();
+
+    const contactA: ContactKey = {
+      platform: 'web',
+      app: 'telegram',
+      accountId: 'acc-a',
+      conversationId: 'conv-a',
+      peerId: 'peer-a',
+      isGroup: false,
+    };
+    const contactB: ContactKey = {
+      platform: 'web',
+      app: 'slack',
+      accountId: 'acc-b',
+      conversationId: 'conv-b',
+      peerId: 'peer-b',
+      isGroup: false,
+    };
+
+    await store.saveMessage({
+      id: 'm1',
+      contactKey: contactA,
+      direction: 'incoming',
+      senderName: 'Alice',
+      text: 'oldest',
+      timestamp: 1,
+    });
+    await store.saveMessage({
+      id: 'm2',
+      contactKey: contactB,
+      direction: 'incoming',
+      senderName: 'Bob',
+      text: 'second',
+      timestamp: 2,
+    });
+    await store.saveMessage({
+      id: 'm3',
+      contactKey: contactA,
+      direction: 'incoming',
+      senderName: 'Alice',
+      text: 'third',
+      timestamp: 3,
+    });
+    await store.saveMessage({
+      id: 'm4',
+      contactKey: contactB,
+      direction: 'incoming',
+      senderName: 'Bob',
+      text: 'newest',
+      timestamp: 4,
+    });
+
+    const countA = await store.getMessageCount(contactA);
+    const countB = await store.getMessageCount(contactB);
+    expect(countA + countB).toBe(3);
+
+    const allIds = [
+      ...(await store.getRecentMessages(contactA, 10)),
+      ...(await store.getRecentMessages(contactB, 10)),
+    ].map((m) => m.id);
+
+    expect(allIds).toEqual(expect.arrayContaining(['m2', 'm3', 'm4']));
+    expect(allIds).not.toContain('m1');
+  });
+
   test('deleteDatabase removes all data and allows clean re-init', async () => {
     await store.saveMessage({
       id: 'msg-3',
