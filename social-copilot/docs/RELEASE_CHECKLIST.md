@@ -17,6 +17,7 @@
 - 权限审计：
   - `storage` 是否为最小权限
   - `host_permissions` 仅包含必要域名与网站（不要写 `*://*/*`）
+  - `optional_host_permissions` 为空（生产版本不启用可选站点权限）
 
 ## 2. 安全与密钥
 

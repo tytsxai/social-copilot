@@ -31,7 +31,7 @@
   - 站点：Telegram/WhatsApp/Slack（用于注入与展示）
   - API：DeepSeek/OpenAI/Anthropic（用于请求第三方模型服务）
 
-如你需要减少安装时的站点授权范围，可考虑将站点域名改为可选权限（optional host permissions）并在运行时请求授权（需要额外开发与 UX）。
+生产版本不启用 optional host permissions，以避免安装时出现“可访问所有网站”的权限告警；如需定制授权策略，请在发布前单独评估。
 
 ## 5) 构建与提交包
 
