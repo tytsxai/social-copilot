@@ -8,7 +8,8 @@
 }
 
 .sc-panel {
-  width: 320px;
+  width: 360px;
+  max-width: calc(100vw - 16px);
   background: #ffffff;
   border-radius: 12px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
@@ -55,7 +56,7 @@
 }
 
 .sc-content {
-  max-height: 300px;
+  max-height: 380px;
   overflow-y: auto;
   padding: 8px;
 }

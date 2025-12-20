@@ -11,10 +11,14 @@
       padding: 0;
     }
     body {
-      width: 360px;
+      width: 380px;
+      max-width: 100vw;
+      max-height: 600px;
+      overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 14px;
       color: #333;
+      background: #fff;
     }
     .header {
       display: flex;
@@ -55,6 +59,9 @@
     .tab-content {
       display: none;
       padding: 16px;
+      max-height: 520px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .tab-content.active {
       display: block;
@@ -82,8 +89,9 @@
     }
     .form-group.inline {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
     }
     .form-group label {
       display: block;
@@ -109,6 +117,23 @@
       margin-top: 4px;
       color: #999;
       font-size: 11px;
+      line-height: 1.35;
+    }
+    a {
+      color: #667eea;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      background: #f3f4ff;
+      border: 1px solid #e0e3ff;
+      padding: 1px 4px;
+      border-radius: 4px;
+      word-break: break-all;
     }
     button.primary {
       width: 100%;
@@ -160,8 +185,8 @@
       border-color: #667eea;
     }
     .contact-list {
-      max-height: 200px;
-      overflow-y: auto;
+      max-height: none;
+      overflow: visible;
     }
     .contact-item {
       display: flex;
