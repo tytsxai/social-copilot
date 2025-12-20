@@ -75,6 +75,8 @@ interface DiagnosticEvent {
 interface Config {
   apiKey: string;
   provider: ProviderType;
+  /** 可选：覆盖 provider 默认 Base URL（不要包含 /v1） */
+  baseUrl?: string;
   /** 可选：指定模型名称（不填则使用 provider 默认） */
   model?: string;
   styles: ReplyStyle[];
@@ -95,6 +97,8 @@ interface Config {
   /** 上下文总字符预算 */
   maxTotalChars?: number;
   fallbackProvider?: ProviderType;
+  /** 可选：覆盖 fallback provider 默认 Base URL（不要包含 /v1） */
+  fallbackBaseUrl?: string;
   /** 可选：指定备用模型名称（不填则使用 provider 默认） */
   fallbackModel?: string;
   fallbackApiKey?: string;
@@ -520,6 +524,12 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
 }
 
 function normalizeModel(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeBaseUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
@@ -1263,6 +1273,7 @@ async function loadConfig() {
   const result = await chrome.storage.local.get([
     'apiKey',
     'provider',
+    'baseUrl',
     'model',
     'styles',
     'language',
@@ -1275,6 +1286,7 @@ async function loadConfig() {
     'maxCharsPerMessage',
     'maxTotalChars',
     'fallbackProvider',
+    'fallbackBaseUrl',
     'fallbackModel',
     'fallbackApiKey',
     'enableFallback',
@@ -1298,6 +1310,7 @@ async function loadConfig() {
     await setConfig({
       apiKey: keys.apiKey,
       provider: result.provider || 'deepseek',
+      baseUrl: normalizeBaseUrl(result.baseUrl),
       model: normalizeModel(result.model),
       styles: (result.styles as ReplyStyle[] | undefined) || DEFAULT_STYLES,
       language: normalizeLanguage(result.language),
@@ -1310,6 +1323,7 @@ async function loadConfig() {
       maxCharsPerMessage: normalizeOptionalInt(result.maxCharsPerMessage, { min: 50, max: 4000 }),
       maxTotalChars: normalizeOptionalInt(result.maxTotalChars, { min: 200, max: 20_000 }),
       fallbackProvider: result.fallbackProvider,
+      fallbackBaseUrl: normalizeBaseUrl(result.fallbackBaseUrl),
       fallbackModel: normalizeModel(result.fallbackModel),
       fallbackApiKey: keys.fallbackApiKey,
       enableFallback,
@@ -1347,6 +1361,7 @@ async function setConfig(config: Config) {
   currentConfig = {
     ...config,
     apiKey,
+    baseUrl: normalizeBaseUrl(config.baseUrl),
     model: normalizeModel(config.model),
     language: normalizeLanguage(config.language),
     autoTrigger,
@@ -1357,6 +1372,7 @@ async function setConfig(config: Config) {
     maxCharsPerMessage: normalizeOptionalInt(config.maxCharsPerMessage, { min: 50, max: 4000 }),
     maxTotalChars: normalizeOptionalInt(config.maxTotalChars, { min: 200, max: 20_000 }),
     enableFallback,
+    fallbackBaseUrl: enableFallback ? normalizeBaseUrl(config.fallbackBaseUrl) : undefined,
     fallbackModel: normalizeModel(config.fallbackModel),
     fallbackApiKey,
     styles: normalizedStyles,
@@ -1369,6 +1385,7 @@ async function setConfig(config: Config) {
   // 保存到 storage
   const baseConfigToPersist = {
     provider: currentConfig.provider,
+    ...(currentConfig.baseUrl ? { baseUrl: currentConfig.baseUrl } : {}),
     model: currentConfig.model,
     styles: currentConfig.styles,
     language: currentConfig.language ?? 'auto',
@@ -1381,6 +1398,7 @@ async function setConfig(config: Config) {
     maxCharsPerMessage: currentConfig.maxCharsPerMessage,
     maxTotalChars: currentConfig.maxTotalChars,
     fallbackProvider: currentConfig.fallbackProvider,
+    ...(currentConfig.fallbackBaseUrl ? { fallbackBaseUrl: currentConfig.fallbackBaseUrl } : {}),
     fallbackModel: currentConfig.fallbackModel,
     enableFallback: currentConfig.enableFallback ?? false,
     suggestionCount: currentConfig.suggestionCount,
@@ -1397,13 +1415,24 @@ async function setConfig(config: Config) {
       toSet.fallbackApiKey = currentConfig.fallbackApiKey;
     }
     await chrome.storage.local.set(toSet);
+    const keysToRemove: string[] = [];
+    if (!currentConfig.baseUrl) keysToRemove.push('baseUrl');
+    if (!currentConfig.fallbackBaseUrl) keysToRemove.push('fallbackBaseUrl');
     if (!(currentConfig.enableFallback && currentConfig.fallbackApiKey)) {
-      await chrome.storage.local.remove(['fallbackApiKey']);
+      keysToRemove.push('fallbackApiKey');
+    }
+    if (keysToRemove.length) {
+      await chrome.storage.local.remove(keysToRemove);
     }
     await clearSessionKeys();
   } else {
     await chrome.storage.local.set(baseConfigToPersist);
-    await chrome.storage.local.remove(['apiKey', 'fallbackApiKey']);
+    const keysToRemove: string[] = ['apiKey', 'fallbackApiKey'];
+    if (!currentConfig.baseUrl) keysToRemove.push('baseUrl');
+    if (!currentConfig.fallbackBaseUrl) keysToRemove.push('fallbackBaseUrl');
+    if (keysToRemove.length) {
+      await chrome.storage.local.remove(keysToRemove);
+    }
     try {
       await setSessionKeys(currentConfig.apiKey, currentConfig.enableFallback ? currentConfig.fallbackApiKey : undefined);
     } catch (err) {
@@ -1448,12 +1477,13 @@ async function setConfig(config: Config) {
 function buildManagerConfig(config: Config): LLMManagerConfig {
   const fallbackEnabled = (config.enableFallback ?? false) && !!config.fallbackApiKey;
   return {
-    primary: { provider: config.provider, apiKey: config.apiKey, model: config.model },
+    primary: { provider: config.provider, apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl },
     fallback: fallbackEnabled
       ? {
           provider: config.fallbackProvider || config.provider,
           apiKey: config.fallbackApiKey as string,
           model: config.fallbackModel,
+          baseUrl: config.fallbackBaseUrl,
         }
       : undefined,
   };

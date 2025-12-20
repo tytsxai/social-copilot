@@ -3,6 +3,7 @@ import { parseReplyContent, ReplyParseError } from './reply-validation';
 import { fetchWithTimeout } from './fetch-with-timeout';
 import { applySystemPromptHooks, applyUserPromptHooks } from './prompt-hooks';
 import { redactSecrets } from '../utils/redact';
+import { normalizeBaseUrl } from './normalize-base-url';
 
 function getLanguageInstruction(language: LLMInput['language']): string {
   if (language === 'zh') return '中文';
@@ -33,7 +34,7 @@ export class ClaudeProvider implements LLMProvider {
 
   constructor(config: ClaudeProviderConfig) {
     this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl || 'https://api.anthropic.com';
+    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.anthropic.com');
     this.model = config.model || 'claude-sonnet-4-5';
   }
 

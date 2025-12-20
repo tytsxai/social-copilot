@@ -341,6 +341,12 @@
     </div>
 
     <div class="form-group">
+      <label for="baseUrl">Base URL（可选）</label>
+      <input type="text" id="baseUrl" placeholder="例如：https://api.deepseek.com" autocomplete="off">
+      <small id="baseUrlHint" class="muted">留空则使用该提供商默认地址；无需包含 <code>/v1</code></small>
+    </div>
+
+    <div class="form-group">
       <label for="model">模型名称（可选）</label>
       <input type="text" id="model" placeholder="例如：deepseek-v3.2" list="modelSuggestions" autocomplete="off">
       <datalist id="modelSuggestions"></datalist>
@@ -450,6 +456,12 @@
           <option value="openai">OpenAI</option>
           <option value="claude">Claude</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label for="fallbackBaseUrl">备用 Base URL（可选）</label>
+        <input type="text" id="fallbackBaseUrl" placeholder="例如：https://api.deepseek.com" autocomplete="off">
+        <small id="fallbackBaseUrlHint" class="muted">留空则使用该提供商默认地址；无需包含 <code>/v1</code></small>
       </div>
 
       <div class="form-group">

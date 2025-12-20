@@ -13,6 +13,7 @@
 | Key | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `provider` | `'deepseek' \| 'openai' \| 'claude'` | `'deepseek'` | 主用模型提供商 |
+| `baseUrl` | `string` | `undefined` | 可选：覆盖主用提供商 Base URL（不要包含 `/v1`） |
 | `model` | `string` | `undefined` | 可选：覆盖默认模型名 |
 | `styles` | `ReplyStyle[]` | `['caring','humorous','casual']` | 默认候选回复风格列表 |
 | `suggestionCount` | `2 \| 3` | `3` | 每次生成候选条数 |
@@ -27,6 +28,7 @@
 | `maxTotalChars` | `number` | `4000` | 整体上下文出站字符预算 |
 | `enableFallback` | `boolean` | `false` | 是否启用备用模型 |
 | `fallbackProvider` | `ProviderType` | `provider` | 备用模型提供商（不填则沿用主用） |
+| `fallbackBaseUrl` | `string` | `undefined` | 可选：覆盖备用提供商 Base URL（不要包含 `/v1`） |
 | `fallbackModel` | `string` | `undefined` | 可选：备用模型名 |
 | `enableMemory` | `boolean` | `false` | 是否启用“长期记忆摘要”（默认关闭） |
 | `persistApiKey` | `boolean` | `false` | 是否持久化存储 API Key（默认不持久化） |

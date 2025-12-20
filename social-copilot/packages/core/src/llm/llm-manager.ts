@@ -11,11 +11,13 @@ export interface LLMManagerConfig {
     provider: ProviderType;
     apiKey: string;
     model?: string;
+    baseUrl?: string;
   };
   fallback?: {
     provider: ProviderType;
     apiKey: string;
     model?: string;
+    baseUrl?: string;
   };
 }
 
@@ -49,15 +51,15 @@ export class LLMManager {
     }
   }
 
-  private createProvider(config: { provider: ProviderType; apiKey: string; model?: string }): LLMProvider {
+  private createProvider(config: { provider: ProviderType; apiKey: string; model?: string; baseUrl?: string }): LLMProvider {
     switch (config.provider) {
       case 'openai':
-        return new OpenAIProvider({ apiKey: config.apiKey, model: config.model });
+        return new OpenAIProvider({ apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl });
       case 'claude':
-        return new ClaudeProvider({ apiKey: config.apiKey, model: config.model });
+        return new ClaudeProvider({ apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl });
       case 'deepseek':
       default:
-        return new DeepSeekProvider({ apiKey: config.apiKey, model: config.model });
+        return new DeepSeekProvider({ apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl });
     }
   }
 

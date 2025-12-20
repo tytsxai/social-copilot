@@ -4,6 +4,8 @@ import { renderStyleStats } from './preferences';
 // DOM 元素
 const statusEl = document.getElementById('status')!;
 const providerSelect = document.getElementById('provider') as HTMLSelectElement;
+const baseUrlInput = document.getElementById('baseUrl') as HTMLInputElement;
+const baseUrlHint = document.getElementById('baseUrlHint')!;
 const modelInput = document.getElementById('model') as HTMLInputElement;
 const modelHint = document.getElementById('modelHint')!;
 const modelSuggestions = document.getElementById('modelSuggestions') as HTMLDataListElement;
@@ -23,6 +25,8 @@ const maxTotalCharsInput = document.getElementById('maxTotalChars') as HTMLInput
 const enableFallbackCheckbox = document.getElementById('enableFallback') as HTMLInputElement;
 const fallbackFields = document.getElementById('fallbackFields')!;
 const fallbackProviderSelect = document.getElementById('fallbackProvider') as HTMLSelectElement;
+const fallbackBaseUrlInput = document.getElementById('fallbackBaseUrl') as HTMLInputElement;
+const fallbackBaseUrlHint = document.getElementById('fallbackBaseUrlHint')!;
 const fallbackModelInput = document.getElementById('fallbackModel') as HTMLInputElement;
 const fallbackModelHint = document.getElementById('fallbackModelHint')!;
 const fallbackModelSuggestions = document.getElementById('fallbackModelSuggestions') as HTMLDataListElement;
@@ -89,11 +93,13 @@ document.querySelectorAll('.style-option').forEach((option) => {
 // Provider 切换时更新提示
 providerSelect.addEventListener('change', () => {
   updateApiKeyHint(providerSelect.value, apiKeyHint);
+  updateBaseUrlUi(providerSelect.value, baseUrlInput, baseUrlHint);
   updateModelUi(providerSelect.value, modelInput, modelHint, modelSuggestions);
 });
 
 fallbackProviderSelect.addEventListener('change', () => {
   updateApiKeyHint(fallbackProviderSelect.value, fallbackApiKeyHint);
+  updateBaseUrlUi(fallbackProviderSelect.value, fallbackBaseUrlInput, fallbackBaseUrlHint);
   updateModelUi(fallbackProviderSelect.value, fallbackModelInput, fallbackModelHint, fallbackModelSuggestions);
 });
 
@@ -126,6 +132,42 @@ function getProviderModelMeta(provider: string): { defaultModel: string; docsUrl
     docsUrl: 'https://platform.deepseek.com/',
     suggestions: ['deepseek-v3.2', 'deepseek-v3.1', 'deepseek-r1-0528'],
   };
+}
+
+function getProviderBaseUrlMeta(provider: string): { defaultBaseUrl: string; docsUrl: string } {
+  if (provider === 'openai') {
+    return { defaultBaseUrl: 'https://api.openai.com', docsUrl: 'https://platform.openai.com/docs/api-reference' };
+  }
+  if (provider === 'claude') {
+    return { defaultBaseUrl: 'https://api.anthropic.com', docsUrl: 'https://docs.anthropic.com/en/api' };
+  }
+  return { defaultBaseUrl: 'https://api.deepseek.com', docsUrl: 'https://platform.deepseek.com/' };
+}
+
+function updateBaseUrlUi(provider: string, inputEl: HTMLInputElement, hintEl: HTMLElement) {
+  const meta = getProviderBaseUrlMeta(provider);
+  inputEl.placeholder = meta.defaultBaseUrl;
+  hintEl.innerHTML = `留空则使用默认：<code>${escapeHtml(meta.defaultBaseUrl)}</code>，<a href="${escapeHtml(
+    meta.docsUrl
+  )}" target="_blank" rel="noopener noreferrer">查看接口文档</a>（不要包含 <code>/v1</code>）`;
+}
+
+function parseOptionalBaseUrl(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error('Base URL 必须是完整 URL（例如 https://api.deepseek.com）');
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('Base URL 仅支持 http/https');
+  }
+
+  // Drop query/hash; keep origin + pathname. Trailing slash is fine (core will normalize).
+  return `${url.origin}${url.pathname}`;
 }
 
 function updateModelUi(
@@ -218,6 +260,7 @@ async function loadSettings() {
   const result = await chrome.storage.local.get([
     'apiKey',
     'provider',
+    'baseUrl',
     'model',
     'styles',
     'language',
@@ -230,6 +273,7 @@ async function loadSettings() {
     'maxCharsPerMessage',
     'maxTotalChars',
     'fallbackProvider',
+    'fallbackBaseUrl',
     'fallbackModel',
     'fallbackApiKey',
     'enableFallback',
@@ -246,6 +290,10 @@ async function loadSettings() {
     providerSelect.value = result.provider;
   }
 
+  if (typeof result.baseUrl === 'string') {
+    baseUrlInput.value = result.baseUrl;
+  }
+
   if (typeof result.model === 'string') {
     modelInput.value = result.model;
   }
@@ -254,6 +302,10 @@ async function loadSettings() {
 
   if (result.fallbackProvider) {
     fallbackProviderSelect.value = result.fallbackProvider;
+  }
+
+  if (typeof result.fallbackBaseUrl === 'string') {
+    fallbackBaseUrlInput.value = result.fallbackBaseUrl;
   }
 
   if (typeof result.fallbackModel === 'string') {
@@ -312,6 +364,7 @@ async function loadSettings() {
 saveBtn.addEventListener('click', async () => {
   const apiKey = apiKeyInput.value.trim();
   const provider = providerSelect.value;
+  const baseUrlRaw = baseUrlInput.value;
   const model = modelInput.value.trim();
   const persistApiKey = persistApiKeyCheckbox.checked;
   const enableMemory = enableMemoryCheckbox.checked;
@@ -326,9 +379,20 @@ saveBtn.addEventListener('click', async () => {
   const maxTotalChars = parseOptionalInt(maxTotalCharsInput);
   const enableFallback = enableFallbackCheckbox.checked;
   const fallbackProvider = fallbackProviderSelect.value;
+  const fallbackBaseUrlRaw = fallbackBaseUrlInput.value;
   const fallbackModel = fallbackModelInput.value.trim();
   const fallbackApiKey = fallbackApiKeyInput.value.trim();
   const suggestionCount = Number(suggestionCountSelect.value);
+
+  let baseUrl: string | undefined;
+  let fallbackBaseUrl: string | undefined;
+  try {
+    baseUrl = parseOptionalBaseUrl(baseUrlRaw);
+    fallbackBaseUrl = parseOptionalBaseUrl(fallbackBaseUrlRaw);
+  } catch (err) {
+    alert((err as Error).message);
+    return;
+  }
 
   if (!privacyAcknowledged) {
     alert('请先勾选「我已理解并同意隐私告知」');
@@ -366,6 +430,7 @@ saveBtn.addEventListener('click', async () => {
   const config = {
     apiKey,
     provider,
+    baseUrl,
     model,
     styles,
     language: language === 'zh' || language === 'en' || language === 'auto' ? language : 'auto',
@@ -381,6 +446,7 @@ saveBtn.addEventListener('click', async () => {
     maxTotalChars,
     enableFallback,
     fallbackProvider,
+    fallbackBaseUrl,
     fallbackModel,
     fallbackApiKey,
     suggestionCount,
