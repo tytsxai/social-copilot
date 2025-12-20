@@ -149,7 +149,7 @@ function updateBaseUrlUi(provider: string, inputEl: HTMLInputElement, hintEl: HT
   inputEl.placeholder = meta.defaultBaseUrl;
   hintEl.innerHTML = `留空则使用默认：<code>${escapeHtml(meta.defaultBaseUrl)}</code>，<a href="${escapeHtml(
     meta.docsUrl
-  )}" target="_blank" rel="noopener noreferrer">查看接口文档</a>（不要包含 <code>/v1</code>）`;
+  )}" target="_blank" rel="noopener noreferrer">查看接口文档</a>（仅支持官方域名，不要包含 <code>/v1</code>）`;
 }
 
 function parseOptionalBaseUrl(raw: string): string | undefined {
@@ -162,36 +162,21 @@ function parseOptionalBaseUrl(raw: string): string | undefined {
     throw new Error('Base URL 必须是完整 URL（例如 https://api.deepseek.com）');
   }
 
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('Base URL 仅支持 http/https');
+  if (url.protocol !== 'https:') {
+    throw new Error('Base URL 仅支持 https');
   }
 
   // Drop query/hash; keep origin + pathname. Trailing slash is fine (core will normalize).
   return `${url.origin}${url.pathname}`;
 }
 
-async function ensureHostPermissions(baseUrls: string[]): Promise<boolean> {
-  const patterns = baseUrls
-    .filter(Boolean)
-    .map((raw) => {
-      const url = new URL(raw);
-      return `${url.origin}/*`;
-    });
-
-  const uniquePatterns = Array.from(new Set(patterns));
-  if (!uniquePatterns.length) return true;
-
-  const missing: string[] = [];
-  for (const origin of uniquePatterns) {
-    // eslint-disable-next-line no-await-in-loop
-    const has = await chrome.permissions.contains({ origins: [origin] });
-    if (!has) missing.push(origin);
+function ensureAllowedBaseUrl(provider: string, baseUrl: string | undefined, label: string) {
+  if (!baseUrl) return;
+  const allowedOrigin = new URL(getProviderBaseUrlMeta(provider).defaultBaseUrl).origin;
+  const origin = new URL(baseUrl).origin;
+  if (origin !== allowedOrigin) {
+    throw new Error(`${label} 仅支持官方域名（${allowedOrigin}），以避免额外权限告警。`);
   }
-
-  if (!missing.length) return true;
-
-  const granted = await chrome.permissions.request({ origins: missing });
-  return Boolean(granted);
 }
 
 function updateModelUi(
@@ -412,7 +397,18 @@ saveBtn.addEventListener('click', async () => {
   let fallbackBaseUrl: string | undefined;
   try {
     baseUrl = parseOptionalBaseUrl(baseUrlRaw);
-    fallbackBaseUrl = parseOptionalBaseUrl(fallbackBaseUrlRaw);
+    fallbackBaseUrl = enableFallback ? parseOptionalBaseUrl(fallbackBaseUrlRaw) : undefined;
+  } catch (err) {
+    alert((err as Error).message);
+    return;
+  }
+
+  try {
+    ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL');
+    if (enableFallback) {
+      const fallbackProviderForValidation = fallbackProvider || provider;
+      ensureAllowedBaseUrl(fallbackProviderForValidation, fallbackBaseUrl, '备用 Base URL');
+    }
   } catch (err) {
     alert((err as Error).message);
     return;
@@ -435,22 +431,6 @@ saveBtn.addEventListener('click', async () => {
     const status = lastStatus ?? (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }));
     if (!status?.hasFallback) {
       alert('请输入备用 API Key');
-      return;
-    }
-  }
-
-  const permissionUrls: string[] = [];
-  if (baseUrl) permissionUrls.push(baseUrl);
-  if (enableFallback && fallbackBaseUrl) permissionUrls.push(fallbackBaseUrl);
-  if (permissionUrls.length) {
-    try {
-      const ok = await ensureHostPermissions(permissionUrls);
-      if (!ok) {
-        alert('未授予 Base URL 域名访问权限，无法保存设置。你可以稍后重新保存并在弹窗中选择“允许”。');
-        return;
-      }
-    } catch (err) {
-      alert(`申请域名权限失败：${(err as Error).message}`);
       return;
     }
   }

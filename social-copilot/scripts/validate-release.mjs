@@ -90,6 +90,11 @@ if (hasInsecureHost) {
   fail(`host_permissions must use https: ${hostPermissions.join(', ')}`);
 }
 
+const optionalHostPermissions = Array.isArray(manifest.optional_host_permissions) ? manifest.optional_host_permissions : [];
+if (optionalHostPermissions.length > 0) {
+  fail(`optional_host_permissions must be empty for release: ${optionalHostPermissions.join(', ')}`);
+}
+
 if (!existsSync(distDir) || !statSync(distDir).isDirectory()) {
   fail('dist not found, run `pnpm build:extension:release` first');
 }

@@ -4,12 +4,7 @@
   "version": "0.1.0",
   "description": "AI-powered social companion for chat applications",
   "permissions": [
-    "storage",
-    "permissions"
-  ],
-  "optional_host_permissions": [
-    "https://*/*",
-    "http://*/*"
+    "storage"
   ],
   "host_permissions": [
     "https://api.deepseek.com/*",

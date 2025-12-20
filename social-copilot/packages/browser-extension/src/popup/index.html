@@ -10,8 +10,12 @@
       margin: 0;
       padding: 0;
     }
+    html,
     body {
       width: 380px;
+      min-width: 380px;
+    }
+    body {
       max-width: 100vw;
       max-height: 600px;
       overflow: hidden;
@@ -368,7 +372,7 @@
     <div class="form-group">
       <label for="baseUrl">Base URL（可选）</label>
       <input type="text" id="baseUrl" placeholder="例如：https://api.deepseek.com" autocomplete="off">
-      <small id="baseUrlHint" class="muted">留空则使用该提供商默认地址；无需包含 <code>/v1</code></small>
+      <small id="baseUrlHint" class="muted">留空则使用默认；仅支持官方域名；不要包含 <code>/v1</code></small>
     </div>
 
     <div class="form-group">
@@ -486,7 +490,7 @@
       <div class="form-group">
         <label for="fallbackBaseUrl">备用 Base URL（可选）</label>
         <input type="text" id="fallbackBaseUrl" placeholder="例如：https://api.deepseek.com" autocomplete="off">
-        <small id="fallbackBaseUrlHint" class="muted">留空则使用该提供商默认地址；无需包含 <code>/v1</code></small>
+        <small id="fallbackBaseUrlHint" class="muted">留空则使用默认；仅支持官方域名；不要包含 <code>/v1</code></small>
       </div>
 
       <div class="form-group">
