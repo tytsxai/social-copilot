@@ -29,6 +29,9 @@
 | `enableFallback` | `boolean` | `false` | 是否启用备用模型 |
 | `fallbackProvider` | `ProviderType` | `provider` | 备用模型提供商（不填则沿用主用） |
 | `fallbackBaseUrl` | `string` | `undefined` | 可选：覆盖备用提供商 Base URL（不要包含 `/v1`） |
+
+说明：
+- 扩展运行在 Manifest V3 下，跨域请求受 `host_permissions` 限制；当你填写自定义 `baseUrl` / `fallbackBaseUrl` 且域名不在默认白名单时，保存设置会触发浏览器权限弹窗，请选择“允许”。
 | `fallbackModel` | `string` | `undefined` | 可选：备用模型名 |
 | `enableMemory` | `boolean` | `false` | 是否启用“长期记忆摘要”（默认关闭） |
 | `persistApiKey` | `boolean` | `false` | 是否持久化存储 API Key（默认不持久化） |

@@ -94,7 +94,7 @@ SC_E2E_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 1. 点击扩展图标打开设置
 2. 勾选「隐私告知」确认（首次使用必选）
 3. 选择模型提供商（DeepSeek / OpenAI / Claude）
-4. （可选）填写 Base URL（留空则使用默认；不要包含 `/v1`）
+4. （可选）填写 Base URL（留空则使用默认；不要包含 `/v1`；如使用自定义域名，保存时浏览器会提示授予该域名访问权限）
 5. （可选）填写模型名称（不填则使用默认模型）
 6. 输入对应的 API Key
 7. （可选）开启备用模型并填写备用 API Key，实现自动故障转移（备用模型也可指定 Base URL / 模型名称）

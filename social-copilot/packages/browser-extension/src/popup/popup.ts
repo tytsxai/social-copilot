@@ -170,6 +170,30 @@ function parseOptionalBaseUrl(raw: string): string | undefined {
   return `${url.origin}${url.pathname}`;
 }
 
+async function ensureHostPermissions(baseUrls: string[]): Promise<boolean> {
+  const patterns = baseUrls
+    .filter(Boolean)
+    .map((raw) => {
+      const url = new URL(raw);
+      return `${url.origin}/*`;
+    });
+
+  const uniquePatterns = Array.from(new Set(patterns));
+  if (!uniquePatterns.length) return true;
+
+  const missing: string[] = [];
+  for (const origin of uniquePatterns) {
+    // eslint-disable-next-line no-await-in-loop
+    const has = await chrome.permissions.contains({ origins: [origin] });
+    if (!has) missing.push(origin);
+  }
+
+  if (!missing.length) return true;
+
+  const granted = await chrome.permissions.request({ origins: missing });
+  return Boolean(granted);
+}
+
 function updateModelUi(
   provider: string,
   inputEl: HTMLInputElement,
@@ -415,6 +439,22 @@ saveBtn.addEventListener('click', async () => {
     }
   }
 
+  const permissionUrls: string[] = [];
+  if (baseUrl) permissionUrls.push(baseUrl);
+  if (enableFallback && fallbackBaseUrl) permissionUrls.push(fallbackBaseUrl);
+  if (permissionUrls.length) {
+    try {
+      const ok = await ensureHostPermissions(permissionUrls);
+      if (!ok) {
+        alert('未授予 Base URL 域名访问权限，无法保存设置。你可以稍后重新保存并在弹窗中选择“允许”。');
+        return;
+      }
+    } catch (err) {
+      alert(`申请域名权限失败：${(err as Error).message}`);
+      return;
+    }
+  }
+
   // 获取选中的风格
   const styles: string[] = [];
   document.querySelectorAll('.style-option.selected').forEach((option) => {
@@ -446,7 +486,7 @@ saveBtn.addEventListener('click', async () => {
     maxTotalChars,
     enableFallback,
     fallbackProvider,
-    fallbackBaseUrl,
+    fallbackBaseUrl: enableFallback ? fallbackBaseUrl : undefined,
     fallbackModel,
     fallbackApiKey,
     suggestionCount,
