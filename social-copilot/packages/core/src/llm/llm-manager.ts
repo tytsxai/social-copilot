@@ -13,12 +13,16 @@ export interface LLMManagerConfig {
     apiKey: string;
     model?: string;
     baseUrl?: string;
+    allowInsecureHttp?: boolean;
+    allowPrivateHosts?: boolean;
   };
   fallback?: {
     provider: ProviderType;
     apiKey: string;
     model?: string;
     baseUrl?: string;
+    allowInsecureHttp?: boolean;
+    allowPrivateHosts?: boolean;
   };
   cache?: {
     enabled?: boolean;
@@ -205,15 +209,43 @@ export class LLMManager {
     }
   }
 
-  private createProvider(config: { provider: ProviderType; apiKey: string; model?: string; baseUrl?: string }): LLMProvider {
+  private createProvider(config: {
+    provider: ProviderType;
+    apiKey: string;
+    model?: string;
+    baseUrl?: string;
+    allowInsecureHttp?: boolean;
+    allowPrivateHosts?: boolean;
+  }): LLMProvider {
     switch (config.provider) {
       case 'openai':
-        return new OpenAIProvider({ apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl, registry: this.registry });
+        return new OpenAIProvider({
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          allowInsecureHttp: config.allowInsecureHttp,
+          allowPrivateHosts: config.allowPrivateHosts,
+          registry: this.registry,
+        });
       case 'claude':
-        return new ClaudeProvider({ apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl, registry: this.registry });
+        return new ClaudeProvider({
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          allowInsecureHttp: config.allowInsecureHttp,
+          allowPrivateHosts: config.allowPrivateHosts,
+          registry: this.registry,
+        });
       case 'deepseek':
       default:
-        return new DeepSeekProvider({ apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl, registry: this.registry });
+        return new DeepSeekProvider({
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          allowInsecureHttp: config.allowInsecureHttp,
+          allowPrivateHosts: config.allowPrivateHosts,
+          registry: this.registry,
+        });
     }
   }
 

@@ -44,6 +44,9 @@ export class InMemoryVectorStore implements VectorStore {
   private store: Map<string, StoreEntry> = new Map();
   private readonly maxSize: number;
   private readonly ttl?: number;
+  private evictionCount = 0;
+  private expiredPrunedCount = 0;
+  private lastPruneAt: number | null = null;
 
   constructor(options: InMemoryVectorStoreOptions = {}) {
     const maxSize = options.maxSize ?? 10000;
@@ -133,16 +136,30 @@ export class InMemoryVectorStore implements VectorStore {
       const oldestKey = this.store.keys().next().value as string | undefined;
       if (!oldestKey) return;
       this.store.delete(oldestKey);
+      this.evictionCount += 1;
     }
   }
 
   private pruneExpired(now = Date.now()) {
     if (!this.ttl) return;
+    this.lastPruneAt = now;
     for (const [key, entry] of this.store.entries()) {
       if (entry.expiresAt !== undefined && entry.expiresAt <= now) {
         this.store.delete(key);
+        this.expiredPrunedCount += 1;
       }
     }
+  }
+
+  getStats() {
+    return {
+      size: this.store.size,
+      maxSize: this.maxSize,
+      ttl: this.ttl,
+      evictionCount: this.evictionCount,
+      expiredPrunedCount: this.expiredPrunedCount,
+      lastPruneAt: this.lastPruneAt,
+    };
   }
 
   private validateVector(vector: number[]) {

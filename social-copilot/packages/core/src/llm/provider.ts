@@ -17,9 +17,19 @@ export class DeepSeekProvider implements LLMProvider {
   private model: string;
   private registry?: PromptHookRegistry;
 
-  constructor(config: { apiKey: string; baseUrl?: string; model?: string; registry?: PromptHookRegistry }) {
+  constructor(config: {
+    apiKey: string;
+    baseUrl?: string;
+    model?: string;
+    allowInsecureHttp?: boolean;
+    allowPrivateHosts?: boolean;
+    registry?: PromptHookRegistry;
+  }) {
     this.apiKey = config.apiKey;
-    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com');
+    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.deepseek.com', {
+      allowInsecureHttp: config.allowInsecureHttp,
+      allowPrivateHosts: config.allowPrivateHosts,
+    });
     this.model = config.model || 'deepseek-v3.2';
     this.registry = config.registry;
   }
