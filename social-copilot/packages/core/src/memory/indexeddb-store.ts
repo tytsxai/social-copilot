@@ -39,6 +39,8 @@ export interface IndexedDBStoreOptions {
   totalTrimWriteThreshold?: number;
 }
 
+export type StylePreferenceUpdater = (existing: StylePreference | null) => StylePreference;
+
 function normalizePositiveInt(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   const normalized = Math.floor(value);
@@ -605,13 +607,9 @@ export class IndexedDBStore implements MemoryStore {
     const contactKeyStr = contactKeyToString(message.contactKey);
     const record = { ...message, contactKeyStr };
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.messages, 'readwrite');
+    await this.withTransaction(STORES.messages, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.messages);
-      const request = store.put(record);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve();
+      await this.requestToPromise(store.put(record));
     });
 
     // 清理超出上限的历史消息（best-effort，不影响主流程）
@@ -629,6 +627,30 @@ export class IndexedDBStore implements MemoryStore {
         console.warn('[IndexedDBStore] trim total messages failed', err);
       }
     }
+  }
+
+  /**
+   * 批量保存消息（使用单个事务，提升性能）
+   *
+   * 注意：批量操作不会触发自动 trim，调用方需要根据需要手动清理
+   */
+  async saveMessagesBatch(messages: Message[]): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return;
+    }
+
+    await this.withTransaction(STORES.messages, 'readwrite', (tx) => {
+      const store = tx.objectStore(STORES.messages);
+
+      for (const message of messages) {
+        const contactKeyStr = contactKeyToString(message.contactKey);
+        const record = { ...message, contactKeyStr };
+        store.put(record);
+      }
+
+      return Promise.resolve();
+    });
   }
 
   /**
@@ -728,6 +750,84 @@ export class IndexedDBStore implements MemoryStore {
     });
   }
 
+  /**
+   * 批量读取多个联系人的消息（使用单个事务，提升性能）
+   *
+   * @param contactKeys 联系人 key 数组
+   * @param limit 每个联系人返回的最大消息数（默认 50）
+   * @returns Map<contactKeyStr, Message[]>，key 为规范化的 contactKeyStr
+   */
+  async getMessagesBatch(
+    contactKeys: ContactKey[],
+    limit: number = 50
+  ): Promise<Map<string, Message[]>> {
+    if (!this.db) throw new Error('Database not initialized');
+    if (!Array.isArray(contactKeys) || contactKeys.length === 0) {
+      return new Map();
+    }
+
+    const normalizedLimit = Math.max(1, Math.floor(limit));
+
+    return this.withTransaction(STORES.messages, 'readonly', (tx) => {
+      const store = tx.objectStore(STORES.messages);
+      const useCompoundIndex = store.indexNames.contains('contactKeyTimestamp');
+      const index = useCompoundIndex
+        ? store.index('contactKeyTimestamp')
+        : store.index('contactKey');
+
+      const resultMap = new Map<string, Message[]>();
+
+      // 为每个联系人创建查询 Promise
+      const fetchPromises = contactKeys.map((contactKey) => {
+        const primaryKeyStr = contactKeyToString(contactKey);
+        const keyCandidates = getContactKeyStrCandidates(contactKey);
+
+        return Promise.all(
+          keyCandidates.map((keyStr) =>
+            new Promise<Message[]>((resolve, reject) => {
+              if (useCompoundIndex) {
+                const range = IDBKeyRange.bound(
+                  [keyStr, Number.MIN_SAFE_INTEGER],
+                  [keyStr, Number.MAX_SAFE_INTEGER]
+                );
+                const request = index.openCursor(range, 'prev');
+                const results: Message[] = [];
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                  const cursor = request.result;
+                  if (cursor && results.length < normalizedLimit) {
+                    results.push(cursor.value as Message);
+                    cursor.continue();
+                    return;
+                  }
+                  resolve(results);
+                };
+              } else {
+                const request = index.getAll(IDBKeyRange.only(keyStr));
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                  const messages = request.result as Message[];
+                  messages.sort((a, b) => a.timestamp - b.timestamp);
+                  resolve(messages.slice(-normalizedLimit));
+                };
+              }
+            })
+          )
+        ).then((lists) => {
+          const merged = lists.flat();
+          merged.sort((a, b) => a.timestamp - b.timestamp);
+          const limited = merged.slice(-normalizedLimit);
+          if (limited.length > 0) {
+            resultMap.set(primaryKeyStr, limited);
+          }
+        });
+      });
+
+      return Promise.all(fetchPromises).then(() => resultMap);
+    });
+  }
+
   async getProfile(contactKey: ContactKey): Promise<ContactProfile | null> {
     if (!this.db) throw new Error('Database not initialized');
 
@@ -766,13 +866,9 @@ export class IndexedDBStore implements MemoryStore {
     const keyStr = contactKeyToString(profile.key);
     const record = { ...profile, keyStr };
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.profiles, 'readwrite');
+    await this.withTransaction(STORES.profiles, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.profiles);
-      const request = store.put(record);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve();
+      await this.requestToPromise(store.put(record));
     });
   }
 
@@ -995,13 +1091,95 @@ export class IndexedDBStore implements MemoryStore {
   async saveStylePreference(preference: StylePreference): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
+    await this.withTransaction(STORES.stylePreferences, 'readwrite', async (tx) => {
+      const store = tx.objectStore(STORES.stylePreferences);
+      await this.requestToPromise(store.put(preference));
+    });
+  }
+
+  /**
+   * 原子更新联系人的风格偏好（单个 readwrite transaction）
+   * - 兼容旧版本 contactKeyStr key（candidate keys）
+   * - 读取任意匹配 key，写回 canonical key，并清理旧 key
+   */
+  async updateStylePreference(contactKey: ContactKey, updaterFn: StylePreferenceUpdater): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const canonicalKeyRaw = contactKeyToString(contactKey);
+    const canonicalKey = normalizeContactKeyStr(canonicalKeyRaw);
+    const candidatesRaw = getContactKeyStrCandidates(contactKey);
+    const keysToTry = Array.from(
+      new Set([canonicalKey, canonicalKeyRaw, ...candidatesRaw, ...candidatesRaw.map(normalizeContactKeyStr)])
+    );
+
     return new Promise((resolve, reject) => {
       const tx = this.db!.transaction(STORES.stylePreferences, 'readwrite');
       const store = tx.objectStore(STORES.stylePreferences);
-      const request = store.put(preference);
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve();
+      let settled = false;
+      const fail = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        try {
+          tx.abort();
+        } catch {
+          // ignore
+        }
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      tx.oncomplete = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      tx.onerror = () => fail(tx.error ?? new Error('updateStylePreference failed'));
+      tx.onabort = () => fail(tx.error ?? new Error('updateStylePreference aborted'));
+
+      const tryGetNext = (remaining: string[]) => {
+        if (remaining.length === 0) {
+          let updated: StylePreference;
+          try {
+            updated = updaterFn(null);
+          } catch (err) {
+            fail(err);
+            return;
+          }
+          const putRequest = store.put({ ...updated, contactKeyStr: canonicalKey });
+          putRequest.onerror = () => fail(putRequest.error);
+          return;
+        }
+
+        const key = remaining.shift()!;
+        const request = store.get(key);
+        request.onerror = () => fail(request.error);
+        request.onsuccess = () => {
+          const existing = (request.result as StylePreference | undefined) ?? null;
+          if (!existing) {
+            tryGetNext(remaining);
+            return;
+          }
+
+          const normalizedExisting: StylePreference = { ...existing, contactKeyStr: canonicalKey };
+          let updated: StylePreference;
+          try {
+            updated = updaterFn(normalizedExisting);
+          } catch (err) {
+            fail(err);
+            return;
+          }
+
+          if (key !== canonicalKey) {
+            const deleteRequest = store.delete(key);
+            deleteRequest.onerror = () => fail(deleteRequest.error);
+          }
+
+          const putRequest = store.put({ ...updated, contactKeyStr: canonicalKey });
+          putRequest.onerror = () => fail(putRequest.error);
+        };
+      };
+
+      tryGetNext([...keysToTry]);
     });
   }
 
@@ -1013,21 +1191,11 @@ export class IndexedDBStore implements MemoryStore {
 
     const keys = getContactKeyStrCandidates(contactKey);
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.stylePreferences, 'readwrite');
+    await this.withTransaction(STORES.stylePreferences, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.stylePreferences);
-      const deleteNextKey = (remainingKeys: string[]) => {
-        if (remainingKeys.length === 0) {
-          resolve();
-          return;
-        }
-        const key = remainingKeys.shift()!;
-        const request = store.delete(key);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => deleteNextKey(remainingKeys);
-      };
-
-      deleteNextKey([...keys]);
+      for (const key of keys) {
+        await this.requestToPromise(store.delete(key));
+      }
     });
   }
 
@@ -1094,13 +1262,9 @@ export class IndexedDBStore implements MemoryStore {
       updatedAt: Date.now(),
     };
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.contactMemories, 'readwrite');
+    await this.withTransaction(STORES.contactMemories, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.contactMemories);
-      const request = store.put(record);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve();
+      await this.requestToPromise(store.put(record));
     });
 
     return record;
@@ -1119,13 +1283,9 @@ export class IndexedDBStore implements MemoryStore {
       updatedAt: record.updatedAt,
     };
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.contactMemories, 'readwrite');
+    await this.withTransaction(STORES.contactMemories, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.contactMemories);
-      const request = store.put(normalized);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve();
+      await this.requestToPromise(store.put(normalized));
     });
 
     return normalized;
@@ -1139,21 +1299,11 @@ export class IndexedDBStore implements MemoryStore {
 
     const keys = getContactKeyStrCandidates(contactKey);
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.contactMemories, 'readwrite');
+    await this.withTransaction(STORES.contactMemories, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.contactMemories);
-      const deleteNextKey = (remainingKeys: string[]) => {
-        if (remainingKeys.length === 0) {
-          resolve();
-          return;
-        }
-        const key = remainingKeys.shift()!;
-        const request = store.delete(key);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => deleteNextKey(remainingKeys);
-      };
-
-      deleteNextKey([...keys]);
+      for (const key of keys) {
+        await this.requestToPromise(store.delete(key));
+      }
     });
   }
 
@@ -1457,6 +1607,67 @@ export class IndexedDBStore implements MemoryStore {
   }
 
   /**
+   * 事务复用辅助方法（内部使用）
+   *
+   * 统一管理事务生命周期，确保正确的错误处理和回滚
+   */
+  private withTransaction<T>(
+    storeNames: string | string[],
+    mode: IDBTransactionMode,
+    callback: (tx: IDBTransaction) => Promise<T>
+  ): Promise<T> {
+    if (!this.db) {
+      return Promise.reject(new Error('Database not initialized'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction(storeNames, mode);
+
+      let settled = false;
+      let txCompleted = false;
+      let callbackCompleted = false;
+      let callbackResult: T | undefined;
+
+      const fail = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      const maybeResolve = () => {
+        if (settled) return;
+        if (txCompleted && callbackCompleted) {
+          settled = true;
+          resolve(callbackResult as T);
+        }
+      };
+
+      tx.oncomplete = () => {
+        txCompleted = true;
+        maybeResolve();
+      };
+      tx.onerror = () => fail(tx.error ?? new Error('Transaction failed'));
+      tx.onabort = () => fail(tx.error ?? new Error('Transaction aborted'));
+
+      Promise.resolve()
+        .then(() => callback(tx))
+        .then((result) => {
+          callbackResult = result;
+          callbackCompleted = true;
+          maybeResolve();
+        })
+        .catch((err) => {
+          try {
+            tx.abort();
+          } catch {
+            // ignore
+          }
+          fail(err);
+        });
+    });
+  }
+
+  /**
    * 全局消息上限：按时间删除最旧记录
    */
   private shouldTrimTotal(now: number): boolean {
@@ -1515,19 +1726,27 @@ export class IndexedDBStore implements MemoryStore {
       const cursorRequest = index.openCursor(range, 'prev');
       let count = 0;
 
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
       cursorRequest.onerror = () => reject(cursorRequest.error);
       cursorRequest.onsuccess = () => {
         const cursor = cursorRequest.result;
-        if (!cursor) {
-          resolve();
-          return;
-        }
+        if (!cursor) return;
         count += 1;
         if (count > maxCount) {
           cursor.delete();
         }
         cursor.continue();
       };
+    });
+  }
+
+  private requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
     });
   }
 }
