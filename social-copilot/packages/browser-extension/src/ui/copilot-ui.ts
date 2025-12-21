@@ -1,4 +1,5 @@
 import type { ReplyCandidate, ThoughtCard, ThoughtType } from '@social-copilot/core';
+import { escapeHtml } from '../utils/escape-html';
 import { ThoughtCardsComponent } from './thought-cards';
 
 interface CopilotUIOptions {
@@ -167,7 +168,7 @@ export class CopilotUI {
       return `${notice}
         <div class="sc-privacy">
           <div class="sc-privacy-title">隐私提示</div>
-          <div class="sc-privacy-text">${this.escapeHtml(this.privacyPrompt)}</div>
+          <div class="sc-privacy-text">${escapeHtml(this.privacyPrompt)}</div>
           <button class="sc-privacy-ack" type="button">我已理解，继续</button>
           <div class="sc-privacy-sub">你也可以在扩展设置中随时调整脱敏/匿名化与发送范围。</div>
         </div>`;
@@ -178,7 +179,7 @@ export class CopilotUI {
     }
 
     if (this.error) {
-      return `${notice}<div class="sc-error">${this.escapeHtml(this.error)}</div>`;
+      return `${notice}<div class="sc-error">${escapeHtml(this.error)}</div>`;
     }
 
     if (this.candidates.length === 0) {
@@ -187,8 +188,8 @@ export class CopilotUI {
 
     const candidateList = this.candidates.map((c, i) => `
       <div class="sc-candidate" data-index="${i}">
-        <span class="sc-style">${this.escapeHtml(this.getStyleLabel(c.style))}</span>
-        <p class="sc-text">${this.escapeHtml(c.text)}</p>
+        <span class="sc-style">${escapeHtml(this.getStyleLabel(c.style))}</span>
+        <p class="sc-text">${escapeHtml(c.text)}</p>
       </div>
     `).join('');
 
@@ -197,7 +198,7 @@ export class CopilotUI {
 
   private renderNotification(): string {
     if (!this.notification) return '';
-    return `<div class="sc-notice">${this.escapeHtml(this.notification)}</div>`;
+    return `<div class="sc-notice">${escapeHtml(this.notification)}</div>`;
   }
 
   private getStyleLabel(style: string): string {
@@ -209,12 +210,6 @@ export class CopilotUI {
       formal: '📝 正式',
     };
     return labels[style] || style;
-  }
-
-  private escapeHtml(text: string): string {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
   }
 
   private update() {

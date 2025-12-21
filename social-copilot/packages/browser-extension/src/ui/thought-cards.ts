@@ -1,4 +1,5 @@
 import type { ThoughtCard, ThoughtType } from '@social-copilot/core';
+import { escapeHtml } from '../utils/escape-html';
 
 const MAX_CARDS = 6;
 
@@ -112,20 +113,14 @@ export class ThoughtCardsComponent {
       const isActive = this.selectedThought === card.type;
       const activeClass = isActive ? 'sc-thought-card--active' : '';
       return `
-        <div class="sc-thought-card ${activeClass}" data-type="${this.escapeHtml(card.type)}">
-          <span class="sc-thought-icon">${this.escapeHtml(card.icon)}</span>
-          <span class="sc-thought-label">${this.escapeHtml(card.label)}</span>
+        <div class="sc-thought-card ${activeClass}" data-type="${escapeHtml(card.type)}">
+          <span class="sc-thought-icon">${escapeHtml(card.icon)}</span>
+          <span class="sc-thought-label">${escapeHtml(card.label)}</span>
         </div>
       `;
     }).join('');
 
     return cardsHtml;
-  }
-
-  private escapeHtml(text: string): string {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
   }
 
   private update(): void {

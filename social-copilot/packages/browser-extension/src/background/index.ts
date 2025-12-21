@@ -82,6 +82,10 @@ interface Config {
   provider: ProviderType;
   /** 可选：覆盖 provider 默认 Base URL（不要包含 /v1） */
   baseUrl?: string;
+  /** 允许 http Base URL（默认 false） */
+  allowInsecureHttp?: boolean;
+  /** 允许本地/私有地址（默认 false） */
+  allowPrivateHosts?: boolean;
   /** 可选：指定模型名称（不填则使用 provider 默认） */
   model?: string;
   styles: ReplyStyle[];
@@ -104,6 +108,10 @@ interface Config {
   fallbackProvider?: ProviderType;
   /** 可选：覆盖 fallback provider 默认 Base URL（不要包含 /v1） */
   fallbackBaseUrl?: string;
+  /** 允许 fallback 的 http Base URL（默认 false） */
+  fallbackAllowInsecureHttp?: boolean;
+  /** 允许 fallback 本地/私有地址（默认 false） */
+  fallbackAllowPrivateHosts?: boolean;
   /** 可选：指定备用模型名称（不填则使用 provider 默认） */
   fallbackModel?: string;
   fallbackApiKey?: string;
@@ -505,6 +513,8 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
     configured: true,
     provider: config.provider,
     model: config.model,
+    allowInsecureHttp: config.allowInsecureHttp ?? false,
+    allowPrivateHosts: config.allowPrivateHosts ?? false,
     styles: config.styles,
     language: config.language ?? 'auto',
     autoTrigger: config.autoTrigger ?? true,
@@ -512,6 +522,8 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
     enableFallback: config.enableFallback ?? false,
     fallbackProvider: config.fallbackProvider,
     fallbackModel: config.fallbackModel,
+    fallbackAllowInsecureHttp: config.fallbackAllowInsecureHttp ?? false,
+    fallbackAllowPrivateHosts: config.fallbackAllowPrivateHosts ?? false,
     suggestionCount: normalizeSuggestionCount(config.suggestionCount),
     enableMemory: config.enableMemory ?? false,
     persistApiKey: config.persistApiKey ?? false,
@@ -1289,6 +1301,8 @@ async function loadConfig() {
     'apiKey',
     'provider',
     'baseUrl',
+    'allowInsecureHttp',
+    'allowPrivateHosts',
     'model',
     'styles',
     'language',
@@ -1302,6 +1316,8 @@ async function loadConfig() {
     'maxTotalChars',
     'fallbackProvider',
     'fallbackBaseUrl',
+    'fallbackAllowInsecureHttp',
+    'fallbackAllowPrivateHosts',
     'fallbackModel',
     'fallbackApiKey',
     'enableFallback',
@@ -1326,6 +1342,8 @@ async function loadConfig() {
       apiKey: keys.apiKey,
       provider: result.provider || 'deepseek',
       baseUrl: normalizeBaseUrl(result.baseUrl),
+      allowInsecureHttp: result.allowInsecureHttp === true,
+      allowPrivateHosts: result.allowPrivateHosts === true,
       model: normalizeModel(result.model),
       styles: (result.styles as ReplyStyle[] | undefined) || DEFAULT_STYLES,
       language: normalizeLanguage(result.language),
@@ -1339,6 +1357,8 @@ async function loadConfig() {
       maxTotalChars: normalizeOptionalInt(result.maxTotalChars, { min: 200, max: 20_000 }),
       fallbackProvider: result.fallbackProvider,
       fallbackBaseUrl: normalizeBaseUrl(result.fallbackBaseUrl),
+      fallbackAllowInsecureHttp: result.fallbackAllowInsecureHttp === true,
+      fallbackAllowPrivateHosts: result.fallbackAllowPrivateHosts === true,
       fallbackModel: normalizeModel(result.fallbackModel),
       fallbackApiKey: keys.fallbackApiKey,
       enableFallback,
@@ -1377,6 +1397,8 @@ async function setConfig(config: Config) {
     ...config,
     apiKey,
     baseUrl: normalizeBaseUrl(config.baseUrl),
+    allowInsecureHttp: config.allowInsecureHttp ?? false,
+    allowPrivateHosts: config.allowPrivateHosts ?? false,
     model: normalizeModel(config.model),
     language: normalizeLanguage(config.language),
     autoTrigger,
@@ -1388,6 +1410,8 @@ async function setConfig(config: Config) {
     maxTotalChars: normalizeOptionalInt(config.maxTotalChars, { min: 200, max: 20_000 }),
     enableFallback,
     fallbackBaseUrl: enableFallback ? normalizeBaseUrl(config.fallbackBaseUrl) : undefined,
+    fallbackAllowInsecureHttp: enableFallback ? (config.fallbackAllowInsecureHttp ?? false) : false,
+    fallbackAllowPrivateHosts: enableFallback ? (config.fallbackAllowPrivateHosts ?? false) : false,
     fallbackModel: normalizeModel(config.fallbackModel),
     fallbackApiKey,
     styles: normalizedStyles,
@@ -1401,6 +1425,8 @@ async function setConfig(config: Config) {
   const baseConfigToPersist = {
     provider: currentConfig.provider,
     ...(currentConfig.baseUrl ? { baseUrl: currentConfig.baseUrl } : {}),
+    allowInsecureHttp: currentConfig.allowInsecureHttp ?? false,
+    allowPrivateHosts: currentConfig.allowPrivateHosts ?? false,
     model: currentConfig.model,
     styles: currentConfig.styles,
     language: currentConfig.language ?? 'auto',
@@ -1414,6 +1440,8 @@ async function setConfig(config: Config) {
     maxTotalChars: currentConfig.maxTotalChars,
     fallbackProvider: currentConfig.fallbackProvider,
     ...(currentConfig.fallbackBaseUrl ? { fallbackBaseUrl: currentConfig.fallbackBaseUrl } : {}),
+    fallbackAllowInsecureHttp: currentConfig.fallbackAllowInsecureHttp ?? false,
+    fallbackAllowPrivateHosts: currentConfig.fallbackAllowPrivateHosts ?? false,
     fallbackModel: currentConfig.fallbackModel,
     enableFallback: currentConfig.enableFallback ?? false,
     suggestionCount: currentConfig.suggestionCount,
@@ -1492,13 +1520,22 @@ async function setConfig(config: Config) {
 function buildManagerConfig(config: Config): LLMManagerConfig {
   const fallbackEnabled = (config.enableFallback ?? false) && !!config.fallbackApiKey;
   return {
-    primary: { provider: config.provider, apiKey: config.apiKey, model: config.model, baseUrl: config.baseUrl },
+    primary: {
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      allowInsecureHttp: config.allowInsecureHttp ?? false,
+      allowPrivateHosts: config.allowPrivateHosts ?? false,
+    },
     fallback: fallbackEnabled
       ? {
           provider: config.fallbackProvider || config.provider,
           apiKey: config.fallbackApiKey as string,
           model: config.fallbackModel,
           baseUrl: config.fallbackBaseUrl,
+          allowInsecureHttp: config.fallbackAllowInsecureHttp ?? false,
+          allowPrivateHosts: config.fallbackAllowPrivateHosts ?? false,
         }
       : undefined,
   };

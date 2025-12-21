@@ -8,6 +8,8 @@ const statusEl = document.getElementById('status')!;
 const providerSelect = document.getElementById('provider') as HTMLSelectElement;
 const baseUrlInput = document.getElementById('baseUrl') as HTMLInputElement;
 const baseUrlHint = document.getElementById('baseUrlHint')!;
+const allowInsecureHttpCheckbox = document.getElementById('allowInsecureHttp') as HTMLInputElement;
+const allowPrivateHostsCheckbox = document.getElementById('allowPrivateHosts') as HTMLInputElement;
 const modelInput = document.getElementById('model') as HTMLInputElement;
 const modelHint = document.getElementById('modelHint')!;
 const modelSuggestions = document.getElementById('modelSuggestions') as HTMLDataListElement;
@@ -29,6 +31,8 @@ const fallbackFields = document.getElementById('fallbackFields')!;
 const fallbackProviderSelect = document.getElementById('fallbackProvider') as HTMLSelectElement;
 const fallbackBaseUrlInput = document.getElementById('fallbackBaseUrl') as HTMLInputElement;
 const fallbackBaseUrlHint = document.getElementById('fallbackBaseUrlHint')!;
+const fallbackAllowInsecureHttpCheckbox = document.getElementById('fallbackAllowInsecureHttp') as HTMLInputElement;
+const fallbackAllowPrivateHostsCheckbox = document.getElementById('fallbackAllowPrivateHosts') as HTMLInputElement;
 const fallbackModelInput = document.getElementById('fallbackModel') as HTMLInputElement;
 const fallbackModelHint = document.getElementById('fallbackModelHint')!;
 const fallbackModelSuggestions = document.getElementById('fallbackModelSuggestions') as HTMLDataListElement;
@@ -151,10 +155,43 @@ function updateBaseUrlUi(provider: string, inputEl: HTMLInputElement, hintEl: HT
   inputEl.placeholder = meta.defaultBaseUrl;
   hintEl.innerHTML = `留空则使用默认：<code>${escapeHtml(meta.defaultBaseUrl)}</code>，<a href="${escapeHtml(
     meta.docsUrl
-  )}" target="_blank" rel="noopener noreferrer">查看接口文档</a>（仅支持官方域名，不要包含 <code>/v1</code>）`;
+  )}" target="_blank" rel="noopener noreferrer">查看接口文档</a>（默认仅支持官方域名，不要包含 <code>/v1</code>）`;
 }
 
-function parseOptionalBaseUrl(raw: string): string | undefined {
+function isPrivateOrLocalHost(hostname: string): boolean {
+  let host = hostname.trim().toLowerCase();
+  if (!host) return false;
+
+  if (host.startsWith('[') && host.endsWith(']')) {
+    host = host.slice(1, -1);
+  }
+
+  if (host === 'localhost' || host === '::1') return true;
+
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const octets = ipv4Match.slice(1).map((s) => Number.parseInt(s, 10));
+    if (octets.some((o) => !Number.isFinite(o) || o < 0 || o > 255)) return true;
+    const [a, b] = octets;
+    if (a === 127) return true;
+    if (a === 10) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    return false;
+  }
+
+  if (host.startsWith('fc') || host.startsWith('fd')) return true;
+  if (host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb')) return true;
+
+  return false;
+}
+
+function parseOptionalBaseUrl(
+  raw: string,
+  options: { allowInsecureHttp: boolean; allowPrivateHosts: boolean }
+): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   let url: URL;
@@ -164,16 +201,26 @@ function parseOptionalBaseUrl(raw: string): string | undefined {
     throw new Error('Base URL 必须是完整 URL（例如 https://api.deepseek.com）');
   }
 
-  if (url.protocol !== 'https:') {
-    throw new Error('Base URL 仅支持 https');
+  if (url.protocol !== 'https:' && !(options.allowInsecureHttp && url.protocol === 'http:')) {
+    throw new Error('Base URL 仅支持 https（或勾选允许 http）');
+  }
+
+  if (!options.allowPrivateHosts && isPrivateOrLocalHost(url.hostname)) {
+    throw new Error('Base URL 不支持 localhost/内网地址（或勾选允许本地/私有地址）');
   }
 
   // Drop query/hash; keep origin + pathname. Trailing slash is fine (core will normalize).
   return `${url.origin}${url.pathname}`;
 }
 
-function ensureAllowedBaseUrl(provider: string, baseUrl: string | undefined, label: string) {
+function ensureAllowedBaseUrl(
+  provider: string,
+  baseUrl: string | undefined,
+  label: string,
+  options: { allowInsecureHttp: boolean; allowPrivateHosts: boolean }
+) {
   if (!baseUrl) return;
+  if (options.allowInsecureHttp || options.allowPrivateHosts) return;
   const allowedOrigin = new URL(getProviderBaseUrlMeta(provider).defaultBaseUrl).origin;
   const origin = new URL(baseUrl).origin;
   if (origin !== allowedOrigin) {
@@ -272,6 +319,8 @@ async function loadSettings() {
     'apiKey',
     'provider',
     'baseUrl',
+    'allowInsecureHttp',
+    'allowPrivateHosts',
     'model',
     'styles',
     'language',
@@ -285,6 +334,8 @@ async function loadSettings() {
     'maxTotalChars',
     'fallbackProvider',
     'fallbackBaseUrl',
+    'fallbackAllowInsecureHttp',
+    'fallbackAllowPrivateHosts',
     'fallbackModel',
     'fallbackApiKey',
     'enableFallback',
@@ -304,6 +355,8 @@ async function loadSettings() {
   if (typeof result.baseUrl === 'string') {
     baseUrlInput.value = result.baseUrl;
   }
+  allowInsecureHttpCheckbox.checked = Boolean(result.allowInsecureHttp);
+  allowPrivateHostsCheckbox.checked = Boolean(result.allowPrivateHosts);
 
   if (typeof result.model === 'string') {
     modelInput.value = result.model;
@@ -318,6 +371,8 @@ async function loadSettings() {
   if (typeof result.fallbackBaseUrl === 'string') {
     fallbackBaseUrlInput.value = result.fallbackBaseUrl;
   }
+  fallbackAllowInsecureHttpCheckbox.checked = Boolean(result.fallbackAllowInsecureHttp);
+  fallbackAllowPrivateHostsCheckbox.checked = Boolean(result.fallbackAllowPrivateHosts);
 
   if (typeof result.fallbackModel === 'string') {
     fallbackModelInput.value = result.fallbackModel;
@@ -376,6 +431,8 @@ saveBtn.addEventListener('click', async () => {
   const apiKey = apiKeyInput.value.trim();
   const provider = providerSelect.value;
   const baseUrlRaw = baseUrlInput.value;
+  const allowInsecureHttp = allowInsecureHttpCheckbox.checked;
+  const allowPrivateHosts = allowPrivateHostsCheckbox.checked;
   const model = modelInput.value.trim();
   const persistApiKey = persistApiKeyCheckbox.checked;
   const enableMemory = enableMemoryCheckbox.checked;
@@ -391,6 +448,8 @@ saveBtn.addEventListener('click', async () => {
   const enableFallback = enableFallbackCheckbox.checked;
   const fallbackProvider = fallbackProviderSelect.value;
   const fallbackBaseUrlRaw = fallbackBaseUrlInput.value;
+  const fallbackAllowInsecureHttp = fallbackAllowInsecureHttpCheckbox.checked;
+  const fallbackAllowPrivateHosts = fallbackAllowPrivateHostsCheckbox.checked;
   const fallbackModel = fallbackModelInput.value.trim();
   const fallbackApiKey = fallbackApiKeyInput.value.trim();
   const suggestionCount = Number(suggestionCountSelect.value);
@@ -398,18 +457,26 @@ saveBtn.addEventListener('click', async () => {
   let baseUrl: string | undefined;
   let fallbackBaseUrl: string | undefined;
   try {
-    baseUrl = parseOptionalBaseUrl(baseUrlRaw);
-    fallbackBaseUrl = enableFallback ? parseOptionalBaseUrl(fallbackBaseUrlRaw) : undefined;
+    baseUrl = parseOptionalBaseUrl(baseUrlRaw, { allowInsecureHttp, allowPrivateHosts });
+    fallbackBaseUrl = enableFallback
+      ? parseOptionalBaseUrl(fallbackBaseUrlRaw, {
+          allowInsecureHttp: fallbackAllowInsecureHttp,
+          allowPrivateHosts: fallbackAllowPrivateHosts,
+        })
+      : undefined;
   } catch (err) {
     alert((err as Error).message);
     return;
   }
 
   try {
-    ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL');
+    ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL', { allowInsecureHttp, allowPrivateHosts });
     if (enableFallback) {
       const fallbackProviderForValidation = fallbackProvider || provider;
-      ensureAllowedBaseUrl(fallbackProviderForValidation, fallbackBaseUrl, '备用 Base URL');
+      ensureAllowedBaseUrl(fallbackProviderForValidation, fallbackBaseUrl, '备用 Base URL', {
+        allowInsecureHttp: fallbackAllowInsecureHttp,
+        allowPrivateHosts: fallbackAllowPrivateHosts,
+      });
     }
   } catch (err) {
     alert((err as Error).message);
@@ -453,6 +520,8 @@ saveBtn.addEventListener('click', async () => {
     apiKey,
     provider,
     baseUrl,
+    allowInsecureHttp,
+    allowPrivateHosts,
     model,
     styles,
     language: language === 'zh' || language === 'en' || language === 'auto' ? language : 'auto',
@@ -469,6 +538,8 @@ saveBtn.addEventListener('click', async () => {
     enableFallback,
     fallbackProvider,
     fallbackBaseUrl: enableFallback ? fallbackBaseUrl : undefined,
+    fallbackAllowInsecureHttp,
+    fallbackAllowPrivateHosts,
     fallbackModel,
     fallbackApiKey,
     suggestionCount,

@@ -375,6 +375,22 @@
       <small id="baseUrlHint" class="muted">留空则使用默认；仅支持官方域名；不要包含 <code>/v1</code></small>
     </div>
 
+    <div class="form-group inline">
+      <label for="allowInsecureHttp" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="allowInsecureHttp">
+        允许 http Base URL
+      </label>
+      <small>仅用于本地代理或测试环境（可能降低安全性）</small>
+    </div>
+
+    <div class="form-group inline">
+      <label for="allowPrivateHosts" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="allowPrivateHosts">
+        允许本地/私有地址
+      </label>
+      <small>用于访问 localhost 或内网代理</small>
+    </div>
+
     <div class="form-group">
       <label for="model">模型名称（可选）</label>
       <input type="text" id="model" placeholder="例如：deepseek-v3.2" list="modelSuggestions" autocomplete="off">
@@ -491,6 +507,22 @@
         <label for="fallbackBaseUrl">备用 Base URL（可选）</label>
         <input type="text" id="fallbackBaseUrl" placeholder="例如：https://api.deepseek.com" autocomplete="off">
         <small id="fallbackBaseUrlHint" class="muted">留空则使用默认；仅支持官方域名；不要包含 <code>/v1</code></small>
+      </div>
+
+      <div class="form-group inline">
+        <label for="fallbackAllowInsecureHttp" style="margin: 0; font-weight: 600;">
+          <input type="checkbox" id="fallbackAllowInsecureHttp">
+          允许备用 http Base URL
+        </label>
+        <small>仅用于本地代理或测试环境</small>
+      </div>
+
+      <div class="form-group inline">
+        <label for="fallbackAllowPrivateHosts" style="margin: 0; font-weight: 600;">
+          <input type="checkbox" id="fallbackAllowPrivateHosts">
+          允许备用本地/私有地址
+        </label>
+        <small>用于访问备用 localhost 或内网代理</small>
       </div>
 
       <div class="form-group">

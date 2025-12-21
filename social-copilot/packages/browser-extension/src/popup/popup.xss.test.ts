@@ -7,6 +7,8 @@ function setupDom() {
     <select id="provider"></select>
     <input id="baseUrl" />
     <div id="baseUrlHint"></div>
+    <input id="allowInsecureHttp" type="checkbox" />
+    <input id="allowPrivateHosts" type="checkbox" />
     <input id="model" />
     <div id="modelHint"></div>
     <datalist id="modelSuggestions"></datalist>
@@ -28,6 +30,8 @@ function setupDom() {
     <select id="fallbackProvider"></select>
     <input id="fallbackBaseUrl" />
     <div id="fallbackBaseUrlHint"></div>
+    <input id="fallbackAllowInsecureHttp" type="checkbox" />
+    <input id="fallbackAllowPrivateHosts" type="checkbox" />
     <input id="fallbackModel" />
     <div id="fallbackModelHint"></div>
     <datalist id="fallbackModelSuggestions"></datalist>
