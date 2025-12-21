@@ -17,64 +17,60 @@ export class StylePreferenceManager {
    */
   async recordStyleSelection(contactKey: ContactKey, style: ReplyStyle): Promise<void> {
     const contactKeyStr = contactKeyToString(contactKey);
-    const existing = await this.store.getStylePreference(contactKey);
-    const now = Date.now();
+    await this.store.updateStylePreference(contactKey, (existing) => {
+      const now = Date.now();
 
-    let styleHistory: StyleHistoryEntry[];
-    let defaultStyle: ReplyStyle | null;
+      let styleHistory: StyleHistoryEntry[];
+      let defaultStyle: ReplyStyle | null;
 
-    if (existing) {
-      styleHistory = [...existing.styleHistory];
-      defaultStyle = existing.defaultStyle;
+      if (existing) {
+        styleHistory = [...existing.styleHistory];
+        defaultStyle = existing.defaultStyle;
 
-      // Find existing entry for this style
-      const entryIndex = styleHistory.findIndex(e => e.style === style);
-      
-      if (entryIndex >= 0) {
-        // Update existing entry
-        styleHistory[entryIndex] = {
-          ...styleHistory[entryIndex],
-          count: styleHistory[entryIndex].count + 1,
-          lastUsed: now,
-        };
+        const entryIndex = styleHistory.findIndex((e) => e.style === style);
+
+        if (entryIndex >= 0) {
+          styleHistory[entryIndex] = {
+            ...styleHistory[entryIndex],
+            count: styleHistory[entryIndex].count + 1,
+            lastUsed: now,
+          };
+        } else {
+          styleHistory.push({
+            style,
+            count: 1,
+            lastUsed: now,
+          });
+        }
       } else {
-        // Add new entry
-        styleHistory.push({
-          style,
-          count: 1,
-          lastUsed: now,
-        });
+        styleHistory = [
+          {
+            style,
+            count: 1,
+            lastUsed: now,
+          },
+        ];
+        defaultStyle = null;
       }
-    } else {
-      // Create new preference
-      styleHistory = [{
-        style,
-        count: 1,
-        lastUsed: now,
-      }];
-      defaultStyle = null;
-    }
 
-    // Check if any style should become the default
-    const topEntry = styleHistory
-      .filter(e => e.count >= DEFAULT_STYLE_THRESHOLD)
-      .reduce<StyleHistoryEntry | null>((top, entry) => {
-        if (!top) return entry;
-        if (entry.count > top.count) return entry;
-        if (entry.count === top.count && entry.lastUsed > top.lastUsed) return entry;
-        return top;
-      }, null);
+      const topEntry = styleHistory
+        .filter((e) => e.count >= DEFAULT_STYLE_THRESHOLD)
+        .reduce<StyleHistoryEntry | null>((top, entry) => {
+          if (!top) return entry;
+          if (entry.count > top.count) return entry;
+          if (entry.count === top.count && entry.lastUsed > top.lastUsed) return entry;
+          return top;
+        }, null);
 
-    defaultStyle = topEntry ? topEntry.style : defaultStyle;
+      defaultStyle = topEntry ? topEntry.style : defaultStyle;
 
-    const preference: StylePreference = {
-      contactKeyStr,
-      styleHistory,
-      defaultStyle,
-      updatedAt: now,
-    };
-
-    await this.store.saveStylePreference(preference);
+      return {
+        contactKeyStr: existing?.contactKeyStr ?? contactKeyStr,
+        styleHistory,
+        defaultStyle,
+        updatedAt: now,
+      } satisfies StylePreference;
+    });
   }
 
   /**

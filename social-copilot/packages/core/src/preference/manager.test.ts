@@ -141,6 +141,45 @@ describe('StylePreferenceManager', () => {
     expect(preference?.defaultStyle).toBe('caring');
   });
 
+  test('concurrent style selections do not lose updates', async () => {
+    const contactKey = fc.sample(contactKeyArb, { numRuns: 1 })[0];
+    const selections = 50;
+
+    await Promise.all(
+      Array.from({ length: selections }, () => manager.recordStyleSelection(contactKey, 'humorous'))
+    );
+
+    const preference = await manager.getPreference(contactKey);
+    const humorousCount = preference?.styleHistory.find((e) => e.style === 'humorous')?.count ?? 0;
+    expect(humorousCount).toBe(selections);
+    expect(preference?.defaultStyle).toBe('humorous');
+  });
+
+  test('concurrent mixed style selections preserve per-style counts', async () => {
+    const contactKey = fc.sample(contactKeyArb, { numRuns: 1 })[0];
+    const humorousSelections = 20;
+    const caringSelections = 7;
+
+    const ops: Array<() => Promise<void>> = [];
+    for (let i = 0; i < humorousSelections; i++) {
+      ops.push(() => manager.recordStyleSelection(contactKey, 'humorous'));
+      if (i < caringSelections) {
+        ops.push(() => manager.recordStyleSelection(contactKey, 'caring'));
+      }
+    }
+
+    await Promise.all(ops.map((op) => op()));
+
+    const preference = await manager.getPreference(contactKey);
+    expect(preference).toBeTruthy();
+
+    const humorousCount = preference?.styleHistory.find((e) => e.style === 'humorous')?.count ?? 0;
+    const caringCount = preference?.styleHistory.find((e) => e.style === 'caring')?.count ?? 0;
+    expect(humorousCount).toBe(humorousSelections);
+    expect(caringCount).toBe(caringSelections);
+    expect(preference?.defaultStyle).toBe('humorous');
+  });
+
   /**
    * **Feature: experience-optimization, Property 13: Reset preserves non-preference data**
    * **Validates: Requirements 5.3**
