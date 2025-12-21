@@ -1,3 +1,5 @@
+import { escapeHtml } from '../utils/escape-html';
+
 const styleLabelMap: Record<string, string> = {
   humorous: '😄 幽默',
   caring: '💗 关心',
@@ -8,15 +10,6 @@ const styleLabelMap: Record<string, string> = {
 
 export function getStyleLabel(style: string): string {
   return styleLabelMap[style] || style;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 export function renderStyleStats(

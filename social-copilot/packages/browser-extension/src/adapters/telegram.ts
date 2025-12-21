@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { buildMessageId, parseTimestampFromText, queryFirst } from './base';
+import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
 
 /**
  * Telegram Web 适配器
@@ -16,6 +16,15 @@ export class TelegramAdapter implements PlatformAdapter {
   private isDisposed = false;
   private setupTimeoutId: number | null = null;
   private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
+
+  private isDev(): boolean {
+    return (
+      (typeof process !== 'undefined' &&
+        typeof process.env !== 'undefined' &&
+        process.env.NODE_ENV === 'development') ||
+      (typeof process === 'undefined' && typeof location !== 'undefined' && location.hostname === 'localhost')
+    );
+  }
 
   // K 版本选择器
   private readonly selectorsK = {
@@ -93,7 +102,10 @@ export class TelegramAdapter implements PlatformAdapter {
     } else {
       this.version = 'k';
     }
-    console.log(`[Social Copilot] Detected Telegram Web version: ${this.version}`);
+    if (this.isDev()) {
+      // eslint-disable-next-line no-console
+      console.log(`[Social Copilot] Detected Telegram Web version: ${this.version}`);
+    }
   }
 
   extractContactKey(): ContactKey | null {
@@ -201,13 +213,10 @@ export class TelegramAdapter implements PlatformAdapter {
 
     input.focus();
 
-    if (input.getAttribute('contenteditable') === 'true') {
-      input.textContent = text;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
-    } else if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-      input.value = text;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }
+    const updated = setEditableText(input, text);
+    if (!updated) return false;
+
+    dispatchInputLikeEvent(input, text);
 
     return true;
   }
@@ -238,8 +247,10 @@ export class TelegramAdapter implements PlatformAdapter {
         if (this.isDisposed) return;
         
         for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (node instanceof HTMLElement) {
+          try {
+            for (const node of mutation.addedNodes) {
+              if (!(node instanceof HTMLElement)) continue;
+
               const messageEls = node.matches(this.selectors.message)
                 ? [node]
                 : Array.from(node.querySelectorAll(this.selectors.message));
@@ -250,16 +261,25 @@ export class TelegramAdapter implements PlatformAdapter {
               if (!contactKey) continue;
 
               for (const messageEl of messageEls) {
-                const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
-                if (message) callback(message);
+                try {
+                  const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
+                  if (message) callback(message);
+                } catch (error) {
+                  console.error('[Social Copilot] Telegram onNewMessage callback error:', error);
+                }
               }
             }
+          } catch (error) {
+            console.error('[Social Copilot] Telegram MutationObserver error:', error);
           }
         }
       });
 
       this.observer.observe(container, { childList: true, subtree: true });
-      console.log('[Social Copilot] Message observer started');
+      if (this.isDev()) {
+        // eslint-disable-next-line no-console
+        console.log('[Social Copilot] Message observer started');
+      }
     };
 
     setupObserver();

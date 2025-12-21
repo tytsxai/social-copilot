@@ -1,5 +1,7 @@
 import type { ThoughtCard, ThoughtType } from '@social-copilot/core';
 
+const MAX_CARDS = 6;
+
 export interface ThoughtCardsOptions {
   onSelect: (thought: ThoughtType | null) => void;
 }
@@ -10,6 +12,7 @@ export interface ThoughtCardsOptions {
  */
 export class ThoughtCardsComponent {
   private container: HTMLElement | null = null;
+  private parentElement: HTMLElement | null = null;
   private cards: ThoughtCard[] = [];
   private selectedThought: ThoughtType | null = null;
   private options: ThoughtCardsOptions;
@@ -25,8 +28,16 @@ export class ThoughtCardsComponent {
    * 渲染思路卡片到指定容器
    */
   render(parentElement: HTMLElement): void {
+    this.parentElement = parentElement;
+
     if (this.container) {
+      this.unbindEvents();
       this.container.remove();
+      this.container = null;
+    }
+
+    if (this.cards.length === 0) {
+      return;
     }
 
     this.container = document.createElement('div');
@@ -41,8 +52,9 @@ export class ThoughtCardsComponent {
    * 更新可用的思路卡片
    */
   setCards(cards: ThoughtCard[]): void {
-    this.cards = cards;
-    const availableTypes = new Set(cards.map((card) => card.type));
+    const truncatedCards = cards.slice(0, MAX_CARDS);
+    this.cards = truncatedCards;
+    const availableTypes = new Set(truncatedCards.map((card) => card.type));
 
     // 如果当前选中的思路不再可用，则重置选择
     // 注意：当 cards 为空时，代表“暂无推荐”，不应清除用户的历史选择。
@@ -88,6 +100,7 @@ export class ThoughtCardsComponent {
     this.unbindEvents();
     this.container?.remove();
     this.container = null;
+    this.parentElement = null;
   }
 
   private renderCards(): string {
@@ -116,7 +129,23 @@ export class ThoughtCardsComponent {
   }
 
   private update(): void {
-    if (!this.container) return;
+    if (this.cards.length === 0) {
+      if (this.container) {
+        this.unbindEvents();
+        this.container.remove();
+        this.container = null;
+      }
+      return;
+    }
+
+    if (!this.container) {
+      if (!this.parentElement) return;
+      this.container = document.createElement('div');
+      this.container.className = 'sc-thought-cards';
+      this.parentElement.insertBefore(this.container, this.parentElement.firstChild);
+      this.bindEvents();
+    }
+
     this.container.innerHTML = this.renderCards();
   }
 

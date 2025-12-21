@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    environmentMatchGlobs: [
+      ['src/ui/**/*.{test,spec}.ts', 'jsdom'],
+    ],
     setupFiles: [],
     coverage: {
       provider: 'v8',

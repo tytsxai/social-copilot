@@ -4,6 +4,36 @@ import { CopilotUI } from '../ui/copilot-ui';
 
 export type SupportedApp = 'telegram' | 'whatsapp' | 'slack';
 
+const DEFAULT_SEND_MESSAGE_TIMEOUT_MS = 30_000;
+
+class SendMessageTimeoutError extends Error {
+  readonly name = 'SendMessageTimeoutError';
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Background did not respond within ${timeoutMs}ms`);
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+function sendMessageWithTimeout<TResponse = unknown>(
+  // `chrome.runtime.sendMessage` has many overloads (extensionId, options, etc).
+  // Content scripts in this project always use the 1-arg form: `sendMessage(message)`.
+  message: unknown,
+  timeoutMs: number = DEFAULT_SEND_MESSAGE_TIMEOUT_MS
+): Promise<TResponse> {
+  let timer: number | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new SendMessageTimeoutError(timeoutMs)), timeoutMs);
+  });
+
+  const sendPromise = chrome.runtime.sendMessage(message as any) as Promise<TResponse>;
+  return Promise.race([sendPromise, timeoutPromise]).finally(() => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  });
+}
+
 export interface CopilotContentScriptOptions {
   app: SupportedApp;
   adapter: PlatformAdapter;
@@ -218,7 +248,7 @@ export class CopilotContentScript {
       const stack = typeof err.stack === 'string' ? err.stack.slice(0, 4000) : undefined;
       if (!this.isLikelyExtensionError(meta.filename, stack)) return;
 
-      void chrome.runtime.sendMessage({
+      void sendMessageWithTimeout({
         type: 'REPORT_CONTENT_SCRIPT_ERROR',
         payload: {
           app: this.options.app,
@@ -233,7 +263,7 @@ export class CopilotContentScript {
           message,
           stack,
         },
-      });
+      }).catch(() => {});
     } catch {
       // ignore
     }
@@ -326,7 +356,7 @@ export class CopilotContentScript {
         return 'other';
       };
 
-      void chrome.runtime.sendMessage({
+      void sendMessageWithTimeout({
         type: 'REPORT_ADAPTER_HEALTH',
         payload: {
           app: this.options.app,
@@ -364,7 +394,7 @@ export class CopilotContentScript {
               }
             : null,
         },
-      });
+      }).catch(() => {});
 
       if (!ok) {
         this.ui.setError(this.options.adapterBrokenMessage);
@@ -582,7 +612,7 @@ export class CopilotContentScript {
     this.pendingPrivacyAckGenerate = null;
 
     try {
-      await chrome.runtime.sendMessage({ type: 'ACK_PRIVACY' });
+      await sendMessageWithTimeout({ type: 'ACK_PRIVACY' });
     } catch {
       // Fallback: best-effort persist flag locally (background may still reject if not synced).
       try {
@@ -603,7 +633,7 @@ export class CopilotContentScript {
     if (epoch !== this.conversationEpoch) return;
 
     try {
-      const analyzeResponse = await chrome.runtime.sendMessage({
+      const analyzeResponse = await sendMessageWithTimeout<{ cards?: ThoughtCard[] }>({
         type: 'ANALYZE_THOUGHT',
         payload: {
           context: {
@@ -615,7 +645,7 @@ export class CopilotContentScript {
       });
 
       if (!this.isDestroyed && epoch === this.conversationEpoch && analyzeResponse?.cards) {
-        this.ui.setThoughtCards(analyzeResponse.cards as ThoughtCard[]);
+        this.ui.setThoughtCards(analyzeResponse.cards);
       }
     } catch (error) {
       if (!this.isDestroyed) {
@@ -731,7 +761,13 @@ export class CopilotContentScript {
     const selectedThought = thoughtDirection ?? this.ui.getSelectedThought() ?? undefined;
 
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await sendMessageWithTimeout<{
+        error?: string;
+        candidates?: ReplyCandidate[];
+        provider?: unknown;
+        model?: unknown;
+        usingFallback?: unknown;
+      }>({
         type: 'GENERATE_REPLY',
         payload: {
           contactKey,
@@ -756,7 +792,12 @@ export class CopilotContentScript {
     } catch (error) {
       if (!this.isDestroyed) {
         console.error('[Social Copilot] Failed to generate suggestions:', error);
-        this.ui.setError('生成建议失败');
+        if (error instanceof SendMessageTimeoutError) {
+          this.ui.setError('后台响应超时，请稍后重试');
+        } else {
+          this.ui.setError('生成建议失败');
+        }
+        this.recordAdapterFailure();
       }
     } finally {
       if (token === this.inFlightGenerateToken) {
@@ -777,11 +818,11 @@ export class CopilotContentScript {
     if (this.isDestroyed) return;
 
     if (this.currentContactKey) {
-      void chrome.runtime.sendMessage({
+      void sendMessageWithTimeout<void>({
         type: 'RECORD_STYLE_SELECTION',
         contactKey: this.currentContactKey,
         style: candidate.style,
-      });
+      }).catch(() => {});
     }
 
     const success = this.adapter.fillInput(candidate.text);

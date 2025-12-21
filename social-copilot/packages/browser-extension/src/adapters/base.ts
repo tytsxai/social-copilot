@@ -175,3 +175,83 @@ export function parseTimestampFromText(timeText: string, now: Date = new Date())
   // but may reduce chronological accuracy on some UIs.
   return Date.now();
 }
+
+export function setEditableText(element: Element | null, text: string): boolean {
+  if (!element) return false;
+
+  try {
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+      element.value = text;
+      return true;
+    }
+
+    if (element instanceof HTMLElement) {
+      const isContentEditable =
+        element.isContentEditable || element.getAttribute('contenteditable') === 'true';
+      if (!isContentEditable) return false;
+
+      const doc = element.ownerDocument;
+      const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+      if (!selection) return false;
+
+      const range = doc.createRange();
+      range.selectNodeContents(element);
+      range.deleteContents();
+
+      const node = doc.createTextNode(text);
+      range.insertNode(node);
+
+      range.setStartAfter(node);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function dispatchInputLikeEvent(element: Element | null, text: string): boolean {
+  if (!element) return false;
+
+  const dispatch = (event: Event): boolean => {
+    try {
+      if (typeof (element as Element).dispatchEvent !== 'function') return false;
+      return (element as Element).dispatchEvent(event);
+    } catch {
+      return false;
+    }
+  };
+
+  const win = element.ownerDocument?.defaultView;
+  const InputEventCtor = win?.InputEvent ?? (typeof InputEvent === 'function' ? InputEvent : undefined);
+  const EventCtor = win?.Event ?? Event;
+
+  if (typeof InputEventCtor === 'function') {
+    try {
+      return dispatch(
+        new InputEventCtor('input', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          data: text,
+          inputType: 'insertText',
+        })
+      );
+    } catch {
+      // Some environments expose InputEvent but don't allow constructing it.
+    }
+  }
+
+  return dispatch(
+    new EventCtor('input', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    })
+  );
+}

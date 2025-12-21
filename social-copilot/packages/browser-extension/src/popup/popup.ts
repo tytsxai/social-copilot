@@ -1,5 +1,7 @@
 import type { ContactKey } from '@social-copilot/core';
 import { renderStyleStats } from './preferences';
+import { parseAndValidateUserDataBackup, validateImportFileSize } from './importUserData';
+import { escapeHtml } from '../utils/escape-html';
 
 // DOM 元素
 const statusEl = document.getElementById('status')!;
@@ -519,7 +521,7 @@ async function loadContacts() {
             <div class="contact-avatar">${escapeHtml(contact.displayName.charAt(0).toUpperCase())}</div>
             <div class="contact-info">
               <div class="contact-name">${escapeHtml(contact.displayName)}</div>
-            <div class="contact-meta">${contact.app} · ${contact.messageCount} 条消息</div>
+            <div class="contact-meta">${escapeHtml(contact.app)} · ${escapeHtml(String(contact.messageCount))} 条消息</div>
             </div>
             <div class="contact-actions">
               <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
@@ -531,7 +533,7 @@ async function loadContacts() {
             ${renderStyleStats(contact.preference)}
           </div>
           <div class="memory-box">
-            <div class="memory-title">长期记忆${contact.memoryUpdatedAt ? ` <span class="muted">(${new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10)})</span>` : ''}</div>
+            <div class="memory-title">长期记忆${contact.memoryUpdatedAt ? ` <span class="muted">(${escapeHtml(new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10))})</span>` : ''}</div>
             <div class="memory-text">${contact.memorySummary ? escapeHtml(contact.memorySummary) : '<span class="muted">暂无长期记忆</span>'}</div>
           </div>
         </div>
@@ -633,8 +635,9 @@ importUserDataFile.addEventListener('change', async () => {
   }
 
   try {
+    validateImportFileSize(file.size);
     const text = await file.text();
-    const data = JSON.parse(text);
+    const data = parseAndValidateUserDataBackup(text);
     const res = await chrome.runtime.sendMessage({ type: 'IMPORT_USER_DATA', data });
     if (!res?.success) {
       statusEl.className = 'status warning';
@@ -750,12 +753,6 @@ clearDiagnosticsBtn.addEventListener('click', async () => {
     statusEl.textContent = `⚠ 清空失败：${(err as Error).message}`;
   }
 });
-
-function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
 
 // 初始化
 checkStatus();

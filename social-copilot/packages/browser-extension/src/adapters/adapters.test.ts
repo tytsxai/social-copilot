@@ -1,10 +1,38 @@
 // @vitest-environment jsdom
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { contactKeyToString } from '@social-copilot/core';
 import { TelegramAdapter } from './telegram';
 import { WhatsAppAdapter } from './whatsapp';
 import { SlackAdapter } from './slack';
-import { queryFirst } from './base';
+import { queryFirst, setEditableText } from './base';
+
+function mockWindowLocation(url: string): () => void {
+  const realLocation = window.location;
+  const parsed = new URL(url);
+  const mockLocation = {
+    hostname: parsed.hostname,
+    pathname: parsed.pathname,
+    hash: parsed.hash,
+    search: parsed.search,
+    href: parsed.href,
+    origin: parsed.origin,
+    protocol: parsed.protocol,
+    host: parsed.host,
+    port: parsed.port,
+    assign: vi.fn(),
+    replace: vi.fn(),
+    reload: vi.fn(),
+    toString: () => parsed.href,
+  } as unknown as Location;
+
+  Object.defineProperty(window, 'location', { value: mockLocation, configurable: true });
+  Object.defineProperty(globalThis, 'location', { value: mockLocation, configurable: true });
+
+  return () => {
+    Object.defineProperty(window, 'location', { value: realLocation, configurable: true });
+    Object.defineProperty(globalThis, 'location', { value: realLocation, configurable: true });
+  };
+}
 
 function createMemoryStorage(): Storage {
   const data = new Map<string, string>();
@@ -38,7 +66,86 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/');
 });
 
+describe('Platform adapters: isMatch() URL matching', () => {
+  test('Telegram: matches web.telegram.org and detects version from pathname', () => {
+    {
+      const restore = mockWindowLocation('https://web.telegram.org/a/#@alice');
+      document.body.innerHTML = `<div id="editable-message-text" contenteditable="true"></div>`;
+
+      const adapter = new TelegramAdapter();
+      expect(adapter.isMatch()).toBe(true);
+      expect(adapter.fillInput('test')).toBe(true);
+      expect(document.querySelector('#editable-message-text')?.textContent).toBe('test');
+      restore();
+    }
+
+    {
+      const restore = mockWindowLocation('https://web.telegram.org/k/#@alice');
+      document.body.innerHTML = `<div class="input-message-input" contenteditable="true"></div>`;
+
+      const adapter = new TelegramAdapter();
+      expect(adapter.isMatch()).toBe(true);
+      expect(adapter.fillInput('test')).toBe(true);
+      expect(document.querySelector('.input-message-input')?.textContent).toBe('test');
+      restore();
+    }
+
+    {
+      const restore = mockWindowLocation('https://example.com/k/#@alice');
+      const adapter = new TelegramAdapter();
+      expect(adapter.isMatch()).toBe(false);
+      restore();
+    }
+  });
+
+  test('WhatsApp: matches web.whatsapp.com', () => {
+    {
+      const restore = mockWindowLocation('https://web.whatsapp.com/');
+      expect(new WhatsAppAdapter().isMatch()).toBe(true);
+      restore();
+    }
+    {
+      const restore = mockWindowLocation('https://example.com/');
+      expect(new WhatsAppAdapter().isMatch()).toBe(false);
+      restore();
+    }
+  });
+
+  test('Slack: matches app.slack.com', () => {
+    {
+      const restore = mockWindowLocation('https://app.slack.com/client/T123/C456');
+      expect(new SlackAdapter().isMatch()).toBe(true);
+      restore();
+    }
+    {
+      const restore = mockWindowLocation('https://example.com/client/T123/C456');
+      expect(new SlackAdapter().isMatch()).toBe(false);
+      restore();
+    }
+  });
+});
+
 describe('Platform adapters (contract)', () => {
+  test('fillInput returns false when input box is missing', () => {
+    // Telegram
+    document.body.innerHTML = `<div class="chat-info"><div class="peer-title">Alice</div></div>`;
+    expect(new TelegramAdapter().fillInput('x')).toBe(false);
+
+    // WhatsApp (legacy selectors)
+    document.body.innerHTML = `
+      <div id="main">
+        <header><div title="Bob"></div></header>
+        <footer></footer>
+      </div>
+    `;
+    expect(new WhatsAppAdapter().fillInput('x')).toBe(false);
+
+    // Slack
+    window.history.replaceState({}, '', '/client/T123/C456');
+    document.body.innerHTML = `<div data-qa="channel_name">general</div>`;
+    expect(new SlackAdapter().fillInput('x')).toBe(false);
+  });
+
   test('Telegram: stable contactKey + message ids + fillInput', () => {
     window.location.hash = '#@alice';
     document.body.innerHTML = `
@@ -148,8 +255,12 @@ describe('Platform adapters (contract)', () => {
     expect(contactKey).not.toBeNull();
     expect(contactKey!.conversationId).toBe('222@g.us');
 
+    const execCommandSpy = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { value: execCommandSpy, configurable: true });
+
     const ok = adapter.fillInput('hello!');
     expect(ok).toBe(true);
+    expect(execCommandSpy).not.toHaveBeenCalled();
     expect(document.querySelector('#main [data-testid="conversation-compose-box-input"]')?.textContent).toBe('hello!');
   });
 
@@ -206,6 +317,182 @@ describe('Platform adapters (contract)', () => {
     expect(ok).toBe(true);
     expect(document.querySelector('[data-qa="message_input"] [role="textbox"]')?.textContent).toBe('ping');
   });
+
+  test('Slack: getCurrentUserId reads from meta tag (outgoing detection)', () => {
+    window.history.replaceState({}, '', '/client/T123/C456');
+    document.head.innerHTML = `<meta name="user_id" content="U2" />`;
+    document.body.innerHTML = `
+      <div data-qa="channel_name">general</div>
+      <div class="c-virtual_list__scroll_container">
+        <div data-qa="message_container" data-sender-id="U2">
+          <span data-qa="message_sender_name">Bob</span>
+          <div class="c-message__body">Hello</div>
+          <span data-qa="message_time">12:34 PM</span>
+        </div>
+      </div>
+    `;
+
+    const adapter = new SlackAdapter();
+    const messages = adapter.extractMessages(10);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].direction).toBe('outgoing');
+    expect(messages[0].senderName).toBe('我');
+  });
+
+  test('Slack: getCurrentUserId reads from localStorage (outgoing detection)', () => {
+    window.history.replaceState({}, '', '/client/T123/C456');
+    localStorage.setItem('localConfig_v2', JSON.stringify({ user_id: 'U2' }));
+    document.body.innerHTML = `
+      <div data-qa="channel_name">general</div>
+      <div class="c-virtual_list__scroll_container">
+        <div data-qa="message_container" data-sender-id="U2">
+          <span data-qa="message_sender_name">Bob</span>
+          <div class="c-message__body">Hello</div>
+          <span data-qa="message_time">12:34 PM</span>
+        </div>
+      </div>
+    `;
+
+    const adapter = new SlackAdapter();
+    const messages = adapter.extractMessages(10);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].direction).toBe('outgoing');
+    expect(messages[0].senderName).toBe('我');
+  });
+});
+
+describe('Platform adapters: MutationObserver error isolation', () => {
+  test('Slack: callback throw does not break subsequent messages', async () => {
+    const restore = mockWindowLocation('https://app.slack.com/client/T123/C456');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    document.body.innerHTML = `
+      <div data-qa="channel_name">general</div>
+      <div class="c-virtual_list__scroll_container" id="container"></div>
+    `;
+
+    const adapter = new SlackAdapter();
+    const received: string[] = [];
+    const dispose = adapter.onNewMessage((msg) => {
+      if (msg.text === 'first') throw new Error('boom');
+      received.push(msg.text);
+    });
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <div data-qa="message_container" data-qa-message-id="m1">
+        <div class="c-message__body">first</div>
+        <span data-qa="message_time">12:34</span>
+        <span data-qa="message_sender_name">Alice</span>
+      </div>
+      <div data-qa="message_container" data-qa-message-id="m2">
+        <div class="c-message__body">second</div>
+        <span data-qa="message_time">12:35</span>
+        <span data-qa="message_sender_name">Alice</span>
+      </div>
+    `;
+    document.querySelector('#container')!.appendChild(wrapper);
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(received).toEqual(['second']);
+    expect(consoleError).toHaveBeenCalled();
+
+    dispose();
+    consoleError.mockRestore();
+    restore();
+  });
+
+  test('Telegram: callback throw does not break subsequent messages', async () => {
+    const restore = mockWindowLocation('https://web.telegram.org/k/#@alice');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    window.location.hash = '#@alice';
+    document.body.innerHTML = `
+      <div class="chat-info">
+        <div class="peer-title">Alice</div>
+        <div class="info"><div class="subtitle"></div></div>
+      </div>
+      <div class="bubbles-inner" id="container"></div>
+    `;
+
+    const adapter = new TelegramAdapter();
+    const received: string[] = [];
+    const dispose = adapter.onNewMessage((msg) => {
+      if (msg.text === 'first') throw new Error('boom');
+      received.push(msg.text);
+    });
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <div class="message" data-mid="123">
+        <div class="text-content">first</div>
+        <span class="time">12:34</span>
+      </div>
+      <div class="message" data-mid="124">
+        <div class="text-content">second</div>
+        <span class="time">12:35</span>
+      </div>
+    `;
+    document.querySelector('#container')!.appendChild(wrapper);
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(received).toEqual(['second']);
+    expect(consoleError).toHaveBeenCalled();
+
+    dispose();
+    consoleError.mockRestore();
+    restore();
+  });
+
+  test('WhatsApp: callback throw does not break subsequent messages', async () => {
+    const restore = mockWindowLocation('https://web.whatsapp.com/');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    localStorage.setItem('last-wid', '"111@c.us"');
+    document.body.innerHTML = `
+      <div id="main">
+        <header>
+          <div title="Bob"></div>
+          <span title="participants"></span>
+        </header>
+        <div class="copyable-area">
+          <div role="application" id="container"></div>
+        </div>
+        <footer><div contenteditable="true"></div></footer>
+      </div>
+    `;
+
+    const adapter = new WhatsAppAdapter();
+    const received: string[] = [];
+    const dispose = adapter.onNewMessage((msg) => {
+      if (msg.text === 'first') throw new Error('boom');
+      received.push(msg.text);
+    });
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <div data-id="false_222@g.us_ABC" class="message-in">
+        <div class="copyable-text"><span class="selectable-text">first</span></div>
+        <div data-pre-plain-text="[12:34, 12/14/2025] Alice: "></div>
+      </div>
+      <div data-id="false_222@g.us_DEF" class="message-in">
+        <div class="copyable-text"><span class="selectable-text">second</span></div>
+        <div data-pre-plain-text="[12:35, 12/14/2025] Alice: "></div>
+      </div>
+    `;
+    document.querySelector('#container')!.appendChild(wrapper);
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(received).toEqual(['second']);
+    expect(consoleError).toHaveBeenCalled();
+
+    dispose();
+    consoleError.mockRestore();
+    restore();
+  });
 });
 
 describe('queryFirst()', () => {
@@ -224,5 +511,28 @@ describe('queryFirst()', () => {
 
     expect(() => queryFirst(['div[', 'span['])).not.toThrow();
     expect(queryFirst(['div[', 'span['])).toBeNull();
+  });
+});
+
+describe('setEditableText()', () => {
+  test('sets input/textarea value', () => {
+    const input = document.createElement('input');
+    input.value = 'old';
+    expect(setEditableText(input, 'new')).toBe(true);
+    expect(input.value).toBe('new');
+
+    const textarea = document.createElement('textarea');
+    textarea.value = 'a';
+    expect(setEditableText(textarea, 'b')).toBe(true);
+    expect(textarea.value).toBe('b');
+  });
+
+  test('inserts plain text into contenteditable via Selection/Range', () => {
+    document.body.innerHTML = `<div id="ed" contenteditable="true"><span>old</span></div>`;
+    const el = document.getElementById('ed')!;
+
+    expect(setEditableText(el, '<b>hi</b>')).toBe(true);
+    expect(el.textContent).toBe('<b>hi</b>');
+    expect(el.querySelector('b')).toBeNull();
   });
 });

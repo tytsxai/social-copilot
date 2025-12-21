@@ -1,6 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
-import { buildMessageId, parseTimestampFromText, queryFirst } from './base';
+import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
 
 /**
  * Slack Web 适配器
@@ -14,6 +14,15 @@ export class SlackAdapter implements PlatformAdapter {
   private setupTimeoutId: number | null = null;
   private variant: 'virtual_list' | 'scroller' | 'fallback' = 'virtual_list';
   private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
+
+  private isDev(): boolean {
+    return (
+      (typeof process !== 'undefined' &&
+        typeof process.env !== 'undefined' &&
+        process.env.NODE_ENV === 'development') ||
+      (typeof process === 'undefined' && typeof location !== 'undefined' && location.hostname === 'localhost')
+    );
+  }
 
   private readonly selectors = {
     chatContainer: '.c-virtual_list__scroll_container, .p-message_pane__scroller',
@@ -187,17 +196,9 @@ export class SlackAdapter implements PlatformAdapter {
     input.focus();
 
     // 使用纯文本插入，避免将模型输出作为 HTML 解析
-    input.textContent = '';
-    const inserted = typeof document.execCommand === 'function'
-      ? document.execCommand('insertText', false, text)
-      : false;
-    if (!inserted) {
-      input.textContent = text;
-    }
-    const event = typeof InputEvent === 'function'
-      ? new InputEvent('input', { bubbles: true, data: text })
-      : new Event('input', { bubbles: true });
-    input.dispatchEvent(event);
+    if (!setEditableText(input, text)) return false;
+
+    dispatchInputLikeEvent(input, text);
 
     return true;
   }
@@ -228,8 +229,10 @@ export class SlackAdapter implements PlatformAdapter {
         if (this.isDisposed) return;
         
         for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (node instanceof HTMLElement) {
+          try {
+            for (const node of mutation.addedNodes) {
+              if (!(node instanceof HTMLElement)) continue;
+
               const messageEls = node.matches(this.selectors.message)
                 ? [node]
                 : Array.from(node.querySelectorAll(this.selectors.message));
@@ -240,16 +243,25 @@ export class SlackAdapter implements PlatformAdapter {
               if (!contactKey) continue;
 
               for (const messageEl of messageEls) {
-                const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
-                if (message) callback(message);
+                try {
+                  const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
+                  if (message) callback(message);
+                } catch (error) {
+                  console.error('[Social Copilot] Slack onNewMessage callback error:', error);
+                }
               }
             }
+          } catch (error) {
+            console.error('[Social Copilot] Slack MutationObserver error:', error);
           }
         }
       });
 
       this.observer.observe(container, { childList: true, subtree: true });
-      console.log('[Social Copilot] Slack message observer started');
+      if (this.isDev()) {
+        // eslint-disable-next-line no-console
+        console.log('[Social Copilot] Slack message observer started');
+      }
     };
 
     setupObserver();
