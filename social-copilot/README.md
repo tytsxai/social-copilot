@@ -113,7 +113,7 @@ SC_E2E_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
 ### 移动端（可选）
 
-预览版移动客户端使用 Expo 直连核心 LLM：
+预览版移动客户端使用 Expo 直连核心 LLM（仅限开发预览，生产需改用后端代理）：
 
 ```bash
 # 设置公开环境变量供 Expo 读取

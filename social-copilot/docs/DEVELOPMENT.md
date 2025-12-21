@@ -152,7 +152,7 @@ EXPO_PUBLIC_LLM_MODEL=deepseek-v3.2 \
 pnpm --filter @social-copilot/mobile start
 ```
 
-DevTools 打开后可选择模拟器或使用 Expo Go 扫码运行。必须设置 `EXPO_PUBLIC_LLM_API_KEY`；`EXPO_PUBLIC_LLM_PROVIDER` / `EXPO_PUBLIC_LLM_MODEL` 为可选（也可在 App 内切换）。
+DevTools 打开后可选择模拟器或使用 Expo Go 扫码运行。必须设置 `EXPO_PUBLIC_LLM_API_KEY`；`EXPO_PUBLIC_LLM_PROVIDER` / `EXPO_PUBLIC_LLM_MODEL` 为可选（也可在 App 内切换）。注意：此方式仅适用于开发预览，生产环境请使用后端代理托管密钥。
 
 ---
 

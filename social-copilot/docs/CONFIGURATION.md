@@ -124,7 +124,7 @@
 
 | 变量 | 必填 | 说明 |
 |---|---:|---|
-| `EXPO_PUBLIC_LLM_API_KEY` | 是 | 预览版直连 LLM 的 API Key |
+| `EXPO_PUBLIC_LLM_API_KEY` | 是 | 预览版直连 LLM 的 API Key（仅限开发预览，生产请使用后端代理） |
 | `EXPO_PUBLIC_LLM_PROVIDER` | 否 | `deepseek/openai/claude` |
 | `EXPO_PUBLIC_LLM_MODEL` | 否 | 覆盖默认模型 |
 

@@ -316,6 +316,26 @@ const cache = new LRUCache<string, Reply[]>(100);
 - **jsdom**: 模拟 DOM 环境
 - **fast-check**: 属性测试（边界情况）
 
+### Extension：`fillInput` 实现规范（Selection/Range）
+
+浏览器扩展里，适配器的 `fillInput(text)` 需要在不同类型的输入组件上行为一致，并避免使用已废弃的 `document.execCommand`。
+
+- **优先使用通用工具函数**：`packages/browser-extension/src/adapters/base.ts` 中的 `setEditableText` 与 `dispatchInputLikeEvent`
+- **`input/textarea`**：直接赋值 `value`
+- **`contenteditable`**：使用 Selection/Range API 完成「替换全部文本 + 光标定位到末尾」
+  - `range.selectNodeContents(element)` + `range.deleteContents()` 清空内容
+  - `range.insertNode(textNode)` 插入文本节点
+  - `range.setStartAfter(textNode)` + `range.collapse(true)` 将光标移动到文本末尾
+  - `selection.removeAllRanges()` + `selection.addRange(range)` 应用 selection
+- **事件派发**：设置文本后必须派发 `input`（必要时再派发 `change`），以触发 React/Vue 等框架的状态更新
+  - 事件应为 `bubbles: true`、`composed: true`（跨 shadow root 时可用）
+  - 优先构造 `InputEvent('input', { inputType: 'insertText', data: text })`，不支持时回退到普通 `Event('input')`
+
+建议在 `fillInput` 里遵循以下顺序：
+
+1. `setEditableText(element, text)`（负责写入文本 + caret）
+2. `dispatchInputLikeEvent(element, text)`（负责触发 UI 框架响应）
+
 ### 测试覆盖率要求
 
 - **Core 包**: ≥90%
@@ -410,6 +430,25 @@ pnpm --filter @social-copilot/core test:watch
 # 查看覆盖率
 pnpm test --coverage
 ```
+
+### DOM 测试（jsdom）约定
+
+项目默认测试环境为 `node`，仅在需要 DOM API（`document`、`window`、Selection/Range 等）时启用 `jsdom`。
+
+以 `packages/browser-extension` 为例：
+
+- **默认环境**：`node`（适合纯逻辑、解析、数据处理等测试）
+- **自动启用 jsdom**：`src/ui/**/*.{test,spec}.ts`（由 `packages/browser-extension/vitest.config.ts` 的 `environmentMatchGlobs` 配置决定）
+- **为单个测试文件启用 jsdom**：当测试不在 `src/ui/` 下，但确实需要 DOM 时，使用文件级别声明
+
+```ts
+// @vitest-environment jsdom
+```
+
+建议：
+
+- UI 组件相关测试尽量放在 `packages/browser-extension/src/ui/` 目录下，自动获得 jsdom 环境
+- 适配器/内容脚本测试尽量保持在 `node` 环境；只有确实依赖 DOM 时才启用 jsdom，并尽量用最小 DOM 片段（`document.body.innerHTML = ...`）构造场景
 
 ---
 
