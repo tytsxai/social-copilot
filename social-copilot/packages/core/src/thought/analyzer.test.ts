@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ThoughtAnalyzer } from './analyzer';
+import { DEFAULT_CONFIG, ThoughtAnalyzer } from './analyzer';
 import { ThoughtAwarePromptBuilder } from './prompt-builder';
 import { THOUGHT_CARDS, type ConversationContext, type ThoughtType } from '../types';
 
@@ -40,7 +40,25 @@ describe('ThoughtAnalyzer', () => {
     const analyzer = new ThoughtAnalyzer();
     const result = analyzer.analyze(undefined as unknown as ConversationContext);
 
-    expect(result.recommended[0]).toBe('neutral');
+    expect(result.recommended).toEqual(DEFAULT_CONFIG.defaultOrder);
+    expect(result.confidence).toBe(0);
+  });
+
+  it('returns custom default order when context is missing', () => {
+    const analyzer = new ThoughtAnalyzer({
+      defaultOrder: ['humor', 'solution', 'empathy', 'neutral'],
+    });
+    const result = analyzer.analyze(undefined as unknown as ConversationContext);
+
+    expect(result.recommended).toEqual(['humor', 'solution', 'empathy', 'neutral']);
+    expect(result.confidence).toBe(0);
+  });
+
+  it('accepts partial config (defaultOrder only)', () => {
+    const analyzer = new ThoughtAnalyzer({ defaultOrder: ['solution', 'neutral', 'empathy', 'humor'] });
+    const result = analyzer.analyze(undefined as unknown as ConversationContext);
+
+    expect(result.recommended).toEqual(['solution', 'neutral', 'empathy', 'humor']);
     expect(result.confidence).toBe(0);
   });
 
@@ -54,6 +72,27 @@ describe('ThoughtAnalyzer', () => {
 
     expect(result.recommended[0]).toBe(expected);
     expect(result.confidence).toBeGreaterThanOrEqual(0);
+  });
+
+  it('applies custom keywords and weights', () => {
+    const analyzer = new ThoughtAnalyzer({
+      keywords: { negative: ['foobar'] },
+      weights: { negative: 10, neutralBase: 0 },
+    });
+    const result = analyzer.analyze(buildContext('FOOBAR...'));
+
+    expect(result.recommended[0]).toBe('empathy');
+    expect(result.reason).toContain('negative sentiment detected');
+    expect(result.confidence).toBeGreaterThan(0);
+  });
+
+  it('falls back to neutral when no keywords match', () => {
+    const analyzer = new ThoughtAnalyzer();
+    const result = analyzer.analyze(buildContext('你好呀，今天天气不错'));
+
+    expect(result.recommended[0]).toBe('neutral');
+    expect(result.reason).toBe('No specific sentiment detected');
+    expect(result.confidence).toBe(0);
   });
 });
 

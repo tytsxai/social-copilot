@@ -51,10 +51,11 @@ export function redactPii(text: string): string {
 
   // Phone numbers (international + local), plus Chinese mobile numbers.
   out = out.replace(/\b1[3-9]\d{9}\b/g, '[PHONE]');
-  out = out.replace(
-    /(?<!\w)(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{6,12}(?!\w)/g,
-    '[PHONE]'
-  );
+  out = out.replace(/(^|[^\w])([+()0-9][0-9()\s-]{4,}[0-9])(?!\w)/g, (match, prefix: string, candidate: string) => {
+    const digitCount = (candidate.match(/\d/g) ?? []).length;
+    if (digitCount < 6 || digitCount > 12) return match;
+    return `${prefix}[PHONE]`;
+  });
 
   return out;
 }
@@ -145,4 +146,3 @@ export function sanitizeOutboundContext(
     currentMessage: finalCurrent,
   };
 }
-

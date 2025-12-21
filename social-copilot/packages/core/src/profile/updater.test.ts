@@ -119,4 +119,50 @@ describe('ProfileUpdater', () => {
     const updates = await updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
     expect(updates).toEqual({});
   });
+
+  test('ignores non-object sections but still applies other updates', async () => {
+    const provider = new FakeLLMProvider(
+      JSON.stringify({
+        communicationStyle: [],
+        relationshipType: 'colleague',
+      })
+    );
+    const updater = new ProfileUpdater(provider);
+
+    const updates = await updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
+
+    expect(updates.communicationStyle).toBeUndefined();
+    expect(updates.relationshipType).toBe('colleague');
+  });
+
+  test('prevents prototype pollution via LLM JSON', async () => {
+    const provider = new FakeLLMProvider(
+      JSON.stringify({
+        communicationStyle: {
+          __proto__: { pollutedByLLM: true },
+          usesEmoji: true,
+        },
+        basicInfo: {
+          constructor: { pollutedCtor: true },
+          location: '北京',
+        },
+      })
+    );
+    const updater = new ProfileUpdater(provider);
+
+    expect(({} as any).pollutedByLLM).toBeUndefined();
+
+    const updates = await updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
+
+    expect(({} as any).pollutedByLLM).toBeUndefined();
+    expect(Object.prototype).not.toHaveProperty('pollutedByLLM');
+
+    expect(updates.communicationStyle).toEqual({
+      prefersShortMessages: false,
+      usesEmoji: true,
+    });
+    expect(updates.basicInfo).toEqual({
+      location: '北京',
+    });
+  });
 });

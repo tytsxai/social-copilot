@@ -1,6 +1,8 @@
 import type { Message, ContactProfile, LLMProvider } from '../types';
 import { parseJsonObjectFromText } from '../utils/json';
+import { safeAssignPlain } from '../utils/safe-merge';
 import type { LLMInput } from '../types';
+import { DEFAULT_INPUT_BUDGETS, normalizeAndClampLLMInput } from '../llm/input-budgets';
 
 /**
  * 画像更新器 - 从对话中自动提取并更新联系人画像
@@ -36,7 +38,7 @@ export class ProfileUpdater {
     try {
       const memorySummary = this.buildExtractionPrompt(existingProfile);
 
-      const response = await this.llm.generateReply({
+      const rawInput: LLMInput = {
         task: 'profile_extraction',
         context: {
           contactKey: existingProfile.key,
@@ -47,7 +49,11 @@ export class ProfileUpdater {
         memorySummary,
         styles: ['rational'],
         language,
-      });
+      };
+
+      const response = await this.llm.generateReply(
+        normalizeAndClampLLMInput(rawInput, DEFAULT_INPUT_BUDGETS)
+      );
 
       // 解析 LLM 返回的画像更新
       const content = response.candidates[0]?.text || '';
@@ -83,6 +89,32 @@ export class ProfileUpdater {
       const parsed = parseJsonObjectFromText(content);
       const updates: Partial<ContactProfile> = {};
 
+      const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+        if (typeof value !== 'object' || value === null) return false;
+        const proto = Object.getPrototypeOf(value);
+        return proto === Object.prototype || proto === null;
+      };
+
+      const sanitizeCommunicationStyle = (value: unknown): Record<string, unknown> | null => {
+        if (!isPlainObject(value)) return null;
+        const out: Record<string, unknown> = {};
+        if (typeof value.prefersShortMessages === 'boolean') out.prefersShortMessages = value.prefersShortMessages;
+        if (typeof value.usesEmoji === 'boolean') out.usesEmoji = value.usesEmoji;
+        if (value.formalityLevel === 'casual' || value.formalityLevel === 'neutral' || value.formalityLevel === 'formal') {
+          out.formalityLevel = value.formalityLevel;
+        }
+        return out;
+      };
+
+      const sanitizeBasicInfo = (value: unknown): Record<string, unknown> | null => {
+        if (!isPlainObject(value)) return null;
+        const out: Record<string, unknown> = {};
+        if (typeof value.ageRange === 'string') out.ageRange = value.ageRange;
+        if (typeof value.occupation === 'string') out.occupation = value.occupation;
+        if (typeof value.location === 'string') out.location = value.location;
+        return out;
+      };
+
       // 合并兴趣（去重）
       if (Array.isArray(parsed.interests) && parsed.interests.length > 0) {
         const newInterests = [...new Set([...existing.interests, ...parsed.interests])];
@@ -93,18 +125,24 @@ export class ProfileUpdater {
 
       // 更新沟通风格
       if (parsed.communicationStyle) {
-        updates.communicationStyle = {
-          ...existing.communicationStyle,
-          ...parsed.communicationStyle,
-        };
+        const sanitized = sanitizeCommunicationStyle(parsed.communicationStyle);
+        if (sanitized) {
+          updates.communicationStyle = safeAssignPlain(
+            { ...(existing.communicationStyle || {}) },
+            sanitized
+          );
+        }
       }
 
       // 更新基本信息
       if (parsed.basicInfo) {
-        updates.basicInfo = {
-          ...existing.basicInfo,
-          ...parsed.basicInfo,
-        };
+        const sanitized = sanitizeBasicInfo(parsed.basicInfo);
+        if (sanitized) {
+          updates.basicInfo = safeAssignPlain(
+            { ...(existing.basicInfo || {}) },
+            sanitized
+          );
+        }
       }
 
       // 更新关系类型

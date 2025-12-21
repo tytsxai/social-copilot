@@ -3,24 +3,59 @@ import type { ThoughtType, ThoughtCard, ThoughtAnalysisResult } from '../types';
 import { THOUGHT_CARDS } from '../types';
 
 /**
- * 情感关键词映射
+ * ThoughtAnalyzer 可配置项
  */
-const SENTIMENT_KEYWORDS = {
-  negative: ['难过', '伤心', '烦', '累', '压力', '焦虑', '担心', 'sad', 'upset', 'tired', 'stressed', '郁闷', '失望', '沮丧'],
-  question: ['怎么', '如何', '为什么', '能不能', '可以吗', '?', '？', 'how', 'why', 'what', 'can you', '帮我', '请问', '求助'],
-  playful: ['哈哈', '笑死', '有趣', '好玩', 'lol', 'haha', 'funny', '😂', '🤣', '哈哈哈', '太逗了', '笑'],
-};
+export interface ThoughtAnalyzerConfig {
+  keywords: Record<string, string[]>;
+  weights: Record<string, number>;
+  defaultOrder: ThoughtType[];
+}
 
-/**
- * 默认思路类型顺序
- */
-const DEFAULT_THOUGHT_ORDER: ThoughtType[] = ['neutral', 'empathy', 'solution', 'humor'];
+export type ThoughtAnalyzerUserConfig = Partial<{
+  keywords: Partial<ThoughtAnalyzerConfig['keywords']>;
+  weights: Partial<ThoughtAnalyzerConfig['weights']>;
+  defaultOrder: ThoughtAnalyzerConfig['defaultOrder'];
+}>;
+
+export const DEFAULT_CONFIG: ThoughtAnalyzerConfig = {
+  keywords: {
+    negative: ['难过', '伤心', '烦', '累', '压力', '焦虑', '担心', 'sad', 'upset', 'tired', 'stressed', '郁闷', '失望', '沮丧'],
+    question: ['怎么', '如何', '为什么', '能不能', '可以吗', '?', '？', 'how', 'why', 'what', 'can you', '帮我', '请问', '求助'],
+    playful: ['哈哈', '笑死', '有趣', '好玩', 'lol', 'haha', 'funny', '😂', '🤣', '哈哈哈', '太逗了', '笑'],
+  },
+  weights: {
+    neutralBase: 0.1,
+    negative: 2,
+    question: 2,
+    playful: 2,
+  },
+  defaultOrder: ['neutral', 'empathy', 'solution', 'humor'],
+};
 
 /**
  * 思路分析器
  * 根据对话上下文分析并推荐合适的思路方向
  */
 export class ThoughtAnalyzer {
+  private readonly config: ThoughtAnalyzerConfig;
+
+  constructor(config?: ThoughtAnalyzerUserConfig) {
+    const mergedKeywords: ThoughtAnalyzerConfig['keywords'] = {
+      ...DEFAULT_CONFIG.keywords,
+      ...(config?.keywords ?? {}),
+    };
+    this.config = {
+      keywords: Object.fromEntries(
+        Object.entries(mergedKeywords).map(([key, value]) => [key, [...value]])
+      ) as ThoughtAnalyzerConfig['keywords'],
+      weights: {
+        ...DEFAULT_CONFIG.weights,
+        ...(config?.weights ?? {}),
+      },
+      defaultOrder: [...(config?.defaultOrder ?? DEFAULT_CONFIG.defaultOrder)],
+    };
+  }
+
   /**
    * 分析对话上下文，返回推荐的思路类型
    */
@@ -28,7 +63,7 @@ export class ThoughtAnalyzer {
     // 处理空上下文
     if (!context || !context.currentMessage) {
       return {
-        recommended: DEFAULT_THOUGHT_ORDER,
+        recommended: this.config.defaultOrder,
         confidence: 0,
         reason: 'Empty context, using default order',
       };
@@ -39,25 +74,25 @@ export class ThoughtAnalyzer {
       empathy: 0,
       solution: 0,
       humor: 0,
-      neutral: 0.1, // 基础分数，确保 neutral 始终有一定权重
+      neutral: this.config.weights.neutralBase ?? 0.1, // 基础分数，确保 neutral 始终有一定权重
     };
 
     // 检测负面情绪关键词 -> 优先 empathy
-    const negativeMatches = this.countKeywordMatches(messageText, SENTIMENT_KEYWORDS.negative);
+    const negativeMatches = this.countKeywordMatches(messageText, this.config.keywords.negative ?? []);
     if (negativeMatches > 0) {
-      scores.empathy += negativeMatches * 2;
+      scores.empathy += negativeMatches * (this.config.weights.negative ?? 2);
     }
 
     // 检测问题/求助关键词 -> 优先 solution
-    const questionMatches = this.countKeywordMatches(messageText, SENTIMENT_KEYWORDS.question);
+    const questionMatches = this.countKeywordMatches(messageText, this.config.keywords.question ?? []);
     if (questionMatches > 0) {
-      scores.solution += questionMatches * 2;
+      scores.solution += questionMatches * (this.config.weights.question ?? 2);
     }
 
     // 检测轻松/幽默关键词 -> 优先 humor
-    const playfulMatches = this.countKeywordMatches(messageText, SENTIMENT_KEYWORDS.playful);
+    const playfulMatches = this.countKeywordMatches(messageText, this.config.keywords.playful ?? []);
     if (playfulMatches > 0) {
-      scores.humor += playfulMatches * 2;
+      scores.humor += playfulMatches * (this.config.weights.playful ?? 2);
     }
 
     // 按分数排序思路类型
@@ -67,8 +102,11 @@ export class ThoughtAnalyzer {
 
     // 计算置信度（基于最高分与其他分数的差距）
     const maxScore = scores[sortedTypes[0]];
-    const totalMatches = negativeMatches + questionMatches + playfulMatches;
-    const confidence = totalMatches > 0 ? Math.min(maxScore / (totalMatches * 2 + 1), 1) : 0;
+    const totalWeightedMatches =
+      negativeMatches * (this.config.weights.negative ?? 2) +
+      questionMatches * (this.config.weights.question ?? 2) +
+      playfulMatches * (this.config.weights.playful ?? 2);
+    const confidence = totalWeightedMatches > 0 ? Math.min(maxScore / (totalWeightedMatches + 1), 1) : 0;
 
     // 生成推荐原因
     const reasons: string[] = [];
