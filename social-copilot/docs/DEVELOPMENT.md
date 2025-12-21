@@ -154,6 +154,33 @@ pnpm --filter @social-copilot/mobile start
 
 DevTools 打开后可选择模拟器或使用 Expo Go 扫码运行。必须设置 `EXPO_PUBLIC_LLM_API_KEY`；`EXPO_PUBLIC_LLM_PROVIDER` / `EXPO_PUBLIC_LLM_MODEL` 为可选（也可在 App 内切换）。注意：此方式仅适用于开发预览，生产环境请使用后端代理托管密钥。
 
+### 生产代理示例（移动端）
+
+生产环境请使用后端代理，客户端仅携带用户会话令牌。以下是最小示例（仅示意，需自行加鉴权/限流/审计）：
+
+```ts
+import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+app.post('/llm/proxy', async (req, res) => {
+  // TODO: verify user session token
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(req.body),
+  });
+
+  res.status(resp.status).json(await resp.json());
+});
+
+app.listen(3000);
+```
+
 ---
 
 ## 功能测试
