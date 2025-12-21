@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ProfileUpdater } from './updater';
+import { ProfileUpdater, ProfileUpdaterError } from './updater';
 import type { ContactKey, ContactProfile, LLMInput, LLMOutput, LLMProvider, Message } from '../types';
 
 class FakeLLMProvider implements LLMProvider {
@@ -164,5 +164,47 @@ describe('ProfileUpdater', () => {
     expect(updates.basicInfo).toEqual({
       location: '北京',
     });
+  });
+
+  test('throws typed error when existingProfile.interests is malformed', async () => {
+    const provider = new FakeLLMProvider('{}');
+    const updater = new ProfileUpdater(provider);
+    const badProfile = { ...baseProfile, interests: '旅行' as any } as any;
+
+    await expect(updater.extractProfileUpdates(buildMessages(), badProfile)).rejects.toEqual(
+      expect.objectContaining({ name: 'ProfileUpdaterError', code: 'INVALID_EXISTING_PROFILE' })
+    );
+    expect(provider.lastInput).toBeNull();
+  });
+
+  test('sanitizes interests elements from both existing profile and LLM response', async () => {
+    const provider = new FakeLLMProvider(
+      JSON.stringify({
+        interests: ['摄影', '  ', 1, 'x'.repeat(200)],
+      })
+    );
+    const updater = new ProfileUpdater(provider);
+    const dirtyProfile = {
+      ...baseProfile,
+      interests: ['旅行', '', '  ', '旅行', 'y'.repeat(200), 123 as any] as any,
+    };
+
+    const updates = await updater.extractProfileUpdates(buildMessages(), dirtyProfile as any);
+
+    expect(provider.lastInput?.memorySummary).toContain('兴趣：旅行');
+    expect(provider.lastInput?.memorySummary).not.toContain('y'.repeat(200));
+    expect(updates.interests).toEqual(['旅行', '摄影']);
+  });
+
+  test('limits interests array length when merging', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => `兴趣${i + 1}`);
+    const provider = new FakeLLMProvider(JSON.stringify({ interests: ['新增'] }));
+    const updater = new ProfileUpdater(provider);
+    const profile = { ...baseProfile, interests: many };
+
+    const updates = await updater.extractProfileUpdates(buildMessages(), profile);
+
+    expect(updates.interests?.length).toBeLessThanOrEqual(20);
+    expect(updates.interests).toContain('新增');
   });
 });

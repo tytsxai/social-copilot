@@ -4,6 +4,47 @@ import type { IndexedDBStore } from '../memory/indexeddb-store';
 
 /** Threshold for setting a default style */
 const DEFAULT_STYLE_THRESHOLD = 3;
+const ALL_STYLES: ReplyStyle[] = ['humorous', 'caring', 'rational', 'casual', 'formal'];
+const STYLE_SET: ReadonlySet<ReplyStyle> = new Set(ALL_STYLES);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function normalizeStyleHistory(raw: unknown): StyleHistoryEntry[] {
+  if (!Array.isArray(raw)) return [];
+
+  const merged = new Map<ReplyStyle, StyleHistoryEntry>();
+
+  for (const item of raw) {
+    if (!isPlainObject(item)) continue;
+    const style = item.style;
+    if (!STYLE_SET.has(style as ReplyStyle)) continue;
+
+    const countRaw = item.count;
+    const lastUsedRaw = item.lastUsed;
+    if (typeof countRaw !== 'number' || !Number.isFinite(countRaw)) continue;
+    if (typeof lastUsedRaw !== 'number' || !Number.isFinite(lastUsedRaw)) continue;
+
+    const count = Math.floor(countRaw);
+    const lastUsed = Math.floor(lastUsedRaw);
+    if (count <= 0 || lastUsed < 0) continue;
+
+    const existing = merged.get(style as ReplyStyle);
+    if (!existing) {
+      merged.set(style as ReplyStyle, { style: style as ReplyStyle, count, lastUsed });
+      continue;
+    }
+
+    merged.set(style as ReplyStyle, {
+      style: style as ReplyStyle,
+      count: existing.count + count,
+      lastUsed: Math.max(existing.lastUsed, lastUsed),
+    });
+  }
+
+  return Array.from(merged.values());
+}
 
 /**
  * Manages style preferences for contacts
@@ -24,7 +65,7 @@ export class StylePreferenceManager {
       let defaultStyle: ReplyStyle | null;
 
       if (existing) {
-        styleHistory = [...existing.styleHistory];
+        styleHistory = normalizeStyleHistory((existing as unknown as { styleHistory?: unknown }).styleHistory);
         defaultStyle = existing.defaultStyle;
 
         const entryIndex = styleHistory.findIndex((e) => e.style === style);

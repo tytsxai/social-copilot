@@ -35,10 +35,12 @@ describe('VectorMemoryRetriever', () => {
 
     const contactA = { app: 'other' as const, peerId: 'u1', platform: 'web' as const, conversationId: 'c1', isGroup: false };
     const contactB = { ...contactA, conversationId: 'c2' };
+    const contactC = { ...contactA, peerId: 'u2' };
 
     await retriever.addSnippets([
       { text: 'hello from A', contactKey: contactA, partition: 'p1', timestamp: 1 },
       { text: 'hello from B', contactKey: contactB, partition: 'p1', timestamp: 2 },
+      { text: 'hello from C', contactKey: contactC, partition: 'p1', timestamp: 3 },
     ]);
 
     const res = await retriever.query({ queryText: 'hello', topK: 5, contactKey: contactA, partition: 'p1' });

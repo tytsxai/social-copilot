@@ -395,6 +395,7 @@ export class IndexedDBStore implements MemoryStore {
   private readonly totalTrimWriteThreshold: number;
   private totalTrimWriteCount = 0;
   private lastTotalTrimAt = 0;
+  private readonly transactionRetryCount = 3;
 
   constructor(options: IndexedDBStoreOptions = {}) {
     this.maxMessagesPerContact = normalizePositiveInt(options.maxMessagesPerContact, MAX_MESSAGES_PER_CONTACT);
@@ -661,26 +662,13 @@ export class IndexedDBStore implements MemoryStore {
 
     const keys = getContactKeyStrCandidates(contactKey);
 
-    for (const keyStr of keys) {
-      await new Promise<void>((resolve, reject) => {
-        const tx = this.db!.transaction(STORES.messages, 'readwrite');
-        const store = tx.objectStore(STORES.messages);
-        const index = store.index('contactKey');
-        const request = index.openCursor(IDBKeyRange.only(keyStr));
-
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const cursor = request.result;
-          if (!cursor) return;
-          cursor.delete();
-          cursor.continue();
-        };
-      });
-    }
+    await this.withTransaction(STORES.messages, 'readwrite', async (tx) => {
+      const store = tx.objectStore(STORES.messages);
+      const index = store.index('contactKey');
+      for (const keyStr of keys) {
+        await this.deleteMessagesForContactKeyStr(index, keyStr, { useCompoundIndex: false });
+      }
+    });
   }
 
   async getRecentMessages(contactKey: ContactKey, limit: number): Promise<Message[]> {
@@ -879,16 +867,10 @@ export class IndexedDBStore implements MemoryStore {
     if (!this.db) throw new Error('Database not initialized');
     const keys = getContactKeyStrCandidates(contactKey);
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.profiles, 'readwrite');
+    await this.withTransaction(STORES.profiles, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.profiles);
-
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-
       for (const keyStr of keys) {
-        store.delete(keyStr);
+        await this.requestToPromise(store.delete(keyStr));
       }
     });
   }
@@ -965,91 +947,27 @@ export class IndexedDBStore implements MemoryStore {
 
     const keys = getContactKeyStrCandidates(contactKey);
 
-    // 删除消息
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.messages, 'readwrite');
-      const store = tx.objectStore(STORES.messages);
-      const index = store.index(store.indexNames.contains('contactKeyTimestamp') ? 'contactKeyTimestamp' : 'contactKey');
-
-      const deleteNextKey = (remainingKeys: string[]) => {
-        if (remainingKeys.length === 0) {
-          resolve();
-          return;
+    await this.withTransaction(
+      [STORES.messages, STORES.profiles, STORES.stylePreferences, STORES.contactMemories],
+      'readwrite',
+      async (tx) => {
+        const messageStore = tx.objectStore(STORES.messages);
+        const indexName = messageStore.indexNames.contains('contactKeyTimestamp') ? 'contactKeyTimestamp' : 'contactKey';
+        const messageIndex = messageStore.index(indexName);
+        for (const keyStr of keys) {
+          await this.deleteMessagesForContactKeyStr(messageIndex, keyStr, { useCompoundIndex: indexName === 'contactKeyTimestamp' });
         }
-        const currentKey = remainingKeys.shift()!;
-        const range = index.name === 'contactKeyTimestamp'
-          ? IDBKeyRange.bound([currentKey, Number.MIN_SAFE_INTEGER], [currentKey, Number.MAX_SAFE_INTEGER])
-          : IDBKeyRange.only(currentKey);
-        const request = index.openCursor(range);
 
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const cursor = request.result;
-          if (cursor) {
-            cursor.delete();
-            cursor.continue();
-          } else {
-            deleteNextKey(remainingKeys);
-          }
-        };
-      };
-
-      deleteNextKey([...keys]);
-    });
-
-    // 删除画像
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.profiles, 'readwrite');
-      const store = tx.objectStore(STORES.profiles);
-      const deleteNextKey = (remainingKeys: string[]) => {
-        if (remainingKeys.length === 0) {
-          resolve();
-          return;
+        const profileStore = tx.objectStore(STORES.profiles);
+        const styleStore = tx.objectStore(STORES.stylePreferences);
+        const memoryStore = tx.objectStore(STORES.contactMemories);
+        for (const keyStr of keys) {
+          await this.requestToPromise(profileStore.delete(keyStr));
+          await this.requestToPromise(styleStore.delete(keyStr));
+          await this.requestToPromise(memoryStore.delete(keyStr));
         }
-        const key = remainingKeys.shift()!;
-        const request = store.delete(key);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => deleteNextKey(remainingKeys);
-      };
-
-      deleteNextKey([...keys]);
-    });
-
-    // 删除风格偏好
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.stylePreferences, 'readwrite');
-      const store = tx.objectStore(STORES.stylePreferences);
-      const deleteNextKey = (remainingKeys: string[]) => {
-        if (remainingKeys.length === 0) {
-          resolve();
-          return;
-        }
-        const key = remainingKeys.shift()!;
-        const request = store.delete(key);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => deleteNextKey(remainingKeys);
-      };
-
-      deleteNextKey([...keys]);
-    });
-
-    // 删除长期记忆
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.contactMemories, 'readwrite');
-      const store = tx.objectStore(STORES.contactMemories);
-      const deleteNextKey = (remainingKeys: string[]) => {
-        if (remainingKeys.length === 0) {
-          resolve();
-          return;
-        }
-        const key = remainingKeys.shift()!;
-        const request = store.delete(key);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => deleteNextKey(remainingKeys);
-      };
-
-      deleteNextKey([...keys]);
-    });
+      }
+    );
   }
 
   /**
@@ -1112,74 +1030,29 @@ export class IndexedDBStore implements MemoryStore {
       new Set([canonicalKey, canonicalKeyRaw, ...candidatesRaw, ...candidatesRaw.map(normalizeContactKeyStr)])
     );
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.stylePreferences, 'readwrite');
+    await this.withTransaction(STORES.stylePreferences, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.stylePreferences);
 
-      let settled = false;
-      const fail = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        try {
-          tx.abort();
-        } catch {
-          // ignore
+      let existing: StylePreference | null = null;
+      let foundKey: string | null = null;
+
+      for (const key of keysToTry) {
+        const result = (await this.requestToPromise(store.get(key))) as StylePreference | undefined;
+        if (result) {
+          existing = { ...result, contactKeyStr: canonicalKey };
+          foundKey = key;
+          break;
         }
-        reject(err instanceof Error ? err : new Error(String(err)));
-      };
+      }
 
-      tx.oncomplete = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      tx.onerror = () => fail(tx.error ?? new Error('updateStylePreference failed'));
-      tx.onabort = () => fail(tx.error ?? new Error('updateStylePreference aborted'));
+      const updated = updaterFn(existing);
+      await this.requestToPromise(store.put({ ...updated, contactKeyStr: canonicalKey }));
 
-      const tryGetNext = (remaining: string[]) => {
-        if (remaining.length === 0) {
-          let updated: StylePreference;
-          try {
-            updated = updaterFn(null);
-          } catch (err) {
-            fail(err);
-            return;
-          }
-          const putRequest = store.put({ ...updated, contactKeyStr: canonicalKey });
-          putRequest.onerror = () => fail(putRequest.error);
-          return;
-        }
-
-        const key = remaining.shift()!;
-        const request = store.get(key);
-        request.onerror = () => fail(request.error);
-        request.onsuccess = () => {
-          const existing = (request.result as StylePreference | undefined) ?? null;
-          if (!existing) {
-            tryGetNext(remaining);
-            return;
-          }
-
-          const normalizedExisting: StylePreference = { ...existing, contactKeyStr: canonicalKey };
-          let updated: StylePreference;
-          try {
-            updated = updaterFn(normalizedExisting);
-          } catch (err) {
-            fail(err);
-            return;
-          }
-
-          if (key !== canonicalKey) {
-            const deleteRequest = store.delete(key);
-            deleteRequest.onerror = () => fail(deleteRequest.error);
-          }
-
-          const putRequest = store.put({ ...updated, contactKeyStr: canonicalKey });
-          putRequest.onerror = () => fail(putRequest.error);
-        };
-      };
-
-      tryGetNext([...keysToTry]);
+      for (const key of keysToTry) {
+        if (key === canonicalKey) continue;
+        if (foundKey && key === foundKey) continue;
+        await this.requestToPromise(store.delete(key));
+      }
     });
   }
 
@@ -1386,48 +1259,28 @@ export class IndexedDBStore implements MemoryStore {
       else skippedContactMemories += 1;
     }
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction([STORES.profiles, STORES.stylePreferences, STORES.contactMemories], 'readwrite');
-      const profileStore = tx.objectStore(STORES.profiles);
-      const stylePrefStore = tx.objectStore(STORES.stylePreferences);
-      const memoryStore = tx.objectStore(STORES.contactMemories);
+    await this.withTransaction(
+      [STORES.profiles, STORES.stylePreferences, STORES.contactMemories],
+      'readwrite',
+      async (tx) => {
+        const profileStore = tx.objectStore(STORES.profiles);
+        const stylePrefStore = tx.objectStore(STORES.stylePreferences);
+        const memoryStore = tx.objectStore(STORES.contactMemories);
 
-      let settled = false;
-      const fail = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        try {
-          tx.abort();
-        } catch {
-          // ignore
+        for (const profile of profiles) {
+          const keyStr = contactKeyToString(profile.key);
+          await this.requestToPromise(profileStore.put({ ...profile, keyStr }));
         }
-        reject(err instanceof Error ? err : new Error(String(err)));
-      };
 
-      tx.oncomplete = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      tx.onerror = () => fail(tx.error ?? new Error('Snapshot import failed'));
-      tx.onabort = () => fail(tx.error ?? new Error('Snapshot import aborted'));
+        for (const pref of stylePreferences) {
+          await this.requestToPromise(stylePrefStore.put(pref));
+        }
 
-      for (const profile of profiles) {
-        const keyStr = contactKeyToString(profile.key);
-        const request = profileStore.put({ ...profile, keyStr });
-        request.onerror = () => fail(request.error);
+        for (const memory of contactMemories) {
+          await this.requestToPromise(memoryStore.put(memory));
+        }
       }
-
-      for (const pref of stylePreferences) {
-        const request = stylePrefStore.put(pref);
-        request.onerror = () => fail(request.error);
-      }
-
-      for (const memory of contactMemories) {
-        const request = memoryStore.put(memory);
-        request.onerror = () => fail(request.error);
-      }
-    });
+    );
 
     return {
       imported: {
@@ -1620,8 +1473,17 @@ export class IndexedDBStore implements MemoryStore {
       return Promise.reject(new Error('Database not initialized'));
     }
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(storeNames, mode);
+    const attempts = mode === 'readwrite' ? this.transactionRetryCount : 1;
+    const baseDelayMs = 15;
+
+    const runOnce = (): Promise<T> => new Promise((resolve, reject) => {
+      let tx: IDBTransaction;
+      try {
+        tx = this.db!.transaction(storeNames, mode);
+      } catch (err) {
+        reject(err);
+        return;
+      }
 
       let settled = false;
       let txCompleted = false;
@@ -1665,6 +1527,59 @@ export class IndexedDBStore implements MemoryStore {
           fail(err);
         });
     });
+
+    const runWithRetry = async (): Promise<T> => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          return await runOnce();
+        } catch (err) {
+          lastError = err;
+          if (attempt >= attempts || !this.isRetryableTransactionError(err)) {
+            throw err;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    };
+
+    return runWithRetry();
+  }
+
+  private isRetryableTransactionError(err: unknown): boolean {
+    if (!err) return false;
+    const name = err instanceof DOMException || err instanceof Error ? err.name : '';
+    return (
+      name === 'AbortError' ||
+      name === 'TransactionInactiveError' ||
+      name === 'InvalidStateError' ||
+      name === 'UnknownError'
+    );
+  }
+
+  private deleteMessagesForContactKeyStr(
+    index: IDBIndex,
+    contactKeyStr: string,
+    options: { useCompoundIndex: boolean }
+  ): Promise<void> {
+    const range = options.useCompoundIndex
+      ? IDBKeyRange.bound([contactKeyStr, Number.MIN_SAFE_INTEGER], [contactKeyStr, Number.MAX_SAFE_INTEGER])
+      : IDBKeyRange.only(contactKeyStr);
+
+    return new Promise((resolve, reject) => {
+      const request = index.openCursor(range);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        cursor.delete();
+        cursor.continue();
+      };
+    });
   }
 
   /**
@@ -1683,28 +1598,28 @@ export class IndexedDBStore implements MemoryStore {
   private async trimTotalMessages(maxCount: number): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
     if (maxCount <= 0) return;
-    const tx = this.db.transaction(STORES.messages, 'readwrite');
-    const store = tx.objectStore(STORES.messages);
-    const cursorRequest = store.indexNames.contains('timestamp')
-      ? store.index('timestamp').openCursor(null, 'prev')
-      : store.openCursor(null, 'prev');
-    let count = 0;
+    await this.withTransaction(STORES.messages, 'readwrite', async (tx) => {
+      const store = tx.objectStore(STORES.messages);
+      const cursorRequest = store.indexNames.contains('timestamp')
+        ? store.index('timestamp').openCursor(null, 'prev')
+        : store.openCursor(null, 'prev');
+      let count = 0;
 
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-
-      cursorRequest.onerror = () => reject(cursorRequest.error);
-      cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) return;
-        count += 1;
-        if (count > maxCount) {
-          cursor.delete();
-        }
-        cursor.continue();
-      };
+      await new Promise<void>((resolve, reject) => {
+        cursorRequest.onerror = () => reject(cursorRequest.error);
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          count += 1;
+          if (count > maxCount) {
+            cursor.delete();
+          }
+          cursor.continue();
+        };
+      });
     });
   }
 
@@ -1713,33 +1628,33 @@ export class IndexedDBStore implements MemoryStore {
    */
   private async trimOldMessages(contactKeyStr: string, maxCount: number): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
-    const tx = this.db.transaction(STORES.messages, 'readwrite');
-    const store = tx.objectStore(STORES.messages);
-    const indexName = store.indexNames.contains('contactKeyTimestamp') ? 'contactKeyTimestamp' : 'contactKey';
-    const index = store.index(indexName);
+    await this.withTransaction(STORES.messages, 'readwrite', async (tx) => {
+      const store = tx.objectStore(STORES.messages);
+      const indexName = store.indexNames.contains('contactKeyTimestamp') ? 'contactKeyTimestamp' : 'contactKey';
+      const index = store.index(indexName);
 
-    const range = indexName === 'contactKeyTimestamp'
-      ? IDBKeyRange.bound([contactKeyStr, Number.MIN_SAFE_INTEGER], [contactKeyStr, Number.MAX_SAFE_INTEGER])
-      : IDBKeyRange.only(contactKeyStr);
+      const range = indexName === 'contactKeyTimestamp'
+        ? IDBKeyRange.bound([contactKeyStr, Number.MIN_SAFE_INTEGER], [contactKeyStr, Number.MAX_SAFE_INTEGER])
+        : IDBKeyRange.only(contactKeyStr);
 
-    return new Promise((resolve, reject) => {
       const cursorRequest = index.openCursor(range, 'prev');
       let count = 0;
 
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-
-      cursorRequest.onerror = () => reject(cursorRequest.error);
-      cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) return;
-        count += 1;
-        if (count > maxCount) {
-          cursor.delete();
-        }
-        cursor.continue();
-      };
+      await new Promise<void>((resolve, reject) => {
+        cursorRequest.onerror = () => reject(cursorRequest.error);
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          count += 1;
+          if (count > maxCount) {
+            cursor.delete();
+          }
+          cursor.continue();
+        };
+      });
     });
   }
 

@@ -40,19 +40,22 @@ export class ThoughtAnalyzer {
   private readonly config: ThoughtAnalyzerConfig;
 
   constructor(config?: ThoughtAnalyzerUserConfig) {
+    const userKeywords = this.sanitizeKeywords(config?.keywords);
     const mergedKeywords: ThoughtAnalyzerConfig['keywords'] = {
       ...DEFAULT_CONFIG.keywords,
-      ...(config?.keywords ?? {}),
+      ...userKeywords,
     };
+    const userWeights = this.sanitizeWeights(config?.weights);
+    const userDefaultOrder = this.sanitizeDefaultOrder(config?.defaultOrder);
     this.config = {
       keywords: Object.fromEntries(
         Object.entries(mergedKeywords).map(([key, value]) => [key, [...value]])
       ) as ThoughtAnalyzerConfig['keywords'],
       weights: {
         ...DEFAULT_CONFIG.weights,
-        ...(config?.weights ?? {}),
+        ...userWeights,
       },
-      defaultOrder: [...(config?.defaultOrder ?? DEFAULT_CONFIG.defaultOrder)],
+      defaultOrder: [...userDefaultOrder],
     };
   }
 
@@ -69,7 +72,16 @@ export class ThoughtAnalyzer {
       };
     }
 
-    const messageText = context.currentMessage.text.toLowerCase();
+    const rawText = (context.currentMessage as { text?: unknown }).text;
+    if (typeof rawText !== 'string') {
+      return {
+        recommended: this.config.defaultOrder,
+        confidence: 0,
+        reason: 'Invalid message text, using default order',
+      };
+    }
+
+    const messageText = rawText.toLowerCase();
     const scores: Record<ThoughtType, number> = {
       empathy: 0,
       solution: 0,
@@ -142,5 +154,38 @@ export class ThoughtAnalyzer {
     return keywords.reduce((count, keyword) => {
       return count + (text.includes(keyword.toLowerCase()) ? 1 : 0);
     }, 0);
+  }
+
+  private sanitizeKeywords(
+    keywords?: ThoughtAnalyzerUserConfig['keywords']
+  ): Partial<ThoughtAnalyzerConfig['keywords']> {
+    if (!keywords || typeof keywords !== 'object') return {};
+    const sanitized: Partial<ThoughtAnalyzerConfig['keywords']> = {};
+    for (const [key, value] of Object.entries(keywords)) {
+      if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+        sanitized[key as keyof ThoughtAnalyzerConfig['keywords']] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  private sanitizeWeights(
+    weights?: ThoughtAnalyzerUserConfig['weights']
+  ): Partial<ThoughtAnalyzerConfig['weights']> {
+    if (!weights || typeof weights !== 'object') return {};
+    const sanitized: Partial<ThoughtAnalyzerConfig['weights']> = {};
+    for (const [key, value] of Object.entries(weights)) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        sanitized[key as keyof ThoughtAnalyzerConfig['weights']] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  private sanitizeDefaultOrder(defaultOrder?: ThoughtAnalyzerUserConfig['defaultOrder']): ThoughtType[] {
+    if (!Array.isArray(defaultOrder)) return DEFAULT_CONFIG.defaultOrder;
+    const allowedTypes = new Set(Object.keys(THOUGHT_CARDS) as ThoughtType[]);
+    const filtered = defaultOrder.filter((type): type is ThoughtType => allowedTypes.has(type));
+    return filtered.length > 0 ? filtered : DEFAULT_CONFIG.defaultOrder;
   }
 }

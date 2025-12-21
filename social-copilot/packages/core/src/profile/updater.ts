@@ -4,6 +4,25 @@ import { safeAssignPlain } from '../utils/safe-merge';
 import type { LLMInput } from '../types';
 import { DEFAULT_INPUT_BUDGETS, normalizeAndClampLLMInput } from '../llm/input-budgets';
 
+export type ProfileUpdaterErrorCode =
+  | 'INVALID_EXISTING_PROFILE'
+  | 'LLM_REQUEST_FAILED';
+
+export class ProfileUpdaterError extends Error {
+  readonly code: ProfileUpdaterErrorCode;
+  readonly cause?: unknown;
+
+  constructor(code: ProfileUpdaterErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'ProfileUpdaterError';
+    this.code = code;
+    this.cause = options?.cause;
+  }
+}
+
+const MAX_INTERESTS = 20;
+const MAX_INTEREST_LENGTH = 64;
+
 /**
  * 画像更新器 - 从对话中自动提取并更新联系人画像
  */
@@ -36,16 +55,17 @@ export class ProfileUpdater {
     }
 
     try {
-      const memorySummary = this.buildExtractionPrompt(existingProfile);
+      const validatedProfile = this.validateExistingProfile(existingProfile);
+      const memorySummary = this.buildExtractionPrompt(validatedProfile);
 
       const rawInput: LLMInput = {
         task: 'profile_extraction',
         context: {
-          contactKey: existingProfile.key,
+          contactKey: validatedProfile.key,
           recentMessages: messages,
           currentMessage: messages[messages.length - 1],
         },
-        profile: existingProfile,
+        profile: validatedProfile,
         memorySummary,
         styles: ['rational'],
         language,
@@ -57,10 +77,16 @@ export class ProfileUpdater {
 
       // 解析 LLM 返回的画像更新
       const content = response.candidates[0]?.text || '';
-      return this.parseProfileUpdates(content, existingProfile);
+      return this.parseProfileUpdates(content, validatedProfile);
     } catch (error) {
-      console.error('[ProfileUpdater] Failed to extract profile:', error);
-      return {};
+      if (error instanceof ProfileUpdaterError) {
+        throw error;
+      }
+      throw new ProfileUpdaterError(
+        'LLM_REQUEST_FAILED',
+        '[ProfileUpdater] Failed to extract profile updates',
+        { cause: error }
+      );
     }
   }
 
@@ -79,6 +105,92 @@ export class ProfileUpdater {
 - 地区：${location}
 - 备注：${profile.notes || '无'}
 请基于对话只补充有证据的新信息。`;
+  }
+
+  private validateExistingProfile(profile: unknown): ContactProfile {
+    const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+      if (typeof value !== 'object' || value === null) return false;
+      const proto = Object.getPrototypeOf(value);
+      return proto === Object.prototype || proto === null;
+    };
+
+    if (!isPlainObject(profile)) {
+      throw new ProfileUpdaterError('INVALID_EXISTING_PROFILE', 'existingProfile must be a plain object');
+    }
+
+    const key = (profile as Record<string, unknown>).key;
+    if (!isPlainObject(key)) {
+      throw new ProfileUpdaterError('INVALID_EXISTING_PROFILE', 'existingProfile.key must be an object');
+    }
+
+    const platform = key.platform;
+    const app = key.app;
+    const conversationId = key.conversationId;
+    const peerId = key.peerId;
+    const isGroup = key.isGroup;
+
+    if (
+      typeof platform !== 'string' ||
+      typeof app !== 'string' ||
+      typeof conversationId !== 'string' ||
+      typeof peerId !== 'string' ||
+      typeof isGroup !== 'boolean'
+    ) {
+      throw new ProfileUpdaterError('INVALID_EXISTING_PROFILE', 'existingProfile.key has invalid fields');
+    }
+
+    const displayName = (profile as Record<string, unknown>).displayName;
+    if (typeof displayName !== 'string' || displayName.trim().length === 0) {
+      throw new ProfileUpdaterError('INVALID_EXISTING_PROFILE', 'existingProfile.displayName must be a non-empty string');
+    }
+
+    const interests = (profile as Record<string, unknown>).interests;
+    if (!Array.isArray(interests)) {
+      throw new ProfileUpdaterError('INVALID_EXISTING_PROFILE', 'existingProfile.interests must be an array');
+    }
+
+    const sanitizedInterests = this.sanitizeInterests(interests);
+
+    const contactProfile = profile as ContactProfile;
+    return {
+      ...contactProfile,
+      displayName: displayName.trim(),
+      interests: sanitizedInterests,
+    };
+  }
+
+  private sanitizeInterests(interests: unknown[]): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of interests) {
+      if (typeof entry !== 'string') continue;
+      const trimmed = entry.trim();
+      if (!trimmed) continue;
+      if (trimmed.length > MAX_INTEREST_LENGTH) continue;
+      if (seen.has(trimmed)) continue;
+      out.push(trimmed);
+      seen.add(trimmed);
+      if (out.length >= MAX_INTERESTS) break;
+    }
+    return out;
+  }
+
+  private mergeInterests(existing: string[], incoming: string[]): string[] {
+    const merged: string[] = [];
+    const seen = new Set<string>();
+    for (const item of existing) {
+      if (seen.has(item)) continue;
+      merged.push(item);
+      seen.add(item);
+    }
+    for (const item of incoming) {
+      if (seen.has(item)) continue;
+      merged.push(item);
+      seen.add(item);
+    }
+    if (merged.length <= MAX_INTERESTS) return merged;
+    // Keep the most recent items to make room for new interests.
+    return merged.slice(-MAX_INTERESTS);
   }
 
   private parseProfileUpdates(
@@ -115,11 +227,17 @@ export class ProfileUpdater {
         return out;
       };
 
-      // 合并兴趣（去重）
+      // 合并兴趣（去重 + 净化 + 限制长度）
       if (Array.isArray(parsed.interests) && parsed.interests.length > 0) {
-        const newInterests = [...new Set([...existing.interests, ...parsed.interests])];
-        if (newInterests.length > existing.interests.length) {
-          updates.interests = newInterests;
+        const sanitizedIncoming = this.sanitizeInterests(parsed.interests);
+        if (sanitizedIncoming.length > 0) {
+          const merged = this.mergeInterests(existing.interests, sanitizedIncoming);
+          const changed =
+            merged.length !== existing.interests.length ||
+            merged.some((value, idx) => value !== existing.interests[idx]);
+          if (changed) {
+            updates.interests = merged;
+          }
         }
       }
 

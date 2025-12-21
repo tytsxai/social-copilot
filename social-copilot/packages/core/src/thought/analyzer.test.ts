@@ -12,6 +12,10 @@ const baseContact = {
 };
 
 function buildContext(text: string): ConversationContext {
+  return buildContextWithText(text);
+}
+
+function buildContextWithText(text: unknown): ConversationContext {
   return {
     contactKey: baseContact,
     recentMessages: [
@@ -20,7 +24,7 @@ function buildContext(text: string): ConversationContext {
         contactKey: baseContact,
         direction: 'incoming',
         senderName: 'Alice',
-        text,
+        text: text as string,
         timestamp: Date.now(),
       },
     ],
@@ -29,7 +33,7 @@ function buildContext(text: string): ConversationContext {
       contactKey: baseContact,
       direction: 'incoming',
       senderName: 'Alice',
-      text,
+      text: text as string,
       timestamp: Date.now(),
     },
   };
@@ -93,6 +97,36 @@ describe('ThoughtAnalyzer', () => {
     expect(result.recommended[0]).toBe('neutral');
     expect(result.reason).toBe('No specific sentiment detected');
     expect(result.confidence).toBe(0);
+  });
+
+  it.each([undefined, null, 123, { foo: 'bar' }])(
+    'returns default order when message text is invalid: %s',
+    (text) => {
+      const analyzer = new ThoughtAnalyzer();
+      const result = analyzer.analyze(buildContextWithText(text));
+
+      expect(result.recommended).toEqual(DEFAULT_CONFIG.defaultOrder);
+      expect(result.confidence).toBe(0);
+      expect(result.reason).toContain('Invalid message text');
+    }
+  );
+
+  it('ignores invalid keywords config instead of throwing', () => {
+    const analyzer = new ThoughtAnalyzer({
+      keywords: { negative: null as unknown as string[] },
+    });
+    const result = analyzer.analyze(buildContext('今天好累'));
+
+    expect(result.recommended[0]).toBe('empathy');
+  });
+
+  it('ignores invalid weights config instead of throwing', () => {
+    const analyzer = new ThoughtAnalyzer({
+      weights: { negative: '10' as unknown as number, neutralBase: Number.NaN },
+    });
+    const result = analyzer.analyze(buildContext('今天好累'));
+
+    expect(result.recommended[0]).toBe('empathy');
   });
 });
 

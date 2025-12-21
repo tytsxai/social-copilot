@@ -216,6 +216,42 @@ describe('IndexedDBStore - Messages', () => {
     const stylePref = await store.getStylePreference(contactKey);
     expect(stylePref).toBeNull();
   });
+
+  test('retries transient transaction creation failures for write operations', async () => {
+    const anyStore = store as unknown as { db: IDBDatabase };
+    const db = anyStore.db;
+    const originalTransaction = db.transaction.bind(db);
+    let called = 0;
+
+    (db as unknown as { transaction: IDBDatabase['transaction'] }).transaction = ((...args: Parameters<IDBDatabase['transaction']>) => {
+      called += 1;
+      if (called === 1) {
+        if (typeof DOMException !== 'undefined') {
+          throw new DOMException('abort', 'AbortError');
+        }
+        const err = new Error('abort');
+        (err as unknown as { name: string }).name = 'AbortError';
+        throw err;
+      }
+      return originalTransaction(...args);
+    }) as IDBDatabase['transaction'];
+
+    try {
+      await store.saveMessage({
+        id: 'msg-retry',
+        contactKey,
+        direction: 'incoming',
+        senderName: 'Alice',
+        text: 'hello',
+        timestamp: 1,
+      });
+    } finally {
+      (db as unknown as { transaction: IDBDatabase['transaction'] }).transaction = originalTransaction;
+    }
+
+    const count = await store.getMessageCount(contactKey);
+    expect(count).toBe(1);
+  });
 });
 
 describe('IndexedDBStore - Style Preferences', () => {

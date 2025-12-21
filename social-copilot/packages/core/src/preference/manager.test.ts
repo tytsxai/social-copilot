@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fc from 'fast-check';
 import 'fake-indexeddb/auto';
 import { StylePreferenceManager } from './manager';
@@ -30,6 +30,64 @@ describe('StylePreferenceManager', () => {
 
   afterEach(async () => {
     await store.close();
+  });
+
+  test('recordStyleSelection tolerates non-array styleHistory from legacy/polluted data', async () => {
+    const contactKey = fc.sample(contactKeyArb, { numRuns: 1 })[0];
+    const contactKeyStr = contactKeyToString(contactKey);
+
+    await store.saveStylePreference({
+      contactKeyStr,
+      styleHistory: 'not-an-array' as unknown as any,
+      defaultStyle: null,
+      updatedAt: Date.now(),
+    } as any);
+
+    await expect(manager.recordStyleSelection(contactKey, 'humorous')).resolves.toBeUndefined();
+
+    const preference = await manager.getPreference(contactKey);
+    expect(preference?.styleHistory).toEqual(
+      expect.arrayContaining([expect.objectContaining({ style: 'humorous', count: 1 })])
+    );
+  });
+
+  test('recordStyleSelection dedupes and filters invalid styleHistory entries', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2025-01-01T00:00:00.000Z'));
+
+      const contactKey = fc.sample(contactKeyArb, { numRuns: 1 })[0];
+      const contactKeyStr = contactKeyToString(contactKey);
+
+      await store.saveStylePreference({
+        contactKeyStr,
+        styleHistory: [
+          { style: 'humorous', count: 2, lastUsed: 10 },
+          { style: 'humorous', count: 1, lastUsed: 20 },
+          { style: 'invalid', count: 999, lastUsed: 30 },
+          { style: 'caring', count: -1, lastUsed: 40 },
+          { style: 'formal', count: 2.2, lastUsed: 'nope' },
+          'junk',
+          null,
+        ] as any,
+        defaultStyle: null,
+        updatedAt: 0,
+      } as any);
+
+      await manager.recordStyleSelection(contactKey, 'humorous');
+
+      const preference = await manager.getPreference(contactKey);
+      expect(preference).toBeTruthy();
+
+      expect(preference!.styleHistory).toHaveLength(1);
+      expect(preference!.styleHistory[0]).toEqual({
+        style: 'humorous',
+        count: 4,
+        lastUsed: Date.now(),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /**

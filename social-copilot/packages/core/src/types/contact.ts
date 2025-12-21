@@ -64,6 +64,21 @@ export function contactKeyToString(key: ContactKey): string {
 }
 
 /**
+ * 严格比较 ContactKey 的所有字段（包含 peerId）。
+ * 用于运行时隔离/过滤场景；不影响存储 key 的稳定性策略。
+ */
+export function contactKeyEquals(a: ContactKey, b: ContactKey): boolean {
+  return (
+    a.platform === b.platform &&
+    a.app === b.app &&
+    (a.accountId ?? '') === (b.accountId ?? '') &&
+    a.conversationId === b.conversationId &&
+    a.peerId === b.peerId &&
+    a.isGroup === b.isGroup
+  );
+}
+
+/**
  * v1（旧版，已转义）字符串形式：包含 peerId
  * 保留用于兼容读取与数据迁移
  */

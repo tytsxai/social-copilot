@@ -86,12 +86,39 @@ describe('redactPii', () => {
     expect(redactPii('Call +1 (415) 555-2671 now')).toBe('Call [PHONE] now');
   });
 
+  it('redacts E.164 phone numbers up to 15 digits', () => {
+    expect(redactPii('Call +8613800138000 now')).toBe('Call [PHONE] now');
+  });
+
+  it('normalizes fullwidth digits before PII detection', () => {
+    expect(redactPii('电话：＋８６１３８００１３８００００')).toBe('电话：[PHONE]');
+  });
+
   it('redacts URLs but preserves trailing punctuation', () => {
     expect(redactPii('see https://example.com/x).')).toBe('see [URL]).');
   });
 
   it('redacts emails with plus tags and subdomains', () => {
     expect(redactPii('mail me at a.b+tag@sub.example.co.uk')).toBe('mail me at [EMAIL]');
+  });
+
+  it('redacts IPv4 and IPv6 addresses', () => {
+    expect(redactPii('server 192.168.0.1 ok')).toBe('server [IP] ok');
+    expect(redactPii('ping ::1 now')).toBe('ping [IP] now');
+    expect(redactPii('ip 2001:0db8:85a3:0000:0000:8a2e:0370:7334 end')).toBe('ip [IP] end');
+  });
+
+  it('redacts China ID card numbers (18-digit)', () => {
+    expect(redactPii('id 11010519491231002X ok')).toBe('id [CN_ID] ok');
+  });
+
+  it('redacts bank card numbers (16-19 digits) with separators', () => {
+    expect(redactPii('pay 4111 1111 1111 1111 now')).toBe('pay [BANK_CARD] now');
+  });
+
+  it('redacts common API keys and bearer tokens', () => {
+    expect(redactPii('key sk-1234567890abcdefghijklmnopqrstuvwxyz')).toBe('key [API_KEY]');
+    expect(redactPii('Authorization: Bearer abcdefghijklmnopqrstuvwxyz.12345')).toBe('Authorization: Bearer [TOKEN]');
   });
 });
 

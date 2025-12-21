@@ -24,6 +24,31 @@ const DEFAULTS: Required<OutboundPrivacyOptions> = {
   anonymizeSenderNames: true,
 };
 
+function normalizeForPii(text: string): string {
+  // Only normalize characters relevant to PII detection to avoid changing
+  // unrelated punctuation (e.g. Chinese colon "：" should remain intact).
+  return text
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/＋/g, '+');
+}
+
+function luhnCheck(digits: string): boolean {
+  let sum = 0;
+  let doubleDigit = false;
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    const code = digits.charCodeAt(i) - 48;
+    if (code < 0 || code > 9) return false;
+    let add = code;
+    if (doubleDigit) {
+      add *= 2;
+      if (add > 9) add -= 9;
+    }
+    sum += add;
+    doubleDigit = !doubleDigit;
+  }
+  return sum % 10 === 0;
+}
+
 function normalizePositiveInt(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   const rounded = Math.floor(value);
@@ -35,7 +60,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export function redactPii(text: string): string {
-  let out = text;
+  let out = normalizeForPii(text);
 
   // URLs
   out = out.replace(
@@ -49,12 +74,41 @@ export function redactPii(text: string): string {
     '[EMAIL]'
   );
 
+  // Common API keys / tokens.
+  out = out.replace(/\bsk-[A-Za-z0-9]{20,}\b/g, '[API_KEY]');
+  out = out.replace(/\bBearer\s+[A-Za-z0-9._~+/-]{10,}={0,2}\b/gi, 'Bearer [TOKEN]');
+  out = out.replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[TOKEN]');
+
+  // IP addresses (IPv4 and a pragmatic IPv6 matcher).
+  out = out.replace(
+    /(^|[^\w])((?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d))(?!\w)/g,
+    (_match, prefix: string) => `${prefix}[IP]`
+  );
+  out = out.replace(
+    /(^|[^\w])((?:(?:[A-F0-9]{1,4}:){2,7}[A-F0-9]{1,4}|::1))(?!\w)/gi,
+    (_match, prefix: string) => `${prefix}[IP]`
+  );
+
+  // China Resident Identity Card Number (18 digits; checksum not validated here).
+  out = out.replace(
+    /\b[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[0-9Xx]\b/g,
+    '[CN_ID]'
+  );
+
   // Phone numbers (international + local), plus Chinese mobile numbers.
   out = out.replace(/\b1[3-9]\d{9}\b/g, '[PHONE]');
   out = out.replace(/(^|[^\w])([+()0-9][0-9()\s-]{4,}[0-9])(?!\w)/g, (match, prefix: string, candidate: string) => {
     const digitCount = (candidate.match(/\d/g) ?? []).length;
-    if (digitCount < 6 || digitCount > 12) return match;
+    if (digitCount < 6 || digitCount > 15) return match;
     return `${prefix}[PHONE]`;
+  });
+
+  // Bank card numbers (16-19 digits) with a Luhn check.
+  out = out.replace(/(^|[^\w])([0-9][0-9 -]{14,}[0-9])(?!\w)/g, (match, prefix: string, candidate: string) => {
+    const digits = candidate.replace(/[^\d]/g, '');
+    if (digits.length < 16 || digits.length > 19) return match;
+    if (!luhnCheck(digits)) return match;
+    return `${prefix}[BANK_CARD]`;
   });
 
   return out;
