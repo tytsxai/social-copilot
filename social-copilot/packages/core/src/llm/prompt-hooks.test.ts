@@ -36,6 +36,22 @@ afterEach(() => {
 });
 
 describe('prompt-hooks', () => {
+  it('register validates hook shape', () => {
+    const r = new PromptHookRegistry();
+    expect(() => r.register(undefined as any)).toThrow(/hook must be an object/i);
+    expect(() => r.register({ name: '' } as any)).toThrow(/hook\.name must be a non-empty string/i);
+    expect(() => r.register({ name: 'x', transformSystemPrompt: 'nope' } as any)).toThrow(/transformSystemPrompt must be a function/i);
+    expect(() => r.register({ name: 'x', transformUserPrompt: 123 } as any)).toThrow(/transformUserPrompt must be a function/i);
+  });
+
+  it('getAll returns a shallow copy', () => {
+    const r = new PromptHookRegistry();
+    r.register({ name: 'a', transformSystemPrompt: (p) => p });
+    const hooks = r.getAll() as any[];
+    hooks.push({ name: 'b', transformSystemPrompt: (p: string) => `${p}-B` });
+    expect(r.applySystemHooks('S', input)).toBe('S');
+  });
+
   it('PromptHookRegistry isolates hook state per instance', () => {
     const r1 = new PromptHookRegistry();
     const r2 = new PromptHookRegistry();
@@ -123,6 +139,42 @@ describe('prompt-hooks', () => {
     const messages = warnSpy.mock.calls.map((c) => String(c[0]));
     expect(messages.every((m) => m.includes('prompt hook "boom"'))).toBe(true);
     expect(messages.some((m) => m.includes('nope'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('skips hook output when return type is not string', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    registerPromptHook({
+      name: 'bad',
+      transformSystemPrompt: () => 123 as any,
+      transformUserPrompt: () => ({ nope: true } as any),
+    });
+    registerPromptHook({
+      name: 'good',
+      transformSystemPrompt: (p) => `${p}-OK`,
+      transformUserPrompt: (p) => `${p}-ok`,
+    });
+
+    expect(applySystemPromptHooks('S', input)).toBe('S-OK');
+    expect(applyUserPromptHooks('U', input)).toBe('U-ok');
+    const messages = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(messages.some((m) => m.includes('returned non-string'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('truncates too-long hook output', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const veryLong = 'x'.repeat(120_000);
+    registerPromptHook({
+      name: 'long',
+      transformSystemPrompt: () => veryLong,
+      transformUserPrompt: () => veryLong,
+    });
+
+    expect(applySystemPromptHooks('S', input).length).toBe(100_000);
+    expect(applyUserPromptHooks('U', input).length).toBe(100_000);
+    const messages = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(messages.some((m) => m.includes('too-long string'))).toBe(true);
     warnSpy.mockRestore();
   });
 });

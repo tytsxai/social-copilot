@@ -113,6 +113,24 @@ describe('extractJsonBlock', () => {
     const result = extractJsonBlock(text);
     expect(result).toBe('[]');
   });
+
+  it('ignores closing braces inside double-quoted strings', () => {
+    const text = 'prefix {"text":"hello } world","ok":true} suffix';
+    const result = extractJsonBlock(text);
+    expect(result).toBe('{"text":"hello } world","ok":true}');
+  });
+
+  it('ignores closing brackets inside double-quoted strings in arrays', () => {
+    const text = 'prefix ["a ] b", 1, 2] suffix';
+    const result = extractJsonBlock(text);
+    expect(result).toBe('["a ] b", 1, 2]');
+  });
+
+  it('handles escaped quotes inside strings when scanning', () => {
+    const text = 'prefix {"text":"she said: \\"}\\", ok","n":1} suffix';
+    const result = extractJsonBlock(text);
+    expect(result).toBe('{"text":"she said: \\"}\\", ok","n":1}');
+  });
 });
 
 describe('extractJsonObjectBlock', () => {

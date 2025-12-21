@@ -7,6 +7,39 @@ import { redactSecrets } from '../utils/redact';
 import { normalizeBaseUrl } from './normalize-base-url';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function formatType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function extractClaudeContent(data: unknown): string {
+  if (!isPlainObject(data)) {
+    throw new Error(`Invalid Claude response structure: expected object, got ${formatType(data)}`);
+  }
+
+  const content = (data as { content?: unknown }).content;
+  if (!Array.isArray(content) || content.length === 0) {
+    throw new Error('Invalid Claude response structure: missing non-empty content array');
+  }
+
+  const first = content[0];
+  if (!isPlainObject(first)) {
+    throw new Error(`Invalid Claude response structure: content[0] expected object, got ${formatType(first)}`);
+  }
+
+  const text = (first as { text?: unknown }).text;
+  if (typeof text !== 'string') {
+    throw new Error(`Invalid Claude response structure: content[0].text expected string, got ${formatType(text)}`);
+  }
+
+  return text;
+}
+
 /**
  * Claude API Provider Configuration
  */
@@ -14,6 +47,8 @@ export interface ClaudeProviderConfig {
   apiKey: string;
   baseUrl?: string;
   model?: string;
+  allowInsecureHttp?: boolean;
+  allowPrivateHosts?: boolean;
   registry?: PromptHookRegistry;
 }
 
@@ -31,8 +66,14 @@ export class ClaudeProvider implements LLMProvider {
   private registry?: PromptHookRegistry;
 
   constructor(config: ClaudeProviderConfig) {
-    this.apiKey = config.apiKey;
-    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.anthropic.com');
+    if (!ClaudeProvider.validateApiKey(config.apiKey)) {
+      throw new Error('Invalid Claude apiKey');
+    }
+    this.apiKey = config.apiKey.trim();
+    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.anthropic.com', {
+      allowInsecureHttp: config.allowInsecureHttp,
+      allowPrivateHosts: config.allowPrivateHosts,
+    });
     this.model = config.model || 'claude-sonnet-4-5';
     this.registry = config.registry;
   }
@@ -45,7 +86,9 @@ export class ClaudeProvider implements LLMProvider {
     if (!apiKey || typeof apiKey !== 'string') {
       return false;
     }
-    return apiKey.startsWith('sk-ant-');
+    const trimmed = apiKey.trim();
+    if (!trimmed) return false;
+    return trimmed.startsWith('sk-ant-');
   }
 
   async generateReply(input: LLMInput): Promise<LLMOutput> {
@@ -92,8 +135,8 @@ export class ClaudeProvider implements LLMProvider {
       throw new Error(`Claude API error: ${response.status}${suffix}`);
     }
 
-    const data = await response.json();
-    const content = data.content?.[0]?.text || '';
+    const data: unknown = await response.json();
+    const content = extractClaudeContent(data);
     const candidates = this.parseResponse(content, input.styles, task);
 
     return {

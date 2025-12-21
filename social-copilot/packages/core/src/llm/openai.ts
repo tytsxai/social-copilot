@@ -7,6 +7,55 @@ import { redactSecrets } from '../utils/redact';
 import { normalizeBaseUrl } from './normalize-base-url';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function formatType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function extractOpenAIContent(data: unknown): string {
+  if (!isPlainObject(data)) {
+    throw new Error(`Invalid OpenAI response structure: expected object, got ${formatType(data)}`);
+  }
+
+  const choices = (data as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    throw new Error('Invalid OpenAI response structure: missing non-empty choices array');
+  }
+
+  const firstChoice = choices[0];
+  if (!isPlainObject(firstChoice)) {
+    throw new Error(`Invalid OpenAI response structure: choices[0] expected object, got ${formatType(firstChoice)}`);
+  }
+
+  const message = (firstChoice as { message?: unknown }).message;
+  if (!isPlainObject(message)) {
+    throw new Error(`Invalid OpenAI response structure: choices[0].message expected object, got ${formatType(message)}`);
+  }
+
+  const content = (message as { content?: unknown }).content;
+  if (typeof content !== 'string') {
+    throw new Error(
+      `Invalid OpenAI response structure: choices[0].message.content expected string, got ${formatType(content)}`
+    );
+  }
+
+  return content;
+}
+
+export interface OpenAIProviderConfig {
+  apiKey: string;
+  baseUrl?: string;
+  model?: string;
+  allowInsecureHttp?: boolean;
+  allowPrivateHosts?: boolean;
+  registry?: PromptHookRegistry;
+}
+
 /**
  * OpenAI API Provider
  */
@@ -17,11 +66,26 @@ export class OpenAIProvider implements LLMProvider {
   private model: string;
   private registry?: PromptHookRegistry;
 
-  constructor(config: { apiKey: string; baseUrl?: string; model?: string; registry?: PromptHookRegistry }) {
-    this.apiKey = config.apiKey;
-    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.openai.com');
+  constructor(config: OpenAIProviderConfig) {
+    if (!OpenAIProvider.validateApiKey(config.apiKey)) {
+      throw new Error('Invalid OpenAI apiKey');
+    }
+    this.apiKey = config.apiKey.trim();
+    this.baseUrl = normalizeBaseUrl(config.baseUrl || 'https://api.openai.com', {
+      allowInsecureHttp: config.allowInsecureHttp,
+      allowPrivateHosts: config.allowPrivateHosts,
+    });
     this.model = config.model || 'gpt-5.2-chat-latest';
     this.registry = config.registry;
+  }
+
+  static validateApiKey(apiKey: string): boolean {
+    if (!apiKey || typeof apiKey !== 'string') return false;
+    const trimmed = apiKey.trim();
+    if (!trimmed) return false;
+    if (/\s/.test(trimmed)) return false;
+    // Common OpenAI keys start with "sk-"; accept any non-empty token-like key to avoid false negatives.
+    return true;
   }
 
   async generateReply(input: LLMInput): Promise<LLMOutput> {
@@ -63,8 +127,8 @@ export class OpenAIProvider implements LLMProvider {
       throw new Error(`OpenAI API error: ${response.status} ${errorMessage}`);
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
+    const data: unknown = await response.json();
+    const content = extractOpenAIContent(data);
     const candidates = task === 'reply'
       ? this.parseReplyResponse(content, input.styles)
       : this.parseNonReplyResponse(content, input.styles, task);

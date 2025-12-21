@@ -222,15 +222,9 @@ export class LLMManager {
    * Generate cache key from input
    */
   private generateCacheKey(input: LLMInput): string {
-    // Use JSON.stringify for simple hash generation
-    const inputStr = JSON.stringify(input);
-
-    // Simple hash function (djb2)
-    let hash = 5381;
-    for (let i = 0; i < inputStr.length; i++) {
-      hash = ((hash << 5) + hash) + inputStr.charCodeAt(i);
-    }
-    return hash.toString(36);
+    const inputStr = stableStringify(input);
+    // Use a deterministic 64-bit hash to keep keys stable without relying on Node crypto.
+    return `fnv1a64:${hashString(inputStr)}`;
   }
 
   /**
@@ -445,4 +439,61 @@ export class LLMManager {
     this.primaryFailedAt = 0;
     this.primaryFailureCount = 0;
   }
+}
+
+function stableStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+
+  const stringifyInner = (v: unknown, inArray: boolean): string => {
+    if (v === null) return 'null';
+    const t = typeof v;
+
+    if (t === 'string' || t === 'number' || t === 'boolean') return JSON.stringify(v);
+    if (t === 'bigint') throw new TypeError('Cannot stableStringify bigint');
+    if (t === 'undefined' || t === 'function' || t === 'symbol') {
+      return inArray ? 'null' : '';
+    }
+
+    // Respect toJSON (e.g., Date)
+    const maybeObject = v as Record<string, unknown>;
+    if (maybeObject && typeof maybeObject.toJSON === 'function') {
+      return stringifyInner(maybeObject.toJSON(), inArray);
+    }
+
+    if (Array.isArray(v)) {
+      const parts = v.map(item => stringifyInner(item, true));
+      return `[${parts.join(',')}]`;
+    }
+
+    if (t === 'object') {
+      if (seen.has(v as object)) throw new TypeError('Cannot stableStringify circular structure');
+      seen.add(v as object);
+
+      const obj = v as Record<string, unknown>;
+      const keys = Object.keys(obj).sort();
+      const parts: string[] = [];
+      for (const key of keys) {
+        const child = obj[key];
+        const childStr = stringifyInner(child, false);
+        if (!childStr) continue; // JSON.stringify omits undefined/function/symbol in objects
+        parts.push(`${JSON.stringify(key)}:${childStr}`);
+      }
+      return `{${parts.join(',')}}`;
+    }
+
+    // Should be unreachable
+    return JSON.stringify(v);
+  };
+
+  return stringifyInner(value, false);
+}
+
+function hashString(input: string): string {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & 0xffffffffffffffffn;
+  }
+  return hash.toString(36);
 }

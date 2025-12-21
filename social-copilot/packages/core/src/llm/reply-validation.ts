@@ -17,6 +17,10 @@ export interface ValidationResult {
 const ALLOWED_REPLY_STYLES: ReplyStyle[] = ['humorous', 'caring', 'rational', 'casual', 'formal'];
 const REPLY_STYLE_SET = new Set<ReplyStyle>(ALLOWED_REPLY_STYLES);
 
+const MAX_REPLY_CONTENT_CHARS = 200_000;
+const MAX_CANDIDATE_TEXT_CHARS = 20_000;
+const MAX_CANDIDATES = 20;
+
 function normalizeReplyStyle(raw: unknown, fallback: ReplyStyle): ReplyStyle {
   if (typeof raw !== 'string') return fallback;
   const s = raw.trim();
@@ -47,6 +51,15 @@ function normalizeReplyStyle(raw: unknown, fallback: ReplyStyle): ReplyStyle {
 
 export function extractJsonBlock(text: string): string | null {
   return extractJsonBlockImpl(text);
+}
+
+export function sanitizeReplyContent(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export function validateReplyCandidates(output: unknown): ValidationResult {
@@ -86,6 +99,13 @@ export function validateReplyCandidates(output: unknown): ValidationResult {
 }
 
 export function parseReplyContent(content: string, styles: ReplyStyle[], task?: LLMInput['task']): ReplyCandidate[] {
+  if (typeof content !== 'string') {
+    throw new ReplyParseError('Reply content must be a string');
+  }
+  if (content.length > MAX_REPLY_CONTENT_CHARS) {
+    throw new ReplyParseError(`Reply content too large (>${MAX_REPLY_CONTENT_CHARS} chars)`);
+  }
+
   // Profile extraction keeps prior loose object parsing to avoid breaking flow
   const effectiveTask = task ?? 'reply';
   if (effectiveTask === 'profile_extraction' || effectiveTask === 'memory_extraction') {
@@ -119,12 +139,18 @@ export function parseReplyContent(content: string, styles: ReplyStyle[], task?: 
   };
 
   const parsed = parseArray();
+  if (parsed.length > MAX_CANDIDATES) {
+    throw new ReplyParseError(`Too many reply candidates (>${MAX_CANDIDATES})`);
+  }
 
   const candidates = parsed.map((item: unknown, idx: number) => {
     const fallbackStyle = styles[idx] || styles[0] || 'casual';
 
     // Some models may return a bare string array; tolerate it by treating the string as text.
     if (typeof item === 'string') {
+      if (item.length > MAX_CANDIDATE_TEXT_CHARS) {
+        throw new ReplyParseError(`candidates[${idx}].text too large (>${MAX_CANDIDATE_TEXT_CHARS} chars)`);
+      }
       return { style: fallbackStyle, text: item, confidence: 0.8 };
     }
 
@@ -136,6 +162,9 @@ export function parseReplyContent(content: string, styles: ReplyStyle[], task?: 
     const text = record.text;
     if (typeof text !== 'string') {
       throw new ReplyParseError(`candidates[${idx}].text must be a string`);
+    }
+    if (text.length > MAX_CANDIDATE_TEXT_CHARS) {
+      throw new ReplyParseError(`candidates[${idx}].text too large (>${MAX_CANDIDATE_TEXT_CHARS} chars)`);
     }
 
     return {

@@ -95,10 +95,10 @@ describe('LLMManager fallback behavior', () => {
     const fallbackOutput = buildOutput(`${fallbackProvider}-model`);
     const fallbackSpy = mockSuccess(fallbackProvider, fallbackOutput);
 
-    const manager = new LLMManager({
-      primary: { provider: 'deepseek', apiKey: 'primary-key' },
-      fallback: { provider: fallbackProvider, apiKey: 'fallback-key' },
-    });
+	    const manager = new LLMManager({
+	      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+	      fallback: { provider: fallbackProvider, apiKey: fallbackProvider === 'claude' ? 'sk-ant-fallback' : 'fallback-key' },
+	    });
 
     const output = await manager.generateReply({ ...baseInput });
 
@@ -118,14 +118,14 @@ describe('LLMManager fallback behavior', () => {
     mockSuccess(fallbackProvider, buildOutput(`${fallbackProvider}-model`));
 
     let notification = '';
-    const manager = new LLMManager(
-      {
-        primary: { provider: 'deepseek', apiKey: 'primary-key' },
-        fallback: { provider: fallbackProvider, apiKey: 'fallback-key' },
-      },
-      {
-        onFallback: (_from, to) => {
-          notification = `Using fallback provider: ${to}`;
+	    const manager = new LLMManager(
+	      {
+	        primary: { provider: 'deepseek', apiKey: 'primary-key' },
+	        fallback: { provider: fallbackProvider, apiKey: fallbackProvider === 'claude' ? 'sk-ant-fallback' : 'fallback-key' },
+	      },
+	      {
+	        onFallback: (_from, to) => {
+	          notification = `Using fallback provider: ${to}`;
         },
       }
     );
@@ -570,5 +570,48 @@ describe('LLMManager caching and deduplication', () => {
     stats = manager.getCacheStats();
     expect(stats.hits).toBe(2);
     expect(stats.misses).toBe(1);
+  });
+});
+
+describe('LLMManager cache key', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('different inputs produce different cache keys', async () => {
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+      cache: { enabled: false },
+    });
+
+    const input1: LLMInput = { ...baseInput, styles: ['casual'] };
+    const input2: LLMInput = { ...baseInput, styles: ['formal'] };
+
+    const key1 = (manager as any).generateCacheKey(input1) as string;
+    const key2 = (manager as any).generateCacheKey(input2) as string;
+    expect(key1).not.toEqual(key2);
+  });
+
+  test('logically identical objects produce the same cache key (stable serialization)', async () => {
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+      cache: { enabled: false },
+    });
+
+    const inputA: LLMInput = {
+      language: 'zh',
+      styles: ['casual'],
+      context: baseInput.context,
+    };
+
+    const inputB: LLMInput = {
+      context: baseInput.context,
+      styles: ['casual'],
+      language: 'zh',
+    };
+
+    const keyA = (manager as any).generateCacheKey(inputA) as string;
+    const keyB = (manager as any).generateCacheKey(inputB) as string;
+    expect(keyA).toEqual(keyB);
   });
 });

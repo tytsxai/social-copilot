@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { ReplyStyle } from '../types';
-import { extractJsonBlock, parseReplyContent, ReplyParseError } from './reply-validation';
+import { extractJsonBlock, parseReplyContent, ReplyParseError, sanitizeReplyContent } from './reply-validation';
 
 describe('reply-validation', () => {
   test('extractJsonBlock finds the first balanced JSON block', () => {
@@ -13,6 +13,12 @@ describe('reply-validation', () => {
     const blob = '前缀 [1, {"x":2}] 还有 {"later":true}';
     const extracted = extractJsonBlock(blob);
     expect(extracted).toBe('[1, {"x":2}]');
+  });
+
+  test('extractJsonBlock ignores braces inside strings', () => {
+    const blob = 'prefix {"text":"hello } world","ok":true} suffix {"later":1}';
+    const extracted = extractJsonBlock(blob);
+    expect(extracted).toBe('{"text":"hello } world","ok":true}');
   });
 
   test('parses reply array content and fills missing styles', () => {
@@ -56,6 +62,20 @@ describe('reply-validation', () => {
     const content = JSON.stringify(['hello']);
     const result = parseReplyContent(content, ['caring']);
     expect(result).toEqual([{ style: 'caring', text: 'hello', confidence: 0.8 }]);
+  });
+
+  test('sanitizeReplyContent encodes HTML entities', () => {
+    const content = JSON.stringify([
+      { style: 'caring', text: '<img src=x onerror="alert(1)"> & "\'<' },
+    ]);
+    const parsed = JSON.parse(content);
+    expect(sanitizeReplyContent(parsed[0].text)).toBe('&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; &quot;&#39;&lt;');
+  });
+
+  test('rejects overly large candidate text', () => {
+    const huge = 'a'.repeat(25_000);
+    const content = JSON.stringify([{ style: 'caring', text: huge }]);
+    expect(() => parseReplyContent(content, ['caring'])).toThrow(ReplyParseError);
   });
 
   test('keeps raw JSON when running profile_extraction task', () => {

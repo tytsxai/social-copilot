@@ -6,10 +6,24 @@ export interface PromptHook {
   transformUserPrompt?: (prompt: string, input: LLMInput) => string;
 }
 
+const MAX_PROMPT_LENGTH = 100_000;
+
 export class PromptHookRegistry {
   private readonly hooks: PromptHook[] = [];
 
   register(hook: PromptHook): void {
+    if (!hook || typeof hook !== 'object') {
+      throw new TypeError('hook must be an object');
+    }
+    if (typeof hook.name !== 'string' || hook.name.trim().length === 0) {
+      throw new TypeError('hook.name must be a non-empty string');
+    }
+    if (hook.transformSystemPrompt !== undefined && typeof hook.transformSystemPrompt !== 'function') {
+      throw new TypeError('hook.transformSystemPrompt must be a function if provided');
+    }
+    if (hook.transformUserPrompt !== undefined && typeof hook.transformUserPrompt !== 'function') {
+      throw new TypeError('hook.transformUserPrompt must be a function if provided');
+    }
     this.hooks.push(hook);
   }
 
@@ -18,7 +32,7 @@ export class PromptHookRegistry {
   }
 
   getAll(): readonly PromptHook[] {
-    return this.hooks;
+    return [...this.hooks];
   }
 
   applySystemHooks(prompt: string, input: LLMInput): string {
@@ -26,7 +40,19 @@ export class PromptHookRegistry {
     for (const hook of this.hooks) {
       if (hook.transformSystemPrompt) {
         try {
-          current = hook.transformSystemPrompt(current, input);
+          const next = hook.transformSystemPrompt(current, input);
+          if (typeof next !== 'string') {
+            console.warn(`prompt hook "${hook.name}" transformSystemPrompt returned non-string`);
+            continue;
+          }
+          if (next.length > MAX_PROMPT_LENGTH) {
+            console.warn(
+              `prompt hook "${hook.name}" transformSystemPrompt returned too-long string (${next.length}); truncating to ${MAX_PROMPT_LENGTH}`,
+            );
+            current = next.slice(0, MAX_PROMPT_LENGTH);
+            continue;
+          }
+          current = next;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.warn(`prompt hook "${hook.name}" transformSystemPrompt failed: ${message}`);
@@ -41,7 +67,19 @@ export class PromptHookRegistry {
     for (const hook of this.hooks) {
       if (hook.transformUserPrompt) {
         try {
-          current = hook.transformUserPrompt(current, input);
+          const next = hook.transformUserPrompt(current, input);
+          if (typeof next !== 'string') {
+            console.warn(`prompt hook "${hook.name}" transformUserPrompt returned non-string`);
+            continue;
+          }
+          if (next.length > MAX_PROMPT_LENGTH) {
+            console.warn(
+              `prompt hook "${hook.name}" transformUserPrompt returned too-long string (${next.length}); truncating to ${MAX_PROMPT_LENGTH}`,
+            );
+            current = next.slice(0, MAX_PROMPT_LENGTH);
+            continue;
+          }
+          current = next;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.warn(`prompt hook "${hook.name}" transformUserPrompt failed: ${message}`);

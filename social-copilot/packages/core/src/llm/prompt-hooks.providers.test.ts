@@ -163,7 +163,7 @@ describe('prompt-hooks (providers)', () => {
     });
     vi.stubGlobal('fetch', fetchSpy);
 
-    const provider = new ClaudeProvider({ apiKey: 'test-key' });
+    const provider = new ClaudeProvider({ apiKey: 'sk-ant-test' });
     await provider.generateReply(input);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
