@@ -187,7 +187,7 @@ export class CopilotUI {
 
     const candidateList = this.candidates.map((c, i) => `
       <div class="sc-candidate" data-index="${i}">
-        <span class="sc-style">${this.getStyleLabel(c.style)}</span>
+        <span class="sc-style">${this.escapeHtml(this.getStyleLabel(c.style))}</span>
         <p class="sc-text">${this.escapeHtml(c.text)}</p>
       </div>
     `).join('');
@@ -345,8 +345,14 @@ export class CopilotUI {
   }
 
   private async restorePosition() {
+    const storage = (globalThis as any)?.chrome?.storage?.local;
+    if (!storage) {
+      this.applyPosition();
+      return;
+    }
+
     try {
-      const result = await chrome.storage.local.get(this.positionStorageKey);
+      const result = await storage.get(this.positionStorageKey);
       const saved = result[this.positionStorageKey] as { top?: number; left?: number } | undefined;
 
       if (saved && typeof saved.top === 'number' && typeof saved.left === 'number') {
@@ -362,8 +368,11 @@ export class CopilotUI {
   private async savePosition() {
     if (!this.position) return;
 
+    const storage = (globalThis as any)?.chrome?.storage?.local;
+    if (!storage) return;
+
     try {
-      await chrome.storage.local.set({
+      await storage.set({
         [this.positionStorageKey]: this.position,
       });
     } catch (error) {

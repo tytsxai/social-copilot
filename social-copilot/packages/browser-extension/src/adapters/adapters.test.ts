@@ -4,6 +4,7 @@ import { contactKeyToString } from '@social-copilot/core';
 import { TelegramAdapter } from './telegram';
 import { WhatsAppAdapter } from './whatsapp';
 import { SlackAdapter } from './slack';
+import { queryFirst } from './base';
 
 function createMemoryStorage(): Storage {
   const data = new Map<string, string>();
@@ -204,5 +205,24 @@ describe('Platform adapters (contract)', () => {
     const ok = adapter.fillInput('ping');
     expect(ok).toBe(true);
     expect(document.querySelector('[data-qa="message_input"] [role="textbox"]')?.textContent).toBe('ping');
+  });
+});
+
+describe('queryFirst()', () => {
+  test('skips invalid selector and continues probing', () => {
+    document.body.innerHTML = `<div class="ok"></div>`;
+
+    expect(() => queryFirst(['div[', '.ok'])).not.toThrow();
+    const found = queryFirst<HTMLElement>(['div[', '.ok']);
+    expect(found?.selector).toBe('.ok');
+    expect(found?.element).toBeInstanceOf(HTMLElement);
+    expect(found?.element.classList.contains('ok')).toBe(true);
+  });
+
+  test('returns null when all selectors are invalid or missing', () => {
+    document.body.innerHTML = `<div class="ok"></div>`;
+
+    expect(() => queryFirst(['div[', 'span['])).not.toThrow();
+    expect(queryFirst(['div[', 'span['])).toBeNull();
   });
 });

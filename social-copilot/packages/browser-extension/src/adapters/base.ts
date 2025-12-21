@@ -51,8 +51,29 @@ export function queryFirst<T extends Element = Element>(
 ): { element: T; selector: string } | null {
   const list = Array.isArray(selectors) ? selectors : splitSelectors(selectors);
   for (const selector of list) {
-    const el = root.querySelector(selector);
-    if (el) return { element: el as T, selector };
+    try {
+      const el = root.querySelector(selector);
+      if (el) return { element: el as T, selector };
+    } catch (err) {
+      // Invalid CSS selectors can throw a DOMException (name: "SyntaxError").
+      // Skip only that class of errors so we don't hide unrelated issues.
+      const isInvalidSelector =
+        err instanceof DOMException ? err.name === 'SyntaxError' : err instanceof Error ? err.name === 'SyntaxError' : false;
+
+      if (!isInvalidSelector) throw err;
+
+      const isDev =
+        (typeof process !== 'undefined' &&
+          typeof process.env !== 'undefined' &&
+          process.env.NODE_ENV === 'development') ||
+        (typeof process === 'undefined' && typeof location !== 'undefined' && location.hostname === 'localhost');
+
+      if (isDev) {
+        // eslint-disable-next-line no-console
+        console.warn('[queryFirst] invalid selector skipped:', selector, err);
+      }
+      continue;
+    }
   }
   return null;
 }

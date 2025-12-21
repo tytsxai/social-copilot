@@ -27,4 +27,15 @@ describe('renderStyleStats', () => {
       }
     }
   );
+
+  test('escapes style labels to prevent XSS', () => {
+    const style = '<img src=x onerror=alert(1) />';
+    const html = renderStyleStats({ styleHistory: [{ style, count: 1 }] });
+
+    // The key security check: < and > are escaped so no HTML tags are created
+    expect(html).toContain('&lt;img');
+    expect(html).toContain('&gt;');
+    expect(html).not.toContain('<img');
+    // onerror= is still in the text but harmless since it's not in an actual tag
+  });
 });

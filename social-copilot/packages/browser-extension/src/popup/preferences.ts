@@ -10,6 +10,15 @@ export function getStyleLabel(style: string): string {
   return styleLabelMap[style] || style;
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 export function renderStyleStats(
   preference: { styleHistory?: { style: string; count: number }[] } | null
 ): string {
@@ -20,7 +29,8 @@ export function renderStyleStats(
   const sorted = [...preference.styleHistory].sort((a, b) => b.count - a.count);
   return sorted
     .map(
-      (entry) => `<span class="style-pill">${getStyleLabel(entry.style)} <strong>${entry.count}</strong></span>`
+      (entry) =>
+        `<span class="style-pill">${escapeHtml(getStyleLabel(entry.style))} <strong>${escapeHtml(String(entry.count))}</strong></span>`
     )
     .join('');
 }

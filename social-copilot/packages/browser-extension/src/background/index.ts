@@ -27,6 +27,11 @@ import {
   legacyContactKeyToString,
   normalizeContactKeyStr,
   THOUGHT_CARDS,
+  UserDataBackupSchema,
+  GenerateReplyPayloadSchema,
+  AnalyzeThoughtPayloadSchema,
+  ConfigSchema,
+  formatZodError,
 } from '@social-copilot/core';
 import type { ProviderType, LLMManagerConfig } from '@social-copilot/core';
 
@@ -1074,22 +1079,25 @@ async function dispatchMessage(
   request: { type: string; [key: string]: unknown }
 ) {
   switch (request.type) {
-    case 'GENERATE_REPLY':
-      return handleGenerateReply(
-        request.payload as {
-          contactKey: ContactKey;
-          messages: Message[];
-          currentMessage: Message;
-          thoughtDirection?: ThoughtType;
-        }
-      );
+    case 'GENERATE_REPLY': {
+      // Validate payload using Zod schema
+      const validationResult = GenerateReplyPayloadSchema.safeParse(request.payload);
+      if (!validationResult.success) {
+        const errorMessage = formatZodError(validationResult.error);
+        return { error: `GENERATE_REPLY 请求参数验证失败：${errorMessage}` };
+      }
+      return handleGenerateReply(validationResult.data);
+    }
 
-    case 'ANALYZE_THOUGHT':
-      return handleAnalyzeThought(
-        request.payload as {
-          context: ConversationContext;
-        }
-      );
+    case 'ANALYZE_THOUGHT': {
+      // Validate payload using Zod schema
+      const validationResult = AnalyzeThoughtPayloadSchema.safeParse(request.payload);
+      if (!validationResult.success) {
+        const errorMessage = formatZodError(validationResult.error);
+        return { error: `ANALYZE_THOUGHT 请求参数验证失败：${errorMessage}` };
+      }
+      return handleAnalyzeThought(validationResult.data);
+    }
 
     case 'SET_API_KEY':
       // 兼容旧版本
@@ -1099,8 +1107,15 @@ async function dispatchMessage(
         styles: DEFAULT_STYLES,
       });
 
-    case 'SET_CONFIG':
-      return setConfig(request.config as Config);
+    case 'SET_CONFIG': {
+      // Validate config using Zod schema
+      const validationResult = ConfigSchema.safeParse(request.config);
+      if (!validationResult.success) {
+        const errorMessage = formatZodError(validationResult.error);
+        return { error: `SET_CONFIG 配置验证失败：${errorMessage}` };
+      }
+      return setConfig(validationResult.data);
+    }
 
     case 'ACK_PRIVACY': {
       const acknowledged = true;
@@ -2103,19 +2118,16 @@ async function exportUserData(): Promise<{ backup: UserDataBackupV1 }> {
 }
 
 async function importUserData(payload: unknown): Promise<{ success: boolean; error?: string; imported?: Record<string, number>; skipped?: Record<string, number> }> {
-  if (!isPlainObject(payload) || payload.schemaVersion !== 1) {
-    return { success: false, error: '备份文件格式不正确（schemaVersion）' };
-  }
-  if (!isPlainObject(payload.data)) {
-    return { success: false, error: '备份文件格式不正确（data）' };
+  // Validate payload using Zod schema
+  const validationResult = UserDataBackupSchema.safeParse(payload);
+  if (!validationResult.success) {
+    const errorMessage = formatZodError(validationResult.error);
+    return { success: false, error: `备份文件格式验证失败：${errorMessage}` };
   }
 
-  const profilesRaw = Array.isArray(payload.data.profiles) ? payload.data.profiles : [];
-  const stylePreferencesRaw = Array.isArray(payload.data.stylePreferences) ? payload.data.stylePreferences : [];
-  const contactMemoriesRaw = Array.isArray(payload.data.contactMemories) ? payload.data.contactMemories : [];
-
-  const profileUpdateCounts = normalizeCountRecordKeys(normalizeCountRecord(payload.data.profileUpdateCounts));
-  const memoryUpdateCounts = normalizeCountRecordKeys(normalizeCountRecord(payload.data.memoryUpdateCounts));
+  const validatedData = validationResult.data;
+  const profileUpdateCounts = normalizeCountRecordKeys(validatedData.data.profileUpdateCounts);
+  const memoryUpdateCounts = normalizeCountRecordKeys(validatedData.data.memoryUpdateCounts);
 
   let importResult:
     | { imported: { profiles: number; stylePreferences: number; contactMemories: number }; skipped: Record<string, number> }
@@ -2124,9 +2136,9 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
     importResult = await store.importSnapshot({
       schemaVersion: 1,
       exportedAt: Date.now(),
-      profiles: profilesRaw,
-      stylePreferences: stylePreferencesRaw,
-      contactMemories: contactMemoriesRaw,
+      profiles: validatedData.data.profiles,
+      stylePreferences: validatedData.data.stylePreferences,
+      contactMemories: validatedData.data.contactMemories,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
