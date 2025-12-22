@@ -22,12 +22,16 @@
 | `language` | `'zh' \| 'en' \| 'auto'` | `'auto'` | 输出语言偏好（auto 推荐） |
 | `autoTrigger` | `boolean` | `true` | 收到消息是否自动生成建议 |
 | `autoInGroups` | `boolean` | `false` | 群聊是否自动生成建议（仍可手动触发） |
+| `autoAgent` | `boolean` | `false` | 自动代理（收到消息时自动生成并尝试发送） |
+| `customSystemPrompt` | `string` | `undefined` | 追加到系统提示词末尾的自定义指令 |
+| `customUserPrompt` | `string` | `undefined` | 追加到用户提示词末尾的自定义指令 |
 | `privacyAcknowledged` | `boolean` | `false` | 是否已确认隐私告知（未确认不会调用第三方模型） |
 | `redactPii` | `boolean` | `true` | 出站前脱敏（邮箱/手机号/链接等） |
 | `anonymizeSenders` | `boolean` | `true` | 出站前匿名化昵称（我/对方） |
 | `contextMessageLimit` | `number` | `10` | 发送给模型的最近消息条数（含当前消息） |
 | `maxCharsPerMessage` | `number` | `500` | 单条消息出站字符上限 |
 | `maxTotalChars` | `number` | `4000` | 整体上下文出站字符预算 |
+| `temperature` | `number` | `80` | 采样温度（0-100，越高越发散） |
 | `enableFallback` | `boolean` | `false` | 是否启用备用模型 |
 | `fallbackProvider` | `ProviderType` | `provider` | 备用模型提供商（不填则沿用主用） |
 | `fallbackBaseUrl` | `string` | `undefined` | 可选：覆盖备用提供商 Base URL（默认仅支持官方域名；不要包含 `/v1`） |

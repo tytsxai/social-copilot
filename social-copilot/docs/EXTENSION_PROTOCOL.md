@@ -94,6 +94,16 @@
 - Response:
   - `{ success: true, privacyAcknowledged: true }`
 
+**`TEST_CONNECTION`**
+
+- Request:
+  - `config: Config`（与 `SET_CONFIG` 相同结构）
+- Response（成功）:
+  - `{ primary: { ok: true; provider: string; model?: string; latencyMs: number }, fallback?: { ok: true; provider: string; model?: string; latencyMs: number } }`
+- Response（失败）:
+  - `{ primary: { ok: false; provider: string; error: string; latencyMs: number }, fallback?: { ok: false; provider: string; error: string; latencyMs: number } }`
+  - 或 `{ error: string }`（配置校验失败）
+
 ### 3.4 画像/偏好/记忆
 
 **`GET_PROFILE`**
@@ -130,6 +140,10 @@
 - Request: 无
 - Response: `{ contacts: Array<{ displayName: string; app: string; messageCount: number; key: ContactKey; memorySummary?: string | null; memoryUpdatedAt?: number | null }> }`
 
+**`GET_CONTACTS_WITH_PREFS`**
+- Request: 无
+- Response: `{ contacts: Array<{ displayName: string; app: string; messageCount: number; key: ContactKey; memorySummary?: string | null; memoryUpdatedAt?: number | null; preference?: StylePreference | null }> }`
+
 **`CLEAR_CONTACT_DATA`**
 - Request: `contactKey: ContactKey`
 - Response: `{ success: true }`
@@ -158,6 +172,10 @@
   - `storeError?: { name: string; message: string }`
   - `config: Record<string, unknown>`（脱敏后的配置摘要，不含 API Key）
 
+**`GET_DIAGNOSTICS_JSON`**
+- Request: `{ pretty?: boolean }`
+- Response: `{ json: string }`
+
 **`CLEAR_DIAGNOSTICS`**
 - Request: 无
 - Response: `{ success: true }`
@@ -179,6 +197,14 @@
 - Request: 无
 - Response（成功）:
   - `{ backup: UserDataBackupV1 }`
+- Response（失败）:
+  - `{ error: string }`
+
+**`EXPORT_USER_DATA_JSON`**
+
+- Request: 无
+- Response（成功）:
+  - `{ json: string }`（预格式化的 JSON 字符串）
 - Response（失败）:
   - `{ error: string }`
 
