@@ -1,7 +1,7 @@
 import type { ContactKey } from '@social-copilot/core';
-import { renderStyleStats } from './preferences';
 import { parseAndValidateUserDataBackup, validateImportFileSize } from './importUserData';
 import { escapeHtml } from '../utils/escape-html';
+import { renderStyleStats } from './preferences';
 
 // DOM 元素
 const statusEl = document.getElementById('status')!;
@@ -20,12 +20,17 @@ const enableMemoryCheckbox = document.getElementById('enableMemory') as HTMLInpu
 const languageSelect = document.getElementById('language') as HTMLSelectElement;
 const autoInGroupsCheckbox = document.getElementById('autoInGroups') as HTMLInputElement;
 const autoTriggerCheckbox = document.getElementById('autoTrigger') as HTMLInputElement;
+const autoAgentCheckbox = document.getElementById('autoAgent') as HTMLInputElement;
+const customSystemPromptInput = document.getElementById('customSystemPrompt') as HTMLTextAreaElement;
+const customUserPromptInput = document.getElementById('customUserPrompt') as HTMLTextAreaElement;
 const privacyAcknowledgedCheckbox = document.getElementById('privacyAcknowledged') as HTMLInputElement;
 const redactPiiCheckbox = document.getElementById('redactPii') as HTMLInputElement;
 const anonymizeSendersCheckbox = document.getElementById('anonymizeSenders') as HTMLInputElement;
 const contextMessageLimitInput = document.getElementById('contextMessageLimit') as HTMLInputElement;
 const maxCharsPerMessageInput = document.getElementById('maxCharsPerMessage') as HTMLInputElement;
 const maxTotalCharsInput = document.getElementById('maxTotalChars') as HTMLInputElement;
+const temperatureInput = document.getElementById('temperature') as HTMLInputElement | null;
+const temperatureValueEl = document.getElementById('temperatureValue') as HTMLElement | null;
 const enableFallbackCheckbox = document.getElementById('enableFallback') as HTMLInputElement;
 const fallbackFields = document.getElementById('fallbackFields')!;
 const fallbackProviderSelect = document.getElementById('fallbackProvider') as HTMLSelectElement;
@@ -40,7 +45,8 @@ const fallbackApiKeyInput = document.getElementById('fallbackApiKey') as HTMLInp
 const fallbackApiKeyHint = document.getElementById('fallbackApiKeyHint')!;
 const suggestionCountSelect = document.getElementById('suggestionCount') as HTMLSelectElement;
 const saveBtn = document.getElementById('saveBtn')!;
-const contactListEl = document.getElementById('contactList')!;
+const testConnectionBtn = document.getElementById('testConnectionBtn') as HTMLButtonElement | null;
+const contactListEl = document.getElementById('contactList');
 const clearDataBtn = document.getElementById('clearDataBtn')!;
 const exportUserDataBtn = document.getElementById('exportUserDataBtn')!;
 const importUserDataBtn = document.getElementById('importUserDataBtn')!;
@@ -60,6 +66,24 @@ let lastStatus: {
   privacyAcknowledged?: boolean;
   autoTrigger?: boolean;
 } | null = null;
+
+function normalizeTemperaturePercent(value: unknown): number {
+  const fallback = 80;
+  const n = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, Math.trunc(n)));
+}
+
+function syncTemperatureUi(value: unknown) {
+  const normalized = normalizeTemperaturePercent(value);
+  if (!temperatureInput || !temperatureValueEl) return;
+  temperatureInput.value = String(normalized);
+  temperatureValueEl.textContent = String(normalized);
+}
+
+temperatureInput?.addEventListener('input', () => {
+  syncTemperatureUi(temperatureInput.value);
+});
 
 try {
   if (aboutVersionEl) {
@@ -82,12 +106,104 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
     document.getElementById(tabId)?.classList.add('active');
 
-    // 加载联系人列表
     if (tabId === 'contacts') {
-      loadContacts();
+      void loadContacts();
     }
   });
 });
+
+type ContactListItem = {
+  displayName: string;
+  app: string;
+  messageCount: number;
+  key: ContactKey;
+  memorySummary?: string | null;
+  memoryUpdatedAt?: number | null;
+  preference?: { styleHistory?: { style: string; count: number }[] } | null;
+};
+
+let contactsCache: ContactListItem[] = [];
+
+if (contactListEl) {
+  contactListEl.addEventListener('click', async (ev) => {
+    const target = ev.target as HTMLElement | null;
+    if (!target) return;
+    const btn = target.closest('button');
+    if (!btn) return;
+
+    const index = Number(btn.getAttribute('data-index') || '-1');
+    const contact = contactsCache[index];
+    if (!contact) return;
+
+    try {
+      if (btn.classList.contains('reset-pref-btn')) {
+        if (!confirm(`重置 ${contact.displayName} 的风格偏好？`)) return;
+        await chrome.runtime.sendMessage({ type: 'RESET_STYLE_PREFERENCE', contactKey: contact.key });
+        await loadContacts();
+        return;
+      }
+      if (btn.classList.contains('clear-memory-btn')) {
+        if (!confirm(`清空 ${contact.displayName} 的长期记忆？`)) return;
+        await chrome.runtime.sendMessage({ type: 'CLEAR_CONTACT_MEMORY', contactKey: contact.key });
+        await loadContacts();
+        return;
+      }
+      if (btn.classList.contains('clear-contact-btn')) {
+        if (!confirm(`清除 ${contact.displayName} 的全部本地数据（消息/画像/偏好/记忆）？`)) return;
+        await chrome.runtime.sendMessage({ type: 'CLEAR_CONTACT_DATA', contactKey: contact.key });
+        await loadContacts();
+        return;
+      }
+    } catch (err) {
+      statusEl.className = 'status warning';
+      statusEl.textContent = `⚠ 操作失败：${(err as Error).message}`;
+    }
+  });
+}
+
+async function loadContacts() {
+  if (!contactListEl) return;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_CONTACTS_WITH_PREFS' });
+    const contacts = (response?.contacts ?? []) as ContactListItem[];
+    contactsCache = contacts;
+
+    if (contacts.length === 0) {
+      contactListEl.innerHTML = '<div class="empty-state">暂无联系人记录</div>';
+      return;
+    }
+
+    contactListEl.innerHTML = contacts
+      .map(
+        (contact, index) => `
+        <div class="contact-item">
+          <div class="contact-header">
+            <div class="contact-avatar">${escapeHtml(contact.displayName.charAt(0).toUpperCase())}</div>
+            <div class="contact-info">
+              <div class="contact-name">${escapeHtml(contact.displayName)}</div>
+              <div class="contact-meta">${escapeHtml(contact.app)} · ${escapeHtml(String(contact.messageCount))} 条消息</div>
+            </div>
+            <div class="contact-actions">
+              <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
+              <button class="clear-memory-btn" data-index="${index}">清空记忆</button>
+              <button class="clear-contact-btn" data-index="${index}">清除数据</button>
+            </div>
+	          </div>
+	          <div class="style-stats">
+	            ${renderStyleStats(contact.preference ?? null)}
+	          </div>
+	          <div class="memory-box">
+            <div class="memory-title">长期记忆${contact.memoryUpdatedAt ? ` <span class="muted">(${escapeHtml(new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10))})</span>` : ''}</div>
+            <div class="memory-text">${contact.memorySummary ? escapeHtml(contact.memorySummary) : '<span class="muted">暂无长期记忆</span>'}</div>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  } catch (err) {
+    contactListEl.innerHTML = '<div class="empty-state">加载失败</div>';
+  }
+}
 
 // 风格选择
 document.querySelectorAll('.style-option').forEach((option) => {
@@ -274,6 +390,102 @@ function parseOptionalInt(input: HTMLInputElement): number | undefined {
   return Math.floor(n);
 }
 
+function getSelectedStyles(): string[] {
+  const styles: string[] = [];
+  document.querySelectorAll('.style-option.selected').forEach((option) => {
+    const style = option.getAttribute('data-style');
+    if (style) styles.push(style);
+  });
+  return styles;
+}
+
+function buildConfigFromForm() {
+  const apiKey = apiKeyInput.value.trim();
+  const provider = providerSelect.value;
+  const baseUrlRaw = baseUrlInput.value;
+  const allowInsecureHttp = allowInsecureHttpCheckbox.checked;
+  const allowPrivateHosts = allowPrivateHostsCheckbox.checked;
+  const model = modelInput.value.trim();
+  const persistApiKey = persistApiKeyCheckbox.checked;
+  const enableMemory = enableMemoryCheckbox.checked;
+  const language = languageSelect.value;
+  const autoInGroups = autoInGroupsCheckbox.checked;
+  const autoTrigger = autoTriggerCheckbox.checked;
+  const autoAgent = autoAgentCheckbox.checked;
+  const privacyAcknowledged = privacyAcknowledgedCheckbox.checked;
+  const redactPii = redactPiiCheckbox.checked;
+  const anonymizeSenders = anonymizeSendersCheckbox.checked;
+  const contextMessageLimit = parseOptionalInt(contextMessageLimitInput);
+  const maxCharsPerMessage = parseOptionalInt(maxCharsPerMessageInput);
+  const maxTotalChars = parseOptionalInt(maxTotalCharsInput);
+  const temperature = normalizeTemperaturePercent(temperatureInput?.value ?? 80);
+  const enableFallback = enableFallbackCheckbox.checked;
+  const fallbackProvider = fallbackProviderSelect.value;
+  const fallbackBaseUrlRaw = fallbackBaseUrlInput.value;
+  const fallbackAllowInsecureHttp = fallbackAllowInsecureHttpCheckbox.checked;
+  const fallbackAllowPrivateHosts = fallbackAllowPrivateHostsCheckbox.checked;
+  const fallbackModel = fallbackModelInput.value.trim();
+  const fallbackApiKey = fallbackApiKeyInput.value.trim();
+  const suggestionCount = Number(suggestionCountSelect.value);
+  const customSystemPrompt = customSystemPromptInput.value.trim();
+  const customUserPrompt = customUserPromptInput.value.trim();
+
+  const baseUrl = parseOptionalBaseUrl(baseUrlRaw, { allowInsecureHttp, allowPrivateHosts });
+  const fallbackBaseUrl = enableFallback
+    ? parseOptionalBaseUrl(fallbackBaseUrlRaw, {
+        allowInsecureHttp: fallbackAllowInsecureHttp,
+        allowPrivateHosts: fallbackAllowPrivateHosts,
+      })
+    : undefined;
+
+  ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL', { allowInsecureHttp, allowPrivateHosts });
+  if (enableFallback) {
+    const fallbackProviderForValidation = fallbackProvider || provider;
+    ensureAllowedBaseUrl(fallbackProviderForValidation, fallbackBaseUrl, '备用 Base URL', {
+      allowInsecureHttp: fallbackAllowInsecureHttp,
+      allowPrivateHosts: fallbackAllowPrivateHosts,
+    });
+  }
+
+  const styles = getSelectedStyles();
+  if (styles.length === 0) {
+    throw new Error('请至少选择一种回复风格');
+  }
+
+  return {
+    apiKey,
+    provider,
+    baseUrl,
+    allowInsecureHttp,
+    allowPrivateHosts,
+    model,
+    styles,
+    language: language === 'zh' || language === 'en' || language === 'auto' ? language : 'auto',
+    autoInGroups,
+    autoTrigger,
+    autoAgent,
+    customSystemPrompt: customSystemPrompt || undefined,
+    customUserPrompt: customUserPrompt || undefined,
+    privacyAcknowledged,
+    persistApiKey,
+    enableMemory,
+    redactPii,
+    anonymizeSenders,
+    contextMessageLimit,
+    maxCharsPerMessage,
+    maxTotalChars,
+    temperature,
+    enableFallback,
+    fallbackProvider,
+    fallbackBaseUrl: enableFallback ? fallbackBaseUrl : undefined,
+    fallbackAllowInsecureHttp,
+    fallbackAllowPrivateHosts,
+    fallbackModel,
+    fallbackApiKey,
+    suggestionCount,
+  };
+}
+
 // 检查状态
 async function checkStatus() {
   try {
@@ -326,12 +538,16 @@ async function loadSettings() {
     'language',
     'autoInGroups',
     'autoTrigger',
+    'autoAgent',
+    'customSystemPrompt',
+    'customUserPrompt',
     'privacyAcknowledged',
     'redactPii',
     'anonymizeSenders',
     'contextMessageLimit',
     'maxCharsPerMessage',
     'maxTotalChars',
+    'temperature',
     'fallbackProvider',
     'fallbackBaseUrl',
     'fallbackAllowInsecureHttp',
@@ -395,9 +611,13 @@ async function loadSettings() {
   }
   autoInGroupsCheckbox.checked = Boolean(result.autoInGroups);
   autoTriggerCheckbox.checked = result.autoTrigger === undefined ? true : Boolean(result.autoTrigger);
-  privacyAcknowledgedCheckbox.checked = Boolean(result.privacyAcknowledged);
+  autoAgentCheckbox.checked = Boolean(result.autoAgent);
+  privacyAcknowledgedCheckbox.checked = result.privacyAcknowledged === undefined ? false : Boolean(result.privacyAcknowledged);
 
-  // privacy defaults: true/true if missing
+  customSystemPromptInput.value = typeof result.customSystemPrompt === 'string' ? result.customSystemPrompt : '';
+  customUserPromptInput.value = typeof result.customUserPrompt === 'string' ? result.customUserPrompt : '';
+
+  // privacy defaults: redact/anonymize true when missing
   redactPiiCheckbox.checked = result.redactPii === undefined ? true : Boolean(result.redactPii);
   anonymizeSendersCheckbox.checked = result.anonymizeSenders === undefined ? true : Boolean(result.anonymizeSenders);
   if (typeof result.contextMessageLimit === 'number') {
@@ -409,6 +629,8 @@ async function loadSettings() {
   if (typeof result.maxTotalChars === 'number') {
     maxTotalCharsInput.value = String(result.maxTotalChars);
   }
+
+  syncTemperatureUi(result.temperature);
 
   if (result.suggestionCount === 2 || result.suggestionCount === 3) {
     suggestionCountSelect.value = String(result.suggestionCount);
@@ -426,69 +648,66 @@ async function loadSettings() {
   }
 }
 
+testConnectionBtn?.addEventListener('click', async () => {
+  testConnectionBtn.disabled = true;
+  statusEl.className = 'status warning';
+  statusEl.textContent = '正在测试连接...';
+
+  try {
+    const config = buildConfigFromForm();
+    if (!config.privacyAcknowledged) throw new Error('请先勾选「我已理解并同意隐私告知」');
+    if (!config.apiKey) throw new Error('请输入 API Key');
+    if (config.enableFallback && !config.fallbackApiKey) throw new Error('请输入备用 API Key');
+
+    const response = await chrome.runtime.sendMessage({ type: 'TEST_CONNECTION', config });
+    if (response?.error) throw new Error(response.error);
+
+    const primaryOk = Boolean(response?.primary?.ok);
+    const fallbackOk = response?.fallback ? Boolean(response.fallback.ok) : true;
+
+    if (primaryOk && fallbackOk) {
+      statusEl.className = 'status success';
+      const primaryText = response.primary?.model
+        ? `${response.primary.provider} / ${response.primary.model}`
+        : response.primary?.provider;
+      const fallbackText = response.fallback
+        ? response.fallback?.model
+          ? `；备用：${response.fallback.provider} / ${response.fallback.model}`
+          : `；备用：${response.fallback.provider}`
+        : '';
+      statusEl.textContent = `✓ 连接成功：${primaryText}${fallbackText}`;
+      return;
+    }
+
+    statusEl.className = 'status warning';
+    const primaryErr = response?.primary?.ok ? '' : `主模型：${response?.primary?.error || '连接失败'}`;
+    const fallbackErr =
+      response?.fallback && !response.fallback.ok ? `；备用：${response.fallback.error || '连接失败'}` : '';
+    statusEl.textContent = `⚠ ${primaryErr || '连接失败'}${fallbackErr}`;
+  } catch (err) {
+    statusEl.className = 'status warning';
+    statusEl.textContent = `⚠ ${(err as Error).message}`;
+  } finally {
+    testConnectionBtn.disabled = false;
+  }
+});
+
 // 保存设置
 saveBtn.addEventListener('click', async () => {
-  const apiKey = apiKeyInput.value.trim();
-  const provider = providerSelect.value;
-  const baseUrlRaw = baseUrlInput.value;
-  const allowInsecureHttp = allowInsecureHttpCheckbox.checked;
-  const allowPrivateHosts = allowPrivateHostsCheckbox.checked;
-  const model = modelInput.value.trim();
-  const persistApiKey = persistApiKeyCheckbox.checked;
-  const enableMemory = enableMemoryCheckbox.checked;
-  const language = languageSelect.value;
-  const autoInGroups = autoInGroupsCheckbox.checked;
-  const autoTrigger = autoTriggerCheckbox.checked;
-  const privacyAcknowledged = privacyAcknowledgedCheckbox.checked;
-  const redactPii = redactPiiCheckbox.checked;
-  const anonymizeSenders = anonymizeSendersCheckbox.checked;
-  const contextMessageLimit = parseOptionalInt(contextMessageLimitInput);
-  const maxCharsPerMessage = parseOptionalInt(maxCharsPerMessageInput);
-  const maxTotalChars = parseOptionalInt(maxTotalCharsInput);
-  const enableFallback = enableFallbackCheckbox.checked;
-  const fallbackProvider = fallbackProviderSelect.value;
-  const fallbackBaseUrlRaw = fallbackBaseUrlInput.value;
-  const fallbackAllowInsecureHttp = fallbackAllowInsecureHttpCheckbox.checked;
-  const fallbackAllowPrivateHosts = fallbackAllowPrivateHostsCheckbox.checked;
-  const fallbackModel = fallbackModelInput.value.trim();
-  const fallbackApiKey = fallbackApiKeyInput.value.trim();
-  const suggestionCount = Number(suggestionCountSelect.value);
-
-  let baseUrl: string | undefined;
-  let fallbackBaseUrl: string | undefined;
+  let config: ReturnType<typeof buildConfigFromForm>;
   try {
-    baseUrl = parseOptionalBaseUrl(baseUrlRaw, { allowInsecureHttp, allowPrivateHosts });
-    fallbackBaseUrl = enableFallback
-      ? parseOptionalBaseUrl(fallbackBaseUrlRaw, {
-          allowInsecureHttp: fallbackAllowInsecureHttp,
-          allowPrivateHosts: fallbackAllowPrivateHosts,
-        })
-      : undefined;
+    config = buildConfigFromForm();
   } catch (err) {
     alert((err as Error).message);
     return;
   }
 
-  try {
-    ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL', { allowInsecureHttp, allowPrivateHosts });
-    if (enableFallback) {
-      const fallbackProviderForValidation = fallbackProvider || provider;
-      ensureAllowedBaseUrl(fallbackProviderForValidation, fallbackBaseUrl, '备用 Base URL', {
-        allowInsecureHttp: fallbackAllowInsecureHttp,
-        allowPrivateHosts: fallbackAllowPrivateHosts,
-      });
-    }
-  } catch (err) {
-    alert((err as Error).message);
-    return;
-  }
-
-  if (!privacyAcknowledged) {
+  if (!config.privacyAcknowledged) {
     alert('请先勾选「我已理解并同意隐私告知」');
     return;
   }
 
-  if (!apiKey) {
+  if (!config.apiKey) {
     const status = lastStatus ?? (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }));
     if (!status?.hasApiKey) {
       alert('请输入 API Key');
@@ -496,54 +715,13 @@ saveBtn.addEventListener('click', async () => {
     }
   }
 
-  if (enableFallback && !fallbackApiKey) {
+  if (config.enableFallback && !config.fallbackApiKey) {
     const status = lastStatus ?? (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }));
     if (!status?.hasFallback) {
       alert('请输入备用 API Key');
       return;
     }
   }
-
-  // 获取选中的风格
-  const styles: string[] = [];
-  document.querySelectorAll('.style-option.selected').forEach((option) => {
-    const style = option.getAttribute('data-style');
-    if (style) styles.push(style);
-  });
-
-  if (styles.length === 0) {
-    alert('请至少选择一种回复风格');
-    return;
-  }
-
-  const config = {
-    apiKey,
-    provider,
-    baseUrl,
-    allowInsecureHttp,
-    allowPrivateHosts,
-    model,
-    styles,
-    language: language === 'zh' || language === 'en' || language === 'auto' ? language : 'auto',
-    autoInGroups,
-    autoTrigger,
-    privacyAcknowledged,
-    persistApiKey,
-    enableMemory,
-    redactPii,
-    anonymizeSenders,
-    contextMessageLimit,
-    maxCharsPerMessage,
-    maxTotalChars,
-    enableFallback,
-    fallbackProvider,
-    fallbackBaseUrl: enableFallback ? fallbackBaseUrl : undefined,
-    fallbackAllowInsecureHttp,
-    fallbackAllowPrivateHosts,
-    fallbackModel,
-    fallbackApiKey,
-    suggestionCount,
-  };
 
   // 通知 background（由 background 决定是否持久化 key）
   const response = await chrome.runtime.sendMessage({
@@ -560,106 +738,13 @@ saveBtn.addEventListener('click', async () => {
   statusEl.className = 'status success';
   statusEl.textContent = '✓ 设置已保存';
 
-  if (!persistApiKey) {
+  if (!config.persistApiKey) {
     apiKeyInput.value = '';
-    fallbackApiKeyInput.value = '';
+    if (config.enableFallback) fallbackApiKeyInput.value = '';
   }
 
   await checkStatus();
 });
-
-// 加载联系人列表
-async function loadContacts() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_CONTACTS' });
-
-    if (response?.contacts && response.contacts.length > 0) {
-      const contactsWithPrefs = await Promise.all(
-        response.contacts.map(async (contact: { displayName: string; app: string; messageCount: number; key: ContactKey; memorySummary?: string | null; memoryUpdatedAt?: number | null }) => {
-          const prefRes = await chrome.runtime.sendMessage({
-            type: 'GET_STYLE_PREFERENCE',
-            contactKey: contact.key,
-          });
-          return { ...contact, preference: prefRes?.preference ?? null };
-        })
-      );
-
-      contactListEl.innerHTML = contactsWithPrefs
-        .map(
-          (contact, index) => `
-        <div class="contact-item">
-          <div class="contact-header">
-            <div class="contact-avatar">${escapeHtml(contact.displayName.charAt(0).toUpperCase())}</div>
-            <div class="contact-info">
-              <div class="contact-name">${escapeHtml(contact.displayName)}</div>
-            <div class="contact-meta">${escapeHtml(contact.app)} · ${escapeHtml(String(contact.messageCount))} 条消息</div>
-            </div>
-            <div class="contact-actions">
-              <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
-              <button class="clear-memory-btn" data-index="${index}">清空记忆</button>
-              <button class="clear-contact-btn" data-index="${index}">清除数据</button>
-            </div>
-          </div>
-          <div class="style-stats">
-            ${renderStyleStats(contact.preference)}
-          </div>
-          <div class="memory-box">
-            <div class="memory-title">长期记忆${contact.memoryUpdatedAt ? ` <span class="muted">(${escapeHtml(new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10))})</span>` : ''}</div>
-            <div class="memory-text">${contact.memorySummary ? escapeHtml(contact.memorySummary) : '<span class="muted">暂无长期记忆</span>'}</div>
-          </div>
-        </div>
-      `
-        )
-        .join('');
-
-      contactListEl.querySelectorAll<HTMLButtonElement>('.reset-pref-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const index = Number(btn.getAttribute('data-index') || '-1');
-          const target = contactsWithPrefs[index];
-          if (target && confirm(`重置 ${target.displayName} 的风格偏好？`)) {
-            await chrome.runtime.sendMessage({
-              type: 'RESET_STYLE_PREFERENCE',
-              contactKey: target.key,
-            });
-            await loadContacts();
-          }
-        });
-      });
-
-      contactListEl.querySelectorAll<HTMLButtonElement>('.clear-memory-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const index = Number(btn.getAttribute('data-index') || '-1');
-          const target = contactsWithPrefs[index];
-          if (target && confirm(`清空 ${target.displayName} 的长期记忆？`)) {
-            await chrome.runtime.sendMessage({
-              type: 'CLEAR_CONTACT_MEMORY',
-              contactKey: target.key,
-            });
-            await loadContacts();
-          }
-        });
-      });
-
-      contactListEl.querySelectorAll<HTMLButtonElement>('.clear-contact-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const index = Number(btn.getAttribute('data-index') || '-1');
-          const target = contactsWithPrefs[index];
-          if (target && confirm(`清除 ${target.displayName} 的全部本地数据（消息/画像/偏好/记忆）？`)) {
-            await chrome.runtime.sendMessage({
-              type: 'CLEAR_CONTACT_DATA',
-              contactKey: target.key,
-            });
-            await loadContacts();
-          }
-        });
-      });
-    } else {
-      contactListEl.innerHTML = '<div class="empty-state">暂无联系人记录</div>';
-    }
-  } catch (error) {
-    contactListEl.innerHTML = '<div class="empty-state">加载失败</div>';
-  }
-}
 
 function downloadJson(filename: string, json: string) {
   const blob = new Blob([json], { type: 'application/json' });
@@ -671,16 +756,20 @@ function downloadJson(filename: string, json: string) {
   URL.revokeObjectURL(url);
 }
 
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 // 备份导出
 exportUserDataBtn.addEventListener('click', async () => {
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'EXPORT_USER_DATA' });
-    const backup = res?.backup;
-    if (!backup) {
-      throw new Error(res?.error || '导出失败');
-    }
+    statusEl.className = 'status info';
+    statusEl.textContent = 'ℹ️ 正在导出…';
+    await nextFrame();
 
-    const json = JSON.stringify(backup, null, 2);
+    const res = await chrome.runtime.sendMessage({ type: 'EXPORT_USER_DATA_JSON' });
+    const json = res?.json as string | undefined;
+    if (!json) throw new Error(res?.error || '导出失败');
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     downloadJson(`social-copilot-backup-${ts}.json`, json);
     statusEl.className = 'status info';
@@ -721,7 +810,6 @@ importUserDataFile.addEventListener('change', async () => {
       : 'ok';
     statusEl.className = 'status info';
     statusEl.textContent = `ℹ️ 已导入数据备份（${summary}）`;
-    await loadContacts();
     await checkStatus();
   } catch (err) {
     statusEl.className = 'status warning';
@@ -747,7 +835,6 @@ clearDataBtn.addEventListener('click', async () => {
       fallbackApiKeyInput.value = '';
       enableFallbackCheckbox.checked = false;
       toggleFallbackFields();
-      loadContacts();
       await checkStatus();
     } catch (err) {
       statusEl.className = 'status warning';
@@ -780,6 +867,8 @@ debugEnabledCheckbox.addEventListener('change', async () => {
 });
 
 async function getDiagnosticsJson(): Promise<string> {
+  const res = await chrome.runtime.sendMessage({ type: 'GET_DIAGNOSTICS_JSON', pretty: true });
+  if (res?.json && typeof res.json === 'string') return res.json;
   const snapshot = await chrome.runtime.sendMessage({ type: 'GET_DIAGNOSTICS' });
   return JSON.stringify(snapshot, null, 2);
 }
@@ -798,6 +887,10 @@ copyDiagnosticsBtn.addEventListener('click', async () => {
 
 downloadDiagnosticsBtn.addEventListener('click', async () => {
   try {
+    statusEl.className = 'status info';
+    statusEl.textContent = 'ℹ️ 正在生成诊断 JSON…';
+    await nextFrame();
+
     const json = await getDiagnosticsJson();
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);

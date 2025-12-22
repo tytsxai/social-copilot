@@ -111,6 +111,7 @@ export class CopilotContentScript {
 
   private autoInGroups = false;
   private autoTrigger = true;
+  private autoAgent = false;
   private privacyAcknowledged = false;
   private contextMessageLimit = 10;
   private pendingPrivacyAckGenerate:
@@ -605,16 +606,19 @@ export class CopilotContentScript {
       const result = await chrome.storage.local.get([
         'autoInGroups',
         'autoTrigger',
+        'autoAgent',
         'privacyAcknowledged',
         'contextMessageLimit',
       ]);
       this.autoInGroups = Boolean(result.autoInGroups);
       this.autoTrigger = result.autoTrigger === undefined ? true : Boolean(result.autoTrigger);
+      this.autoAgent = Boolean(result.autoAgent);
       this.privacyAcknowledged = Boolean(result.privacyAcknowledged);
       this.contextMessageLimit = this.normalizeContextMessageLimit(result.contextMessageLimit);
     } catch {
       this.autoInGroups = false;
       this.autoTrigger = true;
+      this.autoAgent = false;
       this.privacyAcknowledged = false;
       this.contextMessageLimit = 10;
     }
@@ -630,6 +634,11 @@ export class CopilotContentScript {
       const autoTriggerChange = changes.autoTrigger;
       if (autoTriggerChange) {
         this.autoTrigger = autoTriggerChange.newValue === undefined ? true : Boolean(autoTriggerChange.newValue);
+      }
+
+      const autoAgentChange = changes.autoAgent;
+      if (autoAgentChange) {
+        this.autoAgent = Boolean(autoAgentChange.newValue);
       }
 
       const privacyChange = changes.privacyAcknowledged;
@@ -843,6 +852,9 @@ export class CopilotContentScript {
       } else if (response?.candidates) {
         this.ui.setCandidates(response.candidates);
         this.updateProviderNotice(response);
+        if (source === 'auto' && this.autoAgent) {
+          void this.autoReply(response.candidates);
+        }
       } else {
         this.ui.setError('未收到有效响应');
       }
@@ -868,6 +880,53 @@ export class CopilotContentScript {
           void this.generateSuggestions(queued.thoughtDirection, queued.skipThoughtAnalysis, undefined, queued.source);
         }
       }
+    }
+  }
+
+  private async autoReply(candidates: ReplyCandidate[]) {
+    if (this.isDestroyed) return;
+    if (!this.currentContactKey) return;
+    if (this.currentContactKey.isGroup) return;
+    if (!candidates.length) return;
+
+    const picked = candidates[0];
+    const filled = this.adapter.fillInput(picked.text);
+    if (!filled) return;
+
+    const sent = this.trySendCurrentInput();
+    if (sent) {
+      this.ui.hide();
+      return;
+    }
+
+    // If sending isn't supported, keep suggestions visible so the user can confirm manually.
+    this.ui.setNotification('已自动填充输入框（未能自动发送，请手动确认发送）');
+    this.ui.show();
+    setTimeout(() => {
+      if (this.isDestroyed) return;
+      this.ui.clearNotification();
+    }, 2500);
+  }
+
+  private trySendCurrentInput(): boolean {
+    const input = this.adapter.getInputElement();
+    if (!input) return false;
+    input.focus();
+
+    const eventInit: KeyboardEventInit = {
+      key: 'Enter',
+      code: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    };
+
+    try {
+      input.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+      input.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+      input.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+      return true;
+    } catch {
+      return false;
     }
   }
 

@@ -19,12 +19,17 @@ function setupDom() {
     <select id="language"></select>
     <input id="autoInGroups" type="checkbox" />
     <input id="autoTrigger" type="checkbox" />
+    <input id="autoAgent" type="checkbox" />
+    <textarea id="customSystemPrompt"></textarea>
+    <textarea id="customUserPrompt"></textarea>
     <input id="privacyAcknowledged" type="checkbox" />
     <input id="redactPii" type="checkbox" />
     <input id="anonymizeSenders" type="checkbox" />
     <input id="contextMessageLimit" />
     <input id="maxCharsPerMessage" />
     <input id="maxTotalChars" />
+    <input id="temperature" />
+    <span id="temperatureValue"></span>
     <input id="enableFallback" type="checkbox" />
     <div id="fallbackFields"></div>
     <select id="fallbackProvider"></select>
@@ -38,6 +43,7 @@ function setupDom() {
     <input id="fallbackApiKey" />
     <div id="fallbackApiKeyHint"></div>
     <select id="suggestionCount"></select>
+    <button id="testConnectionBtn"></button>
     <button id="saveBtn"></button>
     <div id="contactList"></div>
     <button id="clearDataBtn"></button>
@@ -64,22 +70,20 @@ describe('popup contacts rendering XSS', () => {
     setupDom();
 
     const sendMessage = vi.fn(async (msg: any) => {
-      if (msg?.type === 'GET_CONTACTS') {
+      if (msg?.type === 'GET_CONTACTS_WITH_PREFS') {
         return {
           contacts: [
             {
               displayName: '<svg onload=alert(1)>A</svg>',
               app: '<img src=x onerror=alert(1) />',
               messageCount: 123,
-              key: { platform: 'test', id: '1' },
+              key: { platform: 'web', app: 'other', conversationId: '1', peerId: '2', isGroup: false },
               memorySummary: '<b>pwn</b>',
               memoryUpdatedAt: Date.UTC(2025, 0, 2),
+              preference: null,
             },
           ],
         };
-      }
-      if (msg?.type === 'GET_STYLE_PREFERENCE') {
-        return { preference: null };
       }
       return {};
     });

@@ -432,6 +432,12 @@
       <small class="muted">选择 auto 时按当前对话自动决定中/英文输出</small>
     </div>
 
+    <div class="form-group">
+      <label for="temperature">温度（0-100）<span id="temperatureValue" class="muted" style="margin-left: 6px;">80</span></label>
+      <input type="range" id="temperature" min="0" max="100" step="1" value="80">
+      <small class="muted">越高越发散，越低越稳定</small>
+    </div>
+
     <div class="form-group inline">
       <label for="autoInGroups" style="margin: 0; font-weight: 600;">
         <input type="checkbox" id="autoInGroups">
@@ -446,6 +452,31 @@
         收到消息自动生成建议
       </label>
       <small>关闭后仅可按 Alt+S 手动触发</small>
+    </div>
+
+    <div class="form-group inline">
+      <label for="autoAgent" style="margin: 0; font-weight: 600;">
+        <input type="checkbox" id="autoAgent">
+        自动代理（收到消息自动发送）
+      </label>
+      <small class="muted">默认关闭；开启后会尝试自动填充并按 Enter 发送（不同平台可能无效或需手动确认）</small>
+    </div>
+
+    <div class="fallback-card" style="margin-top: 12px;">
+      <div class="form-group" style="margin-bottom: 10px;">
+        <label style="font-weight: 600;">提示词</label>
+        <small class="muted">用于增强稳定性与个性化；会追加到默认提示词后（不影响对话内容脱敏）</small>
+      </div>
+
+      <div class="form-group">
+        <label for="customSystemPrompt">自定义系统提示词（可选）</label>
+        <textarea id="customSystemPrompt" rows="4" placeholder="例如：避免过度热情；尽量简短；不要使用表情符号"></textarea>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 0;">
+        <label for="customUserPrompt">自定义用户提示词（可选）</label>
+        <textarea id="customUserPrompt" rows="4" placeholder="例如：如果对方提出问题，先确认需求再给建议"></textarea>
+      </div>
     </div>
 
     <div class="fallback-card" style="margin-top: 12px;">
@@ -561,6 +592,7 @@
       <small class="muted">影响每次生成的回复建议条数</small>
     </div>
 
+    <button id="testConnectionBtn" class="secondary">测试连接</button>
     <button id="saveBtn" class="primary">保存设置</button>
 
     <div class="shortcut-hint">
@@ -570,6 +602,13 @@
 
   <!-- 联系人页 -->
   <div id="contacts" class="tab-content">
+    <div class="status info" style="margin-bottom: 10px;">
+      <strong>支持平台</strong><br>
+      Telegram Web、WhatsApp Web、Slack Web
+    </div>
+    <div class="muted" style="font-size: 12px; line-height: 1.4; margin: 0 0 12px;">
+      联系人记录来自以上平台的对话（仅本地存储，不展示原文对话）。
+    </div>
     <div id="contactList" class="contact-list">
       <div class="empty-state">暂无联系人记录</div>
     </div>

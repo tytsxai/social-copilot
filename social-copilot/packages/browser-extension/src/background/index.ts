@@ -2,6 +2,7 @@ import {
   IndexedDBStore,
   ProfileUpdater,
   LLMManager,
+  PromptHookRegistry,
   StylePreferenceManager,
   ThoughtAnalyzer,
   ReplyParseError,
@@ -39,6 +40,7 @@ type DiagnosticEventType =
   | 'GENERATE_REPLY'
   | 'ANALYZE_THOUGHT'
   | 'SET_CONFIG'
+  | 'TEST_CONNECTION'
   | 'ACK_PRIVACY'
   | 'FALLBACK'
   | 'RECOVERY'
@@ -57,12 +59,15 @@ type DiagnosticEventType =
   | 'RESET_STYLE_PREFERENCE'
   | 'EXPORT_PREFERENCES'
   | 'EXPORT_USER_DATA'
+  | 'EXPORT_USER_DATA_JSON'
   | 'IMPORT_USER_DATA'
   | 'GET_CONTACTS'
+  | 'GET_CONTACTS_WITH_PREFS'
   | 'CLEAR_DATA'
   | 'CLEAR_CONTACT_DATA'
   | 'SET_DEBUG_ENABLED'
   | 'GET_DIAGNOSTICS'
+  | 'GET_DIAGNOSTICS_JSON'
   | 'CLEAR_DIAGNOSTICS'
   | 'UNKNOWN';
 
@@ -95,6 +100,12 @@ interface Config {
   autoTrigger?: boolean;
   /** 是否在群聊中自动弹出（默认 false，仍可手动 Alt+S） */
   autoInGroups?: boolean;
+  /** 自动代理：收到消息后自动生成并发送（默认 false） */
+  autoAgent?: boolean;
+  /** 自定义系统提示词（追加到系统提示词末尾） */
+  customSystemPrompt?: string;
+  /** 自定义用户提示词（追加到 user prompt 末尾） */
+  customUserPrompt?: string;
   /** 发送给模型的最近消息条数（当前消息始终包含） */
   contextMessageLimit?: number;
   /** 发送前脱敏（邮箱/手机号/链接） */
@@ -105,6 +116,8 @@ interface Config {
   maxCharsPerMessage?: number;
   /** 上下文总字符预算 */
   maxTotalChars?: number;
+  /** 温度（0-100，UI 量化） */
+  temperature?: number;
   fallbackProvider?: ProviderType;
   /** 可选：覆盖 fallback provider 默认 Base URL（不要包含 /v1） */
   fallbackBaseUrl?: string;
@@ -343,6 +356,7 @@ function coerceDiagnosticEventType(value: unknown): DiagnosticEventType {
     case 'GENERATE_REPLY':
     case 'ANALYZE_THOUGHT':
     case 'SET_CONFIG':
+    case 'TEST_CONNECTION':
     case 'ACK_PRIVACY':
     case 'FALLBACK':
     case 'RECOVERY':
@@ -537,6 +551,7 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
     language: config.language ?? 'auto',
     autoTrigger: config.autoTrigger ?? true,
     autoInGroups: config.autoInGroups ?? false,
+    autoAgent: config.autoAgent ?? false,
     enableFallback: config.enableFallback ?? false,
     fallbackProvider: config.fallbackProvider,
     fallbackModel: config.fallbackModel,
@@ -552,6 +567,12 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
       contextMessageLimit: config.contextMessageLimit,
       maxCharsPerMessage: config.maxCharsPerMessage,
       maxTotalChars: config.maxTotalChars,
+    },
+    prompts: {
+      hasCustomSystemPrompt: Boolean(config.customSystemPrompt?.trim()),
+      hasCustomUserPrompt: Boolean(config.customUserPrompt?.trim()),
+      customSystemPromptLength: (config.customSystemPrompt ?? '').length,
+      customUserPromptLength: (config.customUserPrompt ?? '').length,
     },
     hasApiKey: Boolean(config.apiKey?.trim()),
     hasFallbackApiKey: Boolean(config.fallbackApiKey?.trim()),
@@ -622,7 +643,15 @@ function resolveLanguage(
   const lang = normalizeLanguage(configured);
   if (lang !== 'auto') return lang;
 
-  const sample = [currentMessage.text, ...recentMessages.slice(-10).map((m) => m.text)].join('\n');
+  // Prefer the other party's recent messages to avoid "my last message was in EN but they replied in ZH" cases.
+  // Use current incoming message as the strongest signal when available.
+  const incoming = [
+    ...(currentMessage.direction === 'incoming' ? [currentMessage] : []),
+    ...recentMessages.filter((m) => m.direction === 'incoming').slice(-10),
+  ];
+
+  const sampleSource = incoming.length ? incoming : [currentMessage, ...recentMessages.slice(-10)];
+  const sample = sampleSource.map((m) => m.text).join('\n');
   const cjk = countRegexMatches(sample, /[\u4e00-\u9fff]/g);
   const latin = countRegexMatches(sample, /[A-Za-z]/g);
 
@@ -885,6 +914,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     'GET_STATUS',
     'CLEAR_DATA',
     'GET_DIAGNOSTICS',
+    'GET_DIAGNOSTICS_JSON',
     'CLEAR_DIAGNOSTICS',
     'SET_DEBUG_ENABLED',
     'REPORT_ADAPTER_HEALTH',
@@ -967,6 +997,7 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'GENERATE_REPLY':
     case 'ANALYZE_THOUGHT':
     case 'SET_CONFIG':
+    case 'TEST_CONNECTION':
     case 'ACK_PRIVACY':
     case 'GET_STATUS':
     case 'GET_PROFILE':
@@ -978,12 +1009,15 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'RESET_STYLE_PREFERENCE':
     case 'EXPORT_PREFERENCES':
     case 'EXPORT_USER_DATA':
+    case 'EXPORT_USER_DATA_JSON':
     case 'IMPORT_USER_DATA':
     case 'GET_CONTACTS':
+    case 'GET_CONTACTS_WITH_PREFS':
     case 'CLEAR_DATA':
     case 'CLEAR_CONTACT_DATA':
     case 'SET_DEBUG_ENABLED':
     case 'GET_DIAGNOSTICS':
+    case 'GET_DIAGNOSTICS_JSON':
     case 'CLEAR_DIAGNOSTICS':
       return type;
     case 'REPORT_ADAPTER_HEALTH':
@@ -1024,6 +1058,15 @@ function buildMinimalSuccessDetails(
       activeModel: r.activeModel,
       usingFallback: r.usingFallback,
       hasFallback: r.hasFallback,
+    };
+  }
+  if (request.type === 'TEST_CONNECTION') {
+    const r = result as { primary?: { ok?: boolean; provider?: string }; fallback?: { ok?: boolean; provider?: string } };
+    return {
+      primaryOk: r.primary?.ok,
+      primaryProvider: r.primary?.provider,
+      fallbackOk: r.fallback?.ok,
+      fallbackProvider: r.fallback?.provider,
     };
   }
   return {};
@@ -1137,6 +1180,85 @@ async function dispatchMessage(
         styles: DEFAULT_STYLES,
       });
 
+    case 'TEST_CONNECTION': {
+      const validationResult = ConfigSchema.safeParse(request.config);
+      if (!validationResult.success) {
+        const errorMessage = formatZodError(validationResult.error);
+        return { error: `TEST_CONNECTION 配置验证失败：${errorMessage}` };
+      }
+
+      const config = validationResult.data as Config;
+      const testInput: LLMInput = {
+        context: {
+          contactKey: {
+            platform: 'web',
+            app: 'other',
+            conversationId: 'test-connection',
+            peerId: 'test-peer',
+            isGroup: false,
+          },
+          recentMessages: [],
+          currentMessage: {
+            id: 'test-message',
+            contactKey: {
+              platform: 'web',
+              app: 'other',
+              conversationId: 'test-connection',
+              peerId: 'test-peer',
+              isGroup: false,
+            },
+            direction: 'incoming',
+            senderName: 'Test',
+            text: 'ping',
+            timestamp: Date.now(),
+          },
+        },
+        styles: sanitizeStyles(config.styles),
+        language: normalizeLanguage(config.language),
+        temperature: 0,
+        maxLength: 16,
+        task: 'reply',
+      };
+
+      const runOne = async (cfg: LLMManagerConfig['primary']) => {
+        const startedAt = Date.now();
+        const manager = new LLMManager(
+          { primary: cfg, cache: { enabled: false } },
+          {},
+          buildPromptHookRegistry(config)
+        );
+        try {
+          const res = await manager.generateReply(testInput);
+          return { ok: true, provider: cfg.provider, model: res.model, latencyMs: Date.now() - startedAt };
+        } catch (err) {
+          return { ok: false, provider: cfg.provider, error: redactSecrets((err as Error).message), latencyMs: Date.now() - startedAt };
+        }
+      };
+
+      const primary = await runOne({
+        provider: config.provider,
+        apiKey: config.apiKey,
+        model: normalizeModel(config.model),
+        baseUrl: normalizeBaseUrl(config.baseUrl),
+        allowInsecureHttp: config.allowInsecureHttp ?? false,
+        allowPrivateHosts: config.allowPrivateHosts ?? false,
+      });
+
+      const fallbackEnabled = (config.enableFallback ?? false) && Boolean((config.fallbackApiKey ?? '').trim());
+      const fallback = fallbackEnabled
+        ? await runOne({
+            provider: (config.fallbackProvider || config.provider) as ProviderType,
+            apiKey: (config.fallbackApiKey as string) || '',
+            model: normalizeModel(config.fallbackModel),
+            baseUrl: normalizeBaseUrl(config.fallbackBaseUrl),
+            allowInsecureHttp: config.fallbackAllowInsecureHttp ?? false,
+            allowPrivateHosts: config.fallbackAllowPrivateHosts ?? false,
+          })
+        : undefined;
+
+      return { primary, fallback, requestId };
+    }
+
     case 'SET_CONFIG': {
       // Validate config using Zod schema
       const validationResult = ConfigSchema.safeParse(request.config);
@@ -1168,6 +1290,12 @@ async function dispatchMessage(
 
     case 'GET_DIAGNOSTICS':
       return buildDiagnosticsSnapshot();
+
+    case 'GET_DIAGNOSTICS_JSON': {
+      const pretty = Boolean(request.pretty);
+      const snapshot = buildDiagnosticsSnapshot();
+      return { json: JSON.stringify(snapshot, null, pretty ? 2 : 0) };
+    }
 
     case 'CLEAR_DIAGNOSTICS':
       await clearPersistedDiagnostics();
@@ -1238,11 +1366,20 @@ async function dispatchMessage(
     case 'EXPORT_USER_DATA':
       return exportUserData();
 
+    case 'EXPORT_USER_DATA_JSON': {
+      const pretty = Boolean(request.pretty);
+      const { backup } = await exportUserData();
+      return { json: JSON.stringify(backup, null, pretty ? 2 : 0) };
+    }
+
     case 'IMPORT_USER_DATA':
       return importUserData(request.data);
 
     case 'GET_CONTACTS':
       return getContacts();
+
+    case 'GET_CONTACTS_WITH_PREFS':
+      return getContactsWithPrefs();
 
     case 'CLEAR_DATA':
       return clearData();
@@ -1326,12 +1463,16 @@ async function loadConfig() {
     'language',
     'autoTrigger',
     'autoInGroups',
+    'autoAgent',
+    'customSystemPrompt',
+    'customUserPrompt',
     'privacyAcknowledged',
     'redactPii',
     'anonymizeSenders',
     'contextMessageLimit',
     'maxCharsPerMessage',
     'maxTotalChars',
+    'temperature',
     'fallbackProvider',
     'fallbackBaseUrl',
     'fallbackAllowInsecureHttp',
@@ -1367,12 +1508,16 @@ async function loadConfig() {
       language: normalizeLanguage(result.language),
       autoTrigger: result.autoTrigger === undefined ? true : Boolean(result.autoTrigger),
       autoInGroups: Boolean(result.autoInGroups),
-      privacyAcknowledged: Boolean(result.privacyAcknowledged),
+      autoAgent: Boolean(result.autoAgent),
+      customSystemPrompt: typeof result.customSystemPrompt === 'string' ? result.customSystemPrompt : undefined,
+      customUserPrompt: typeof result.customUserPrompt === 'string' ? result.customUserPrompt : undefined,
+      privacyAcknowledged: result.privacyAcknowledged === undefined ? false : Boolean(result.privacyAcknowledged),
       redactPii: result.redactPii === undefined ? true : Boolean(result.redactPii),
       anonymizeSenders: result.anonymizeSenders === undefined ? true : Boolean(result.anonymizeSenders),
       contextMessageLimit: normalizeOptionalInt(result.contextMessageLimit, { min: 1, max: 50 }),
       maxCharsPerMessage: normalizeOptionalInt(result.maxCharsPerMessage, { min: 50, max: 4000 }),
       maxTotalChars: normalizeOptionalInt(result.maxTotalChars, { min: 200, max: 20_000 }),
+      temperature: normalizeOptionalInt(result.temperature, { min: 0, max: 100 }),
       fallbackProvider: result.fallbackProvider,
       fallbackBaseUrl: normalizeBaseUrl(result.fallbackBaseUrl),
       fallbackAllowInsecureHttp: result.fallbackAllowInsecureHttp === true,
@@ -1407,9 +1552,13 @@ async function setConfig(config: Config) {
   }
 
   const autoTrigger = config.autoTrigger === undefined ? (currentConfig?.autoTrigger ?? true) : Boolean(config.autoTrigger);
+  const autoAgent = config.autoAgent === undefined ? (currentConfig?.autoAgent ?? false) : Boolean(config.autoAgent);
   const privacyAcknowledged = config.privacyAcknowledged === undefined
     ? (currentConfig?.privacyAcknowledged ?? false)
     : Boolean(config.privacyAcknowledged);
+
+  const customSystemPrompt = typeof config.customSystemPrompt === 'string' ? config.customSystemPrompt.trim() : '';
+  const customUserPrompt = typeof config.customUserPrompt === 'string' ? config.customUserPrompt.trim() : '';
 
   currentConfig = {
     ...config,
@@ -1421,11 +1570,15 @@ async function setConfig(config: Config) {
     language: normalizeLanguage(config.language),
     autoTrigger,
     autoInGroups: Boolean(config.autoInGroups),
+    autoAgent,
+    customSystemPrompt: customSystemPrompt || undefined,
+    customUserPrompt: customUserPrompt || undefined,
     redactPii: config.redactPii ?? true,
     anonymizeSenders: config.anonymizeSenders ?? true,
     contextMessageLimit: normalizeOptionalInt(config.contextMessageLimit, { min: 1, max: 50 }),
     maxCharsPerMessage: normalizeOptionalInt(config.maxCharsPerMessage, { min: 50, max: 4000 }),
     maxTotalChars: normalizeOptionalInt(config.maxTotalChars, { min: 200, max: 20_000 }),
+    temperature: normalizeOptionalInt(config.temperature, { min: 0, max: 100 }) ?? (currentConfig?.temperature ?? 80),
     enableFallback,
     fallbackBaseUrl: enableFallback ? normalizeBaseUrl(config.fallbackBaseUrl) : undefined,
     fallbackAllowInsecureHttp: enableFallback ? (config.fallbackAllowInsecureHttp ?? false) : false,
@@ -1450,12 +1603,16 @@ async function setConfig(config: Config) {
     language: currentConfig.language ?? 'auto',
     autoTrigger: currentConfig.autoTrigger ?? true,
     autoInGroups: currentConfig.autoInGroups ?? false,
+    autoAgent: currentConfig.autoAgent ?? false,
+    customSystemPrompt: currentConfig.customSystemPrompt,
+    customUserPrompt: currentConfig.customUserPrompt,
     privacyAcknowledged: currentConfig.privacyAcknowledged ?? false,
     redactPii: currentConfig.redactPii ?? true,
     anonymizeSenders: currentConfig.anonymizeSenders ?? true,
     contextMessageLimit: currentConfig.contextMessageLimit,
     maxCharsPerMessage: currentConfig.maxCharsPerMessage,
     maxTotalChars: currentConfig.maxTotalChars,
+    temperature: currentConfig.temperature ?? 80,
     fallbackProvider: currentConfig.fallbackProvider,
     ...(currentConfig.fallbackBaseUrl ? { fallbackBaseUrl: currentConfig.fallbackBaseUrl } : {}),
     fallbackAllowInsecureHttp: currentConfig.fallbackAllowInsecureHttp ?? false,
@@ -1478,6 +1635,8 @@ async function setConfig(config: Config) {
     await chrome.storage.local.set(toSet);
     const keysToRemove: string[] = [];
     if (!currentConfig.baseUrl) keysToRemove.push('baseUrl');
+    if (!currentConfig.customSystemPrompt) keysToRemove.push('customSystemPrompt');
+    if (!currentConfig.customUserPrompt) keysToRemove.push('customUserPrompt');
     if (!currentConfig.fallbackBaseUrl) keysToRemove.push('fallbackBaseUrl');
     if (!(currentConfig.enableFallback && currentConfig.fallbackApiKey)) {
       keysToRemove.push('fallbackApiKey');
@@ -1490,6 +1649,8 @@ async function setConfig(config: Config) {
     await chrome.storage.local.set(baseConfigToPersist);
     const keysToRemove: string[] = ['apiKey', 'fallbackApiKey'];
     if (!currentConfig.baseUrl) keysToRemove.push('baseUrl');
+    if (!currentConfig.customSystemPrompt) keysToRemove.push('customSystemPrompt');
+    if (!currentConfig.customUserPrompt) keysToRemove.push('customUserPrompt');
     if (!currentConfig.fallbackBaseUrl) keysToRemove.push('fallbackBaseUrl');
     if (keysToRemove.length) {
       await chrome.storage.local.remove(keysToRemove);
@@ -1506,11 +1667,16 @@ async function setConfig(config: Config) {
 
   const managerConfig = buildManagerConfig(currentConfig);
   fallbackModeActive = false;
-  llmManager = new LLMManager(managerConfig, {
-    onFallback: handleFallbackEvent,
-    onRecovery: handleRecoveryEvent,
-    onAllFailed: handleAllFailedEvent,
-  });
+  const promptRegistry = buildPromptHookRegistry(currentConfig);
+  llmManager = new LLMManager(
+    managerConfig,
+    {
+      onFallback: handleFallbackEvent,
+      onRecovery: handleRecoveryEvent,
+      onAllFailed: handleAllFailedEvent,
+    },
+    promptRegistry
+  );
 
   const profileLLM: LLMProvider = {
     get name() {
@@ -1557,6 +1723,26 @@ function buildManagerConfig(config: Config): LLMManagerConfig {
         }
       : undefined,
   };
+}
+
+function buildPromptHookRegistry(config: Config): PromptHookRegistry | undefined {
+  const customSystemPrompt = (config.customSystemPrompt ?? '').trim();
+  const customUserPrompt = (config.customUserPrompt ?? '').trim();
+  if (!customSystemPrompt && !customUserPrompt) return undefined;
+
+  const registry = new PromptHookRegistry();
+  registry.register({
+    name: 'custom-prompts',
+    transformSystemPrompt: (prompt) => {
+      if (!customSystemPrompt) return prompt;
+      return `${prompt}\n\n【自定义系统提示】\n${customSystemPrompt}`;
+    },
+    transformUserPrompt: (prompt) => {
+      if (!customUserPrompt) return prompt;
+      return `${prompt}\n\n【自定义用户提示】\n${customUserPrompt}`;
+    },
+  });
+  return registry;
 }
 
 async function handleFallbackEvent(fromProvider: string, toProvider: string, error: Error) {
@@ -1672,6 +1858,7 @@ async function handleGenerateReply(payload: {
     profile,
     styles: styles as ReplyStyle[],
     language,
+    temperature: (currentConfig.temperature ?? 80) / 100,
   };
 
   // 注入长期记忆
@@ -2002,6 +2189,37 @@ async function getContacts() {
     return { contacts };
   } catch (error) {
     debugError('[Social Copilot] Failed to get contacts:', sanitizeErrorForDiagnostics(error));
+    return { contacts: [] };
+  }
+}
+
+async function getContactsWithPrefs() {
+  try {
+    if (!preferenceManager) {
+      preferenceManager = new StylePreferenceManager(store);
+    }
+    const profiles = await store.getAllProfiles();
+    const contacts = await Promise.all(
+      profiles.map(async (profile) => {
+        const [messageCount, memory, preference] = await Promise.all([
+          store.getMessageCount(profile.key),
+          store.getContactMemorySummary(profile.key),
+          preferenceManager!.getPreference(profile.key),
+        ]);
+        return {
+          displayName: profile.displayName,
+          app: profile.key.app,
+          messageCount,
+          key: profile.key,
+          memorySummary: memory?.summary ?? null,
+          memoryUpdatedAt: memory?.updatedAt ?? null,
+          preference: preference ?? null,
+        };
+      })
+    );
+    return { contacts };
+  } catch (error) {
+    debugError('[Social Copilot] Failed to get contacts with prefs:', sanitizeErrorForDiagnostics(error));
     return { contacts: [] };
   }
 }
