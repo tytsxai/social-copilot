@@ -86,11 +86,18 @@ export const ConfigSchema = z.object({
   language: z.enum(['zh', 'en', 'auto']).optional(),
   autoTrigger: z.boolean().optional(),
   autoInGroups: z.boolean().optional(),
+  /** 自动代理：收到消息后自动生成并发送（默认 false） */
+  autoAgent: z.boolean().optional(),
+  /** 自定义系统提示词（追加到系统提示词末尾） */
+  customSystemPrompt: z.string().max(20_000).optional(),
+  /** 自定义用户提示词（追加到 user prompt 末尾） */
+  customUserPrompt: z.string().max(20_000).optional(),
   contextMessageLimit: z.number().int().min(1).max(50).optional(),
   redactPii: z.boolean().optional(),
   anonymizeSenders: z.boolean().optional(),
   maxCharsPerMessage: z.number().int().min(50).max(4000).optional(),
   maxTotalChars: z.number().int().min(200).max(20000).optional(),
+  temperature: z.number().int().min(0).max(100).optional(),
   fallbackProvider: ProviderTypeSchema.optional(),
   fallbackBaseUrl: z.string().url('fallbackBaseUrl must be a valid URL').optional(),
   fallbackAllowInsecureHttp: z.boolean().optional(),
@@ -131,6 +138,7 @@ export const LLMInputSchema = z.object({
   memorySummary: z.string().optional(),
   styles: z.array(ReplyStyleSchema).min(1, 'styles must have at least one element'),
   language: z.enum(['zh', 'en', 'auto']),
+  temperature: z.number().min(0).max(1).optional(),
   maxLength: z.number().int().positive().optional(),
   task: z.enum(['reply', 'profile_extraction', 'memory_extraction']).optional(),
   thoughtDirection: ThoughtTypeSchema.optional(),

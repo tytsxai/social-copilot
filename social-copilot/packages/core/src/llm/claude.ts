@@ -97,6 +97,7 @@ export class ClaudeProvider implements LLMProvider {
     const maxTokens = Math.max(1, Math.min(input.maxLength ?? 1000, 2000));
     const prompt = buildUserPrompt(task, input);
     const systemPrompt = buildSystemPrompt(task, input);
+    const temperature = typeof input.temperature === 'number' ? input.temperature : 0.8;
 
     const finalSystemPrompt = this.registry
       ? this.registry.applySystemHooks(systemPrompt, input)
@@ -115,6 +116,7 @@ export class ClaudeProvider implements LLMProvider {
       body: JSON.stringify({
         model: this.model,
         max_tokens: maxTokens,
+        temperature,
         system: finalSystemPrompt,
         messages: [
           { role: 'user', content: finalPrompt },

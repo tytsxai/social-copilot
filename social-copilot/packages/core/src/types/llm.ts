@@ -26,6 +26,8 @@ export interface LLMInput {
   styles: ReplyStyle[];
   /** 语言偏好 */
   language: 'zh' | 'en' | 'auto';
+  /** 采样温度（0-1，越大越发散；可选） */
+  temperature?: number;
   /** 最大回复长度 */
   maxLength?: number;
   /** 任务类型（默认 reply） */

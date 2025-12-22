@@ -85,8 +85,8 @@ describe('getLanguageInstruction', () => {
   });
 
   it('falls back for unknown or missing language', () => {
-    expect(getLanguageInstruction('auto')).toContain('跟随对话原语言');
-    expect(getLanguageInstruction(undefined)).toContain('跟随对话原语言');
+    expect(getLanguageInstruction('auto')).toContain('自动');
+    expect(getLanguageInstruction(undefined)).toContain('自动');
   });
 });
 
