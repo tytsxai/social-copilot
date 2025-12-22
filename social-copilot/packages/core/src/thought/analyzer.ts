@@ -158,12 +158,12 @@ export class ThoughtAnalyzer {
 
   private sanitizeKeywords(
     keywords?: ThoughtAnalyzerUserConfig['keywords']
-  ): Partial<ThoughtAnalyzerConfig['keywords']> {
+  ): Record<string, string[]> {
     if (!keywords || typeof keywords !== 'object') return {};
-    const sanitized: Partial<ThoughtAnalyzerConfig['keywords']> = {};
+    const sanitized: Record<string, string[]> = {};
     for (const [key, value] of Object.entries(keywords)) {
       if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-        sanitized[key as keyof ThoughtAnalyzerConfig['keywords']] = value;
+        sanitized[key] = value;
       }
     }
     return sanitized;
@@ -171,12 +171,12 @@ export class ThoughtAnalyzer {
 
   private sanitizeWeights(
     weights?: ThoughtAnalyzerUserConfig['weights']
-  ): Partial<ThoughtAnalyzerConfig['weights']> {
+  ): Record<string, number> {
     if (!weights || typeof weights !== 'object') return {};
-    const sanitized: Partial<ThoughtAnalyzerConfig['weights']> = {};
+    const sanitized: Record<string, number> = {};
     for (const [key, value] of Object.entries(weights)) {
       if (typeof value === 'number' && Number.isFinite(value)) {
-        sanitized[key as keyof ThoughtAnalyzerConfig['weights']] = value;
+        sanitized[key] = value;
       }
     }
     return sanitized;

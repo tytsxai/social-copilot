@@ -95,10 +95,10 @@ describe('LLMManager fallback behavior', () => {
     const fallbackOutput = buildOutput(`${fallbackProvider}-model`);
     const fallbackSpy = mockSuccess(fallbackProvider, fallbackOutput);
 
-	    const manager = new LLMManager({
-	      primary: { provider: 'deepseek', apiKey: 'primary-key' },
-	      fallback: { provider: fallbackProvider, apiKey: fallbackProvider === 'claude' ? 'sk-ant-fallback' : 'fallback-key' },
-	    });
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+      fallback: { provider: fallbackProvider, apiKey: fallbackProvider === 'claude' ? 'sk-ant-fallback' : 'fallback-key' },
+    });
 
     const output = await manager.generateReply({ ...baseInput });
 
@@ -118,14 +118,14 @@ describe('LLMManager fallback behavior', () => {
     mockSuccess(fallbackProvider, buildOutput(`${fallbackProvider}-model`));
 
     let notification = '';
-	    const manager = new LLMManager(
-	      {
-	        primary: { provider: 'deepseek', apiKey: 'primary-key' },
-	        fallback: { provider: fallbackProvider, apiKey: fallbackProvider === 'claude' ? 'sk-ant-fallback' : 'fallback-key' },
-	      },
-	      {
-	        onFallback: (_from, to) => {
-	          notification = `Using fallback provider: ${to}`;
+    const manager = new LLMManager(
+      {
+        primary: { provider: 'deepseek', apiKey: 'primary-key' },
+        fallback: { provider: fallbackProvider, apiKey: fallbackProvider === 'claude' ? 'sk-ant-fallback' : 'fallback-key' },
+      },
+      {
+        onFallback: (_from, to) => {
+          notification = `Using fallback provider: ${to}`;
         },
       }
     );

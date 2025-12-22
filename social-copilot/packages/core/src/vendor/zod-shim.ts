@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 type IssuePath = Array<string | number>;
 
 export type ZodIssue = {
@@ -207,7 +209,7 @@ function arraySchema<T>(item: Schema<T>): Schema<T[]> {
 }
 
 function objectSchema<TShape extends Record<string, Schema<any>>>(shape: TShape): Schema<{ [K in keyof TShape]: any }> {
-  return new Schema((value, path) => {
+  return new Schema<{ [K in keyof TShape]: any }>((value, path) => {
     if (!isRecord(value)) return { ok: false, issues: withMessage(path, 'Expected object') };
     const out: Record<string, unknown> = {};
     const issues: ZodIssue[] = [];
@@ -222,7 +224,7 @@ function objectSchema<TShape extends Record<string, Schema<any>>>(shape: TShape)
     }
 
     if (issues.length > 0) return { ok: false, issues };
-    return { ok: true, value: out };
+    return { ok: true, value: out as { [K in keyof TShape]: any } };
   });
 }
 
@@ -281,4 +283,3 @@ export const z = {
   record: ((a: any, b?: any) => (b ? recordSchema(a, b) : recordSchema(a))) as any,
   infer: null as any,
 };
-

@@ -3,6 +3,16 @@
  * Uses bracket-balanced scan to avoid greedy regex mistakes.
  */
 const DEFAULT_MAX_JSON_SCAN_CHARS = 200_000;
+const DANGEROUS_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export function safeJsonParse(text: string): unknown {
+  return JSON.parse(text, (key, value) => {
+    if (DANGEROUS_JSON_KEYS.has(key)) {
+      return undefined;
+    }
+    return value;
+  }) as unknown;
+}
 
 export function extractJsonBlock(text: string, maxScanChars: number = DEFAULT_MAX_JSON_SCAN_CHARS): string | null {
   if (typeof text !== 'string') return null;
@@ -122,7 +132,7 @@ export function parseJsonObjectFromText(text: string): Record<string, unknown> {
   if (!json) {
     throw new Error('No JSON object found in text');
   }
-  const parsed = JSON.parse(json) as unknown;
+  const parsed = safeJsonParse(json) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Top-level JSON is not an object');
   }

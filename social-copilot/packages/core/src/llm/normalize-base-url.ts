@@ -3,7 +3,7 @@ export interface NormalizeBaseUrlOptions {
   allowPrivateHosts?: boolean;
 }
 
-function isPrivateOrLocalAddress(hostname: string): boolean {
+function isPrivateIP(hostname: string): boolean {
   let host = hostname.trim().toLowerCase();
   if (!host) return false;
 
@@ -29,11 +29,9 @@ function isPrivateOrLocalAddress(hostname: string): boolean {
     return false;
   }
 
-  // Basic IPv6 local/private checks without DNS resolution.
+  // Basic IPv6 private checks without DNS resolution.
   // - fc00::/7 (Unique Local Address)
-  // - fe80::/10 (Link-local)
   if (host.startsWith('fc') || host.startsWith('fd')) return true;
-  if (host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb')) return true;
 
   return false;
 }
@@ -62,7 +60,7 @@ export function normalizeBaseUrl(input: string, options: NormalizeBaseUrlOptions
     throw new Error('baseUrl must use https:// (or set allowInsecureHttp: true)');
   }
 
-  if (!options.allowPrivateHosts && isPrivateOrLocalAddress(parsed.hostname)) {
+  if (!options.allowPrivateHosts && isPrivateIP(parsed.hostname)) {
     throw new Error('baseUrl must not target localhost or private IP ranges (or set allowPrivateHosts: true)');
   }
 

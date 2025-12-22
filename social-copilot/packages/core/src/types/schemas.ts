@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { THOUGHT_TYPES } from './thought';
 
 /**
  * Zod schemas for runtime validation of core types
@@ -122,12 +123,7 @@ export const ConversationContextSchema = z.object({
   currentMessage: MessageSchema,
 });
 
-export const ThoughtTypeSchema = z.enum([
-  'empathy',
-  'solution',
-  'humor',
-  'neutral',
-]);
+export const ThoughtTypeSchema = z.enum(THOUGHT_TYPES);
 
 export const LLMInputSchema = z.object({
   context: ConversationContextSchema,

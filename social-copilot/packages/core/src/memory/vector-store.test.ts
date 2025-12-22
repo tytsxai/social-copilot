@@ -196,4 +196,27 @@ describe('InMemoryVectorStore', () => {
       'b',
     ]);
   });
+
+  it('performance: topK query remains fast on large candidate sets', async () => {
+    const rng = mulberry32(2024);
+    const dim = 16;
+    const recordCount = 3000;
+
+    const records: VectorRecord[] = Array.from({ length: recordCount }, (_, idx) => ({
+      id: `perf-${idx}`,
+      vector: Array.from({ length: dim }, () => (rng() - 0.5) * 10),
+    }));
+
+    await store.upsert(records);
+    const query = Array.from({ length: dim }, () => (rng() - 0.5) * 10);
+
+    const start = performance.now();
+    const res = await store.query({ vector: query, topK: 10 });
+    const duration = performance.now() - start;
+
+    console.log(`[Performance] topK=10 over ${recordCount} vectors: ${duration.toFixed(2)}ms`);
+    expect(res).toHaveLength(10);
+    // Keep the threshold generous to avoid flaky failures on slower CI environments.
+    expect(duration).toBeLessThan(2000);
+  });
 });

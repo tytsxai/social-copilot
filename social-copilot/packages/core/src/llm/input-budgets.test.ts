@@ -35,12 +35,12 @@ describe('normalizeAndClampLLMInput', () => {
     });
 
     const normalized = normalizeAndClampLLMInput(input, {
-      maxMemorySummaryChars: 10,
-      maxThoughtHintChars: 12,
+      maxMemorySummaryChars: 5,
+      maxThoughtHintChars: 3,
       maxProfileNotesChars: 100,
     });
 
-    expect(normalized.memorySummary).toBe('a'.repeat(10));
+    expect(normalized.memorySummary).toBe('a'.repeat(20));
     expect(normalized.thoughtHint).toBe('b'.repeat(12));
   });
 
@@ -59,12 +59,34 @@ describe('normalizeAndClampLLMInput', () => {
     const normalized = normalizeAndClampLLMInput(input, {
       maxMemorySummaryChars: 100,
       maxThoughtHintChars: 100,
-      maxProfileNotesChars: 7,
+      maxProfileNotesChars: 2,
     });
 
-    // 'old\n' + 'x'.repeat(20) + '\nnew' = 28 chars total
-    // Last 7 chars: 'xxx\nnew' (3 x's + newline + 'new')
-    expect(normalized.profile?.notes).toBe('xxx\nnew');
+    // 2 tokens * 4 chars/token = 8 chars from the tail.
+    expect(normalized.profile?.notes).toBe('xxxx\nnew');
+  });
+
+  it('clamps mixed zh/en content with token estimates', () => {
+    const input = createBaseInput({
+      memorySummary: 'abcd中文efgh',
+      profile: {
+        key: { platform: 'web', app: 'other', conversationId: 'c1', peerId: 'p1', isGroup: false },
+        displayName: 'Alice',
+        interests: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        notes: '1234中文5678',
+      },
+    });
+
+    const normalized = normalizeAndClampLLMInput(input, {
+      maxMemorySummaryChars: 2,
+      maxThoughtHintChars: 100,
+      maxProfileNotesChars: 2,
+    });
+
+    expect(normalized.memorySummary).toBe('abcd中文');
+    expect(normalized.profile?.notes).toBe('中文5678');
   });
 
   it('does not mutate the original input object', () => {
@@ -90,4 +112,3 @@ describe('normalizeAndClampLLMInput', () => {
     expect(input.profile?.notes).toBe('b'.repeat(20));
   });
 });
-

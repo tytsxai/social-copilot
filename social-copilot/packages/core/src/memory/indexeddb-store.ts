@@ -1,6 +1,7 @@
 import type { Message, ContactProfile, ContactKey, StylePreference, ReplyStyle } from '../types';
 import type { MemoryStore } from './store';
 import { contactKeyToString, contactKeyToStringV1, legacyContactKeyToString, normalizeContactKeyStr } from '../types/contact';
+import { isDebugEnabled } from '../utils/debug';
 
 const DB_NAME = 'social-copilot';
 const DB_VERSION = 6;
@@ -8,6 +9,18 @@ const MAX_MESSAGES_PER_CONTACT = 2000;
 const MAX_TOTAL_MESSAGES = 50000;
 const TOTAL_TRIM_MIN_INTERVAL_MS = 5 * 60_000;
 const TOTAL_TRIM_WRITE_THRESHOLD = 200;
+
+const debugWarn = (...args: unknown[]): void => {
+  if (isDebugEnabled()) {
+    console.warn(...args);
+  }
+};
+
+const debugError = (...args: unknown[]): void => {
+  if (isDebugEnabled()) {
+    console.error(...args);
+  }
+};
 
 const STORES = {
   messages: 'messages',
@@ -500,6 +513,13 @@ export class IndexedDBStore implements MemoryStore {
           const db = (event.target as IDBOpenDBRequest).result;
           const tx = (event.target as IDBOpenDBRequest).transaction;
           if (!tx) return;
+          tx.onerror = () => {
+            try {
+              tx.abort();
+            } catch {
+              // ignore
+            }
+          };
           const migrateTasks: Array<Promise<void>> = [];
 
           // 消息存储
@@ -553,22 +573,22 @@ export class IndexedDBStore implements MemoryStore {
 
           // 数据迁移：将 legacy key 迁移为转义后的 key，补充新索引字段
           migrateTasks.push(
-            this.migrateMessageKeys(msgStore)
+            this.migrateMessageKeys(msgStore, tx)
           );
           migrateTasks.push(
-            this.migrateProfileKeys(profileStore)
+            this.migrateProfileKeys(profileStore, tx)
           );
           if (stylePrefStore) {
-            migrateTasks.push(this.migrateStylePreferenceKeys(stylePrefStore));
+            migrateTasks.push(this.migrateStylePreferenceKeys(stylePrefStore, tx));
           }
           if (memoryStore) {
-            migrateTasks.push(this.migrateContactMemoryKeys(memoryStore));
+            migrateTasks.push(this.migrateContactMemoryKeys(memoryStore, tx));
           }
 
           migrationCheck = Promise.allSettled(migrateTasks).then((results) => {
             const failed = results.filter((r) => r.status === 'rejected');
             if (failed.length > 0) {
-              console.error('[IndexedDBStore] Migration tasks failed', failed);
+              debugError('[IndexedDBStore] Migration tasks failed', failed);
               throw new Error('IndexedDB 迁移失败');
             }
           });
@@ -610,14 +630,14 @@ export class IndexedDBStore implements MemoryStore {
 
     await this.withTransaction(STORES.messages, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.messages);
-      await this.requestToPromise(store.put(record));
+      await this.requestToPromise(store.put(record), tx);
     });
 
     // 清理超出上限的历史消息（best-effort，不影响主流程）
     try {
       await this.trimOldMessages(contactKeyStr, this.maxMessagesPerContact);
     } catch (err) {
-      console.warn('[IndexedDBStore] trim messages failed', err);
+      debugWarn('[IndexedDBStore] trim messages failed', err);
     }
 
     this.totalTrimWriteCount += 1;
@@ -625,7 +645,7 @@ export class IndexedDBStore implements MemoryStore {
       try {
         await this.trimTotalMessages(this.maxTotalMessages);
       } catch (err) {
-        console.warn('[IndexedDBStore] trim total messages failed', err);
+        debugWarn('[IndexedDBStore] trim total messages failed', err);
       }
     }
   }
@@ -644,13 +664,13 @@ export class IndexedDBStore implements MemoryStore {
     await this.withTransaction(STORES.messages, 'readwrite', (tx) => {
       const store = tx.objectStore(STORES.messages);
 
-      for (const message of messages) {
-        const contactKeyStr = contactKeyToString(message.contactKey);
-        const record = { ...message, contactKeyStr };
-        store.put(record);
-      }
-
-      return Promise.resolve();
+      return (async () => {
+        for (const message of messages) {
+          const contactKeyStr = contactKeyToString(message.contactKey);
+          const record = { ...message, contactKeyStr };
+          await this.requestToPromise(store.put(record), tx);
+        }
+      })();
     });
   }
 
@@ -666,7 +686,7 @@ export class IndexedDBStore implements MemoryStore {
       const store = tx.objectStore(STORES.messages);
       const index = store.index('contactKey');
       for (const keyStr of keys) {
-        await this.deleteMessagesForContactKeyStr(index, keyStr, { useCompoundIndex: false });
+        await this.deleteMessagesForContactKeyStr(index, keyStr, { useCompoundIndex: false }, tx);
       }
     });
   }
@@ -679,6 +699,11 @@ export class IndexedDBStore implements MemoryStore {
     return new Promise((resolve, reject) => {
       const tx = this.db!.transaction(STORES.messages, 'readonly');
       const store = tx.objectStore(STORES.messages);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
 
       // 优先使用复合索引按时间倒序扫描，避免全表扫描
       if (store.indexNames.contains('contactKeyTimestamp')) {
@@ -692,7 +717,10 @@ export class IndexedDBStore implements MemoryStore {
             const request = index.openCursor(range, 'prev');
             const results: Message[] = [];
 
-            request.onerror = () => rejectKey(request.error);
+            request.onerror = () => {
+              this.abortTransaction(tx);
+              rejectKey(request.error);
+            };
             request.onsuccess = () => {
               const cursor = request.result;
               if (cursor && results.length < limit) {
@@ -726,7 +754,10 @@ export class IndexedDBStore implements MemoryStore {
         const nextKey = remainingKeys.shift()!;
         const request = index.getAll(IDBKeyRange.only(nextKey));
 
-        request.onerror = () => reject(request.error);
+        request.onerror = () => {
+          this.abortTransaction(tx);
+          reject(request.error);
+        };
         request.onsuccess = () => {
           const messages = request.result as Message[];
           all.push(...messages);
@@ -781,7 +812,10 @@ export class IndexedDBStore implements MemoryStore {
                 const request = index.openCursor(range, 'prev');
                 const results: Message[] = [];
 
-                request.onerror = () => reject(request.error);
+                request.onerror = () => {
+                  this.abortTransaction(tx);
+                  reject(request.error);
+                };
                 request.onsuccess = () => {
                   const cursor = request.result;
                   if (cursor && results.length < normalizedLimit) {
@@ -793,7 +827,10 @@ export class IndexedDBStore implements MemoryStore {
                 };
               } else {
                 const request = index.getAll(IDBKeyRange.only(keyStr));
-                request.onerror = () => reject(request.error);
+                request.onerror = () => {
+                  this.abortTransaction(tx);
+                  reject(request.error);
+                };
                 request.onsuccess = () => {
                   const messages = request.result as Message[];
                   messages.sort((a, b) => a.timestamp - b.timestamp);
@@ -824,6 +861,11 @@ export class IndexedDBStore implements MemoryStore {
     return new Promise((resolve, reject) => {
       const tx = this.db!.transaction(STORES.profiles, 'readonly');
       const store = tx.objectStore(STORES.profiles);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
       const tryNext = (remaining: string[]) => {
         if (remaining.length === 0) {
           resolve(null);
@@ -831,7 +873,10 @@ export class IndexedDBStore implements MemoryStore {
         }
         const keyStr = remaining.shift()!;
         const request = store.get(keyStr);
-        request.onerror = () => reject(request.error);
+        request.onerror = () => {
+          this.abortTransaction(tx);
+          reject(request.error);
+        };
         request.onsuccess = () => {
           const record = request.result;
           if (record) {
@@ -856,7 +901,7 @@ export class IndexedDBStore implements MemoryStore {
 
     await this.withTransaction(STORES.profiles, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.profiles);
-      await this.requestToPromise(store.put(record));
+      await this.requestToPromise(store.put(record), tx);
     });
   }
 
@@ -870,7 +915,7 @@ export class IndexedDBStore implements MemoryStore {
     await this.withTransaction(STORES.profiles, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.profiles);
       for (const keyStr of keys) {
-        await this.requestToPromise(store.delete(keyStr));
+        await this.requestToPromise(store.delete(keyStr), tx);
       }
     });
   }
@@ -895,6 +940,11 @@ export class IndexedDBStore implements MemoryStore {
       const tx = this.db!.transaction(STORES.messages, 'readonly');
       const store = tx.objectStore(STORES.messages);
       const index = store.index('contactKey');
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
       let total = 0;
 
       const countNext = (remaining: string[]) => {
@@ -904,7 +954,10 @@ export class IndexedDBStore implements MemoryStore {
         }
         const key = remaining.shift()!;
         const request = index.count(IDBKeyRange.only(key));
-        request.onerror = () => reject(request.error);
+        request.onerror = () => {
+          this.abortTransaction(tx);
+          reject(request.error);
+        };
         request.onsuccess = () => {
           total += (request.result as number) || 0;
           countNext(remaining);
@@ -925,8 +978,16 @@ export class IndexedDBStore implements MemoryStore {
       const tx = this.db!.transaction(STORES.profiles, 'readonly');
       const store = tx.objectStore(STORES.profiles);
       const request = store.getAll();
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         const records = request.result;
         const profiles = records.map((record: ContactProfile & { keyStr: string }) => {
@@ -955,16 +1016,21 @@ export class IndexedDBStore implements MemoryStore {
         const indexName = messageStore.indexNames.contains('contactKeyTimestamp') ? 'contactKeyTimestamp' : 'contactKey';
         const messageIndex = messageStore.index(indexName);
         for (const keyStr of keys) {
-          await this.deleteMessagesForContactKeyStr(messageIndex, keyStr, { useCompoundIndex: indexName === 'contactKeyTimestamp' });
+          await this.deleteMessagesForContactKeyStr(
+            messageIndex,
+            keyStr,
+            { useCompoundIndex: indexName === 'contactKeyTimestamp' },
+            tx
+          );
         }
 
         const profileStore = tx.objectStore(STORES.profiles);
         const styleStore = tx.objectStore(STORES.stylePreferences);
         const memoryStore = tx.objectStore(STORES.contactMemories);
         for (const keyStr of keys) {
-          await this.requestToPromise(profileStore.delete(keyStr));
-          await this.requestToPromise(styleStore.delete(keyStr));
-          await this.requestToPromise(memoryStore.delete(keyStr));
+          await this.requestToPromise(profileStore.delete(keyStr), tx);
+          await this.requestToPromise(styleStore.delete(keyStr), tx);
+          await this.requestToPromise(memoryStore.delete(keyStr), tx);
         }
       }
     );
@@ -981,6 +1047,11 @@ export class IndexedDBStore implements MemoryStore {
     return new Promise((resolve, reject) => {
       const tx = this.db!.transaction(STORES.stylePreferences, 'readonly');
       const store = tx.objectStore(STORES.stylePreferences);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
       const tryNext = (remaining: string[]) => {
         if (remaining.length === 0) {
           resolve(null);
@@ -988,7 +1059,10 @@ export class IndexedDBStore implements MemoryStore {
         }
         const key = remaining.shift()!;
         const request = store.get(key);
-        request.onerror = () => reject(request.error);
+        request.onerror = () => {
+          this.abortTransaction(tx);
+          reject(request.error);
+        };
         request.onsuccess = () => {
           const result = (request.result as StylePreference | undefined) ?? null;
           if (result) {
@@ -1011,7 +1085,7 @@ export class IndexedDBStore implements MemoryStore {
 
     await this.withTransaction(STORES.stylePreferences, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.stylePreferences);
-      await this.requestToPromise(store.put(preference));
+      await this.requestToPromise(store.put(preference), tx);
     });
   }
 
@@ -1037,7 +1111,7 @@ export class IndexedDBStore implements MemoryStore {
       let foundKey: string | null = null;
 
       for (const key of keysToTry) {
-        const result = (await this.requestToPromise(store.get(key))) as StylePreference | undefined;
+        const result = (await this.requestToPromise(store.get(key), tx)) as StylePreference | undefined;
         if (result) {
           existing = { ...result, contactKeyStr: canonicalKey };
           foundKey = key;
@@ -1046,12 +1120,12 @@ export class IndexedDBStore implements MemoryStore {
       }
 
       const updated = updaterFn(existing);
-      await this.requestToPromise(store.put({ ...updated, contactKeyStr: canonicalKey }));
+      await this.requestToPromise(store.put({ ...updated, contactKeyStr: canonicalKey }), tx);
 
       for (const key of keysToTry) {
         if (key === canonicalKey) continue;
         if (foundKey && key === foundKey) continue;
-        await this.requestToPromise(store.delete(key));
+        await this.requestToPromise(store.delete(key), tx);
       }
     });
   }
@@ -1067,7 +1141,7 @@ export class IndexedDBStore implements MemoryStore {
     await this.withTransaction(STORES.stylePreferences, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.stylePreferences);
       for (const key of keys) {
-        await this.requestToPromise(store.delete(key));
+        await this.requestToPromise(store.delete(key), tx);
       }
     });
   }
@@ -1082,8 +1156,16 @@ export class IndexedDBStore implements MemoryStore {
       const tx = this.db!.transaction(STORES.stylePreferences, 'readonly');
       const store = tx.objectStore(STORES.stylePreferences);
       const request = store.getAll();
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         resolve(request.result as StylePreference[]);
       };
@@ -1101,6 +1183,11 @@ export class IndexedDBStore implements MemoryStore {
     return new Promise((resolve, reject) => {
       const tx = this.db!.transaction(STORES.contactMemories, 'readonly');
       const store = tx.objectStore(STORES.contactMemories);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
       const tryNext = (remaining: string[]) => {
         if (remaining.length === 0) {
           resolve(null);
@@ -1108,7 +1195,10 @@ export class IndexedDBStore implements MemoryStore {
         }
         const key = remaining.shift()!;
         const request = store.get(key);
-        request.onerror = () => reject(request.error);
+        request.onerror = () => {
+          this.abortTransaction(tx);
+          reject(request.error);
+        };
         request.onsuccess = () => {
           const result = (request.result as ContactMemorySummary | undefined) ?? null;
           if (result) {
@@ -1137,7 +1227,7 @@ export class IndexedDBStore implements MemoryStore {
 
     await this.withTransaction(STORES.contactMemories, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.contactMemories);
-      await this.requestToPromise(store.put(record));
+      await this.requestToPromise(store.put(record), tx);
     });
 
     return record;
@@ -1158,7 +1248,7 @@ export class IndexedDBStore implements MemoryStore {
 
     await this.withTransaction(STORES.contactMemories, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.contactMemories);
-      await this.requestToPromise(store.put(normalized));
+      await this.requestToPromise(store.put(normalized), tx);
     });
 
     return normalized;
@@ -1175,7 +1265,7 @@ export class IndexedDBStore implements MemoryStore {
     await this.withTransaction(STORES.contactMemories, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.contactMemories);
       for (const key of keys) {
-        await this.requestToPromise(store.delete(key));
+        await this.requestToPromise(store.delete(key), tx);
       }
     });
   }
@@ -1190,8 +1280,16 @@ export class IndexedDBStore implements MemoryStore {
       const tx = this.db!.transaction(STORES.contactMemories, 'readonly');
       const store = tx.objectStore(STORES.contactMemories);
       const request = store.getAll();
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => resolve(request.result as ContactMemorySummary[]);
     });
   }
@@ -1269,15 +1367,15 @@ export class IndexedDBStore implements MemoryStore {
 
         for (const profile of profiles) {
           const keyStr = contactKeyToString(profile.key);
-          await this.requestToPromise(profileStore.put({ ...profile, keyStr }));
+          await this.requestToPromise(profileStore.put({ ...profile, keyStr }), tx);
         }
 
         for (const pref of stylePreferences) {
-          await this.requestToPromise(stylePrefStore.put(pref));
+          await this.requestToPromise(stylePrefStore.put(pref), tx);
         }
 
         for (const memory of contactMemories) {
-          await this.requestToPromise(memoryStore.put(memory));
+          await this.requestToPromise(memoryStore.put(memory), tx);
         }
       }
     );
@@ -1299,10 +1397,13 @@ export class IndexedDBStore implements MemoryStore {
   /**
    * 迁移消息记录中的 contactKeyStr，确保使用转义后的 key
    */
-  private migrateMessageKeys(store: IDBObjectStore): Promise<void> {
+  private migrateMessageKeys(store: IDBObjectStore, tx: IDBTransaction): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = store.openCursor();
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) {
@@ -1314,7 +1415,10 @@ export class IndexedDBStore implements MemoryStore {
         if (record.contactKeyStr !== desiredKey) {
           const updated = { ...record, contactKeyStr: desiredKey };
           const updateRequest = cursor.update(updated);
-          updateRequest.onerror = () => reject(updateRequest.error);
+          updateRequest.onerror = () => {
+            this.abortTransaction(tx);
+            reject(updateRequest.error);
+          };
           updateRequest.onsuccess = () => cursor.continue();
         } else {
           cursor.continue();
@@ -1326,10 +1430,13 @@ export class IndexedDBStore implements MemoryStore {
   /**
    * 迁移画像记录的 key（keyPath = keyStr）
    */
-  private migrateProfileKeys(store: IDBObjectStore): Promise<void> {
+  private migrateProfileKeys(store: IDBObjectStore, tx: IDBTransaction): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = store.openCursor();
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) {
@@ -1345,16 +1452,25 @@ export class IndexedDBStore implements MemoryStore {
 
         const updated = { ...record, keyStr: desiredKey };
         const existingRequest = store.get(desiredKey);
-        existingRequest.onerror = () => reject(existingRequest.error);
+        existingRequest.onerror = () => {
+          this.abortTransaction(tx);
+          reject(existingRequest.error);
+        };
         existingRequest.onsuccess = () => {
           const existing = existingRequest.result as (ContactProfile & { keyStr: string }) | undefined;
           const merged = existing ? mergeProfiles(existing, updated, desiredKey) : updated;
 
           const deleteRequest = cursor.delete();
-          deleteRequest.onerror = () => reject(deleteRequest.error);
+          deleteRequest.onerror = () => {
+            this.abortTransaction(tx);
+            reject(deleteRequest.error);
+          };
           deleteRequest.onsuccess = () => {
             const putRequest = store.put(merged);
-            putRequest.onerror = () => reject(putRequest.error);
+            putRequest.onerror = () => {
+              this.abortTransaction(tx);
+              reject(putRequest.error);
+            };
             putRequest.onsuccess = () => cursor.continue();
           };
         };
@@ -1365,10 +1481,13 @@ export class IndexedDBStore implements MemoryStore {
   /**
    * 迁移风格偏好记录的 key（keyPath = contactKeyStr）
    */
-  private migrateStylePreferenceKeys(store: IDBObjectStore): Promise<void> {
+  private migrateStylePreferenceKeys(store: IDBObjectStore, tx: IDBTransaction): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = store.openCursor();
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) {
@@ -1385,16 +1504,25 @@ export class IndexedDBStore implements MemoryStore {
 
         const updated: StylePreference = { ...(record as StylePreference), contactKeyStr: desiredKey };
         const existingRequest = store.get(desiredKey);
-        existingRequest.onerror = () => reject(existingRequest.error);
+        existingRequest.onerror = () => {
+          this.abortTransaction(tx);
+          reject(existingRequest.error);
+        };
         existingRequest.onsuccess = () => {
           const existing = existingRequest.result as StylePreference | undefined;
           const merged = existing ? mergeStylePreferences(existing, updated, desiredKey) : updated;
 
           const deleteRequest = cursor.delete();
-          deleteRequest.onerror = () => reject(deleteRequest.error);
+          deleteRequest.onerror = () => {
+            this.abortTransaction(tx);
+            reject(deleteRequest.error);
+          };
           deleteRequest.onsuccess = () => {
             const putRequest = store.put(merged);
-            putRequest.onerror = () => reject(putRequest.error);
+            putRequest.onerror = () => {
+              this.abortTransaction(tx);
+              reject(putRequest.error);
+            };
             putRequest.onsuccess = () => cursor.continue();
           };
         };
@@ -1405,10 +1533,13 @@ export class IndexedDBStore implements MemoryStore {
   /**
    * 迁移长期记忆记录的 key（keyPath = contactKeyStr）
    */
-  private migrateContactMemoryKeys(store: IDBObjectStore): Promise<void> {
+  private migrateContactMemoryKeys(store: IDBObjectStore, tx: IDBTransaction): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = store.openCursor();
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) {
@@ -1425,16 +1556,25 @@ export class IndexedDBStore implements MemoryStore {
 
         const updated: ContactMemorySummary = { ...(record as ContactMemorySummary), contactKeyStr: desiredKey };
         const existingRequest = store.get(desiredKey);
-        existingRequest.onerror = () => reject(existingRequest.error);
+        existingRequest.onerror = () => {
+          this.abortTransaction(tx);
+          reject(existingRequest.error);
+        };
         existingRequest.onsuccess = () => {
           const existing = existingRequest.result as ContactMemorySummary | undefined;
           const merged = existing ? mergeContactMemories(existing, updated, desiredKey) : updated;
 
           const deleteRequest = cursor.delete();
-          deleteRequest.onerror = () => reject(deleteRequest.error);
+          deleteRequest.onerror = () => {
+            this.abortTransaction(tx);
+            reject(deleteRequest.error);
+          };
           deleteRequest.onsuccess = () => {
             const putRequest = store.put(merged);
-            putRequest.onerror = () => reject(putRequest.error);
+            putRequest.onerror = () => {
+              this.abortTransaction(tx);
+              reject(putRequest.error);
+            };
             putRequest.onsuccess = () => cursor.continue();
           };
         };
@@ -1508,7 +1648,10 @@ export class IndexedDBStore implements MemoryStore {
         txCompleted = true;
         maybeResolve();
       };
-      tx.onerror = () => fail(tx.error ?? new Error('Transaction failed'));
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        fail(tx.error ?? new Error('Transaction failed'));
+      };
       tx.onabort = () => fail(tx.error ?? new Error('Transaction aborted'));
 
       Promise.resolve()
@@ -1561,7 +1704,8 @@ export class IndexedDBStore implements MemoryStore {
   private deleteMessagesForContactKeyStr(
     index: IDBIndex,
     contactKeyStr: string,
-    options: { useCompoundIndex: boolean }
+    options: { useCompoundIndex: boolean },
+    tx: IDBTransaction
   ): Promise<void> {
     const range = options.useCompoundIndex
       ? IDBKeyRange.bound([contactKeyStr, Number.MIN_SAFE_INTEGER], [contactKeyStr, Number.MAX_SAFE_INTEGER])
@@ -1569,15 +1713,22 @@ export class IndexedDBStore implements MemoryStore {
 
     return new Promise((resolve, reject) => {
       const request = index.openCursor(range);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) {
           resolve();
           return;
         }
-        cursor.delete();
-        cursor.continue();
+        const deleteRequest = cursor.delete();
+        deleteRequest.onerror = () => {
+          this.abortTransaction(tx);
+          reject(deleteRequest.error);
+        };
+        deleteRequest.onsuccess = () => cursor.continue();
       };
     });
   }
@@ -1606,7 +1757,10 @@ export class IndexedDBStore implements MemoryStore {
       let count = 0;
 
       await new Promise<void>((resolve, reject) => {
-        cursorRequest.onerror = () => reject(cursorRequest.error);
+        cursorRequest.onerror = () => {
+          this.abortTransaction(tx);
+          reject(cursorRequest.error);
+        };
         cursorRequest.onsuccess = () => {
           const cursor = cursorRequest.result;
           if (!cursor) {
@@ -1615,7 +1769,13 @@ export class IndexedDBStore implements MemoryStore {
           }
           count += 1;
           if (count > maxCount) {
-            cursor.delete();
+            const deleteRequest = cursor.delete();
+            deleteRequest.onerror = () => {
+              this.abortTransaction(tx);
+              reject(deleteRequest.error);
+            };
+            deleteRequest.onsuccess = () => cursor.continue();
+            return;
           }
           cursor.continue();
         };
@@ -1641,7 +1801,10 @@ export class IndexedDBStore implements MemoryStore {
       let count = 0;
 
       await new Promise<void>((resolve, reject) => {
-        cursorRequest.onerror = () => reject(cursorRequest.error);
+        cursorRequest.onerror = () => {
+          this.abortTransaction(tx);
+          reject(cursorRequest.error);
+        };
         cursorRequest.onsuccess = () => {
           const cursor = cursorRequest.result;
           if (!cursor) {
@@ -1650,7 +1813,13 @@ export class IndexedDBStore implements MemoryStore {
           }
           count += 1;
           if (count > maxCount) {
-            cursor.delete();
+            const deleteRequest = cursor.delete();
+            deleteRequest.onerror = () => {
+              this.abortTransaction(tx);
+              reject(deleteRequest.error);
+            };
+            deleteRequest.onsuccess = () => cursor.continue();
+            return;
           }
           cursor.continue();
         };
@@ -1658,9 +1827,21 @@ export class IndexedDBStore implements MemoryStore {
     });
   }
 
-  private requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
+  private abortTransaction(tx?: IDBTransaction | null): void {
+    if (!tx) return;
+    try {
+      tx.abort();
+    } catch {
+      // ignore
+    }
+  }
+
+  private requestToPromise<T>(request: IDBRequest<T>, tx?: IDBTransaction): Promise<T> {
     return new Promise((resolve, reject) => {
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
       request.onsuccess = () => resolve(request.result);
     });
   }

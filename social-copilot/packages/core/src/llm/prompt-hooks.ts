@@ -1,4 +1,5 @@
 import type { LLMInput } from '../types';
+import { isDebugEnabled } from '../utils/debug';
 
 export interface PromptHook {
   name: string;
@@ -7,6 +8,12 @@ export interface PromptHook {
 }
 
 const MAX_PROMPT_LENGTH = 100_000;
+
+const debugWarn = (message: string): void => {
+  if (isDebugEnabled()) {
+    console.warn(message);
+  }
+};
 
 export class PromptHookRegistry {
   private readonly hooks: PromptHook[] = [];
@@ -42,11 +49,11 @@ export class PromptHookRegistry {
         try {
           const next = hook.transformSystemPrompt(current, input);
           if (typeof next !== 'string') {
-            console.warn(`prompt hook "${hook.name}" transformSystemPrompt returned non-string`);
+            debugWarn(`prompt hook "${hook.name}" transformSystemPrompt returned non-string`);
             continue;
           }
           if (next.length > MAX_PROMPT_LENGTH) {
-            console.warn(
+            debugWarn(
               `prompt hook "${hook.name}" transformSystemPrompt returned too-long string (${next.length}); truncating to ${MAX_PROMPT_LENGTH}`,
             );
             current = next.slice(0, MAX_PROMPT_LENGTH);
@@ -55,7 +62,7 @@ export class PromptHookRegistry {
           current = next;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.warn(`prompt hook "${hook.name}" transformSystemPrompt failed: ${message}`);
+          debugWarn(`prompt hook "${hook.name}" transformSystemPrompt failed: ${message}`);
         }
       }
     }
@@ -69,11 +76,11 @@ export class PromptHookRegistry {
         try {
           const next = hook.transformUserPrompt(current, input);
           if (typeof next !== 'string') {
-            console.warn(`prompt hook "${hook.name}" transformUserPrompt returned non-string`);
+            debugWarn(`prompt hook "${hook.name}" transformUserPrompt returned non-string`);
             continue;
           }
           if (next.length > MAX_PROMPT_LENGTH) {
-            console.warn(
+            debugWarn(
               `prompt hook "${hook.name}" transformUserPrompt returned too-long string (${next.length}); truncating to ${MAX_PROMPT_LENGTH}`,
             );
             current = next.slice(0, MAX_PROMPT_LENGTH);
@@ -82,7 +89,7 @@ export class PromptHookRegistry {
           current = next;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.warn(`prompt hook "${hook.name}" transformUserPrompt failed: ${message}`);
+          debugWarn(`prompt hook "${hook.name}" transformUserPrompt failed: ${message}`);
         }
       }
     }

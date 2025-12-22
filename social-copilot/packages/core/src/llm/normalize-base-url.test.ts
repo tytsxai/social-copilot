@@ -32,14 +32,22 @@ describe('normalizeBaseUrl', () => {
   });
 
   it('rejects localhost and private IPs by default', () => {
-    expect(() => normalizeBaseUrl('https://localhost:1234')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://127.0.0.1')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://10.0.0.1')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://192.168.1.2')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://172.16.0.1')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://169.254.0.10')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://[::1]')).toThrow(/localhost|private/i);
-    expect(() => normalizeBaseUrl('https://[fd00::1]')).toThrow(/localhost|private/i);
+    const privateHosts = [
+      'https://localhost:1234',
+      'https://127.0.0.1',
+      'https://10.0.0.1',
+      'https://192.168.1.2',
+      'https://172.16.0.1',
+      'https://172.31.255.254',
+      'https://169.254.0.10',
+      'https://[::1]',
+      'https://[fc00::1]',
+      'https://[fd00::1]',
+    ];
+
+    for (const host of privateHosts) {
+      expect(() => normalizeBaseUrl(host)).toThrow(/localhost|private/i);
+    }
   });
 
   it('allows localhost/private hosts when allowPrivateHosts is true', () => {

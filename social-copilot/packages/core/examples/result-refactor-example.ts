@@ -9,7 +9,7 @@ import type { LLMInput, LLMOutput, ReplyCandidate, ReplyStyle } from '../src/typ
 import { parseReplyContent, ReplyParseError } from '../src/llm/reply-validation';
 import { fetchWithTimeout } from '../src/llm/fetch-with-timeout';
 import { redactSecrets } from '../src/utils/redact';
-import { ok, err, fromPromise, fromThrowable, andThen, mapErr, type Result } from '../src/utils/result';
+import { ok, err, fromPromise, fromThrowable, mapErr, type Result } from '../src/utils/result';
 
 /**
  * EXAMPLE 1: Simple try-catch to Result

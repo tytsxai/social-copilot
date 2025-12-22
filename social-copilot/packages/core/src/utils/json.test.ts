@@ -5,6 +5,7 @@ import {
   extractJsonObjectBlock,
   extractJsonArrayBlock,
   parseJsonObjectFromText,
+  safeJsonParse,
 } from './json';
 
 describe('extractJsonBlock', () => {
@@ -301,12 +302,39 @@ describe('parseJsonObjectFromText', () => {
     const result = parseJsonObjectFromText(text);
     expect(result).toEqual({ null: null, bool: true, false: false });
   });
+
+  it('filters prototype pollution payloads', () => {
+    const text = '{"safe": 1, "__proto__": {"polluted": true}}';
+    const result = parseJsonObjectFromText(text);
+    expect(result).toEqual({ safe: 1 });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+describe('safeJsonParse', () => {
+  it('removes dangerous keys at any depth', () => {
+    const text =
+      '{"ok":1,"nested":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}}';
+    const parsed = safeJsonParse(text) as Record<string, unknown>;
+    expect(parsed).toEqual({ ok: 1, nested: {} });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('removes dangerous keys inside arrays of objects', () => {
+    const text = '[{"ok":1,"prototype":{"polluted":true}},{"ok":2}]';
+    const parsed = safeJsonParse(text) as Array<Record<string, unknown>>;
+    expect(parsed).toEqual([{ ok: 1 }, { ok: 2 }]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
 });
 
 describe('Property-based tests', () => {
   // Helper to check if a string contains bracket characters that would confuse the parser
   const hasBracketChars = (str: string): boolean => {
-    return /[\[\]{}]/.test(str);
+    return /[[\]{}]/.test(str);
+  };
+  const isDangerousKey = (str: string): boolean => {
+    return str === '__proto__' || str === 'constructor' || str === 'prototype';
   };
 
   // Helper to check if a value contains bracket chars in any string key or value
@@ -337,7 +365,7 @@ describe('Property-based tests', () => {
           const extracted = extractJsonBlock(text);
           expect(extracted).not.toBeNull();
           if (extracted) {
-            const parsed = JSON.parse(extracted);
+            const parsed = safeJsonParse(extracted);
             expect(parsed).toEqual(value);
           }
         }
@@ -357,7 +385,7 @@ describe('Property-based tests', () => {
         const extracted = extractJsonBlock(text);
         expect(extracted).not.toBeNull();
         if (extracted) {
-          const parsed = JSON.parse(extracted);
+          const parsed = safeJsonParse(extracted);
           expect(parsed).toEqual(value);
         }
       }),
@@ -386,7 +414,7 @@ describe('Property-based tests', () => {
         const text = `text ${jsonStr} text`;
         const extracted = extractJsonBlock(text);
         if (extracted) {
-          const parsed = JSON.parse(extracted);
+          const parsed = safeJsonParse(extracted);
           expect(parsed).toEqual(value);
         }
       }),
@@ -397,7 +425,8 @@ describe('Property-based tests', () => {
   it('parseJsonObjectFromText accepts valid objects', () => {
     // Only test with safe objects (no bracket chars in keys/values)
     const safeString = fc.string().filter((s) => !hasBracketChars(s));
-    const safeObject = fc.dictionary(safeString, fc.oneof(
+    const safeKey = safeString.filter((s) => !isDangerousKey(s));
+    const safeObjectWithKeys = fc.dictionary(safeKey, fc.oneof(
       safeString,
       fc.integer(),
       fc.boolean(),
@@ -405,7 +434,7 @@ describe('Property-based tests', () => {
     ));
 
     fc.assert(
-      fc.property(safeObject, (value) => {
+      fc.property(safeObjectWithKeys, (value) => {
         const jsonStr = JSON.stringify(value);
         const text = `prefix ${jsonStr} suffix`;
         const result = parseJsonObjectFromText(text);
@@ -439,7 +468,7 @@ describe('Property-based tests', () => {
           const extracted = extractJsonBlock(text);
 
           if (extracted) {
-            const parsed = JSON.parse(extracted);
+            const parsed = safeJsonParse(extracted);
             expect(parsed).toEqual(value);
           }
         }

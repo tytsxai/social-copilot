@@ -1,7 +1,8 @@
 /**
  * 思路类型枚举
  */
-export type ThoughtType = 'empathy' | 'solution' | 'humor' | 'neutral';
+export const THOUGHT_TYPES = ['empathy', 'solution', 'humor', 'neutral'] as const;
+export type ThoughtType = (typeof THOUGHT_TYPES)[number];
 
 /**
  * 思路卡片数据

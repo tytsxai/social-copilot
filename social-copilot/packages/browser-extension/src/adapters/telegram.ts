@@ -1,6 +1,7 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
 import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
+import { debugError, debugLog } from '../utils/debug';
 
 /**
  * Telegram Web 适配器
@@ -103,8 +104,7 @@ export class TelegramAdapter implements PlatformAdapter {
       this.version = 'k';
     }
     if (this.isDev()) {
-      // eslint-disable-next-line no-console
-      console.log(`[Social Copilot] Detected Telegram Web version: ${this.version}`);
+      debugLog(`[Social Copilot] Detected Telegram Web version: ${this.version}`);
     }
   }
 
@@ -265,20 +265,19 @@ export class TelegramAdapter implements PlatformAdapter {
                   const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
                   if (message) callback(message);
                 } catch (error) {
-                  console.error('[Social Copilot] Telegram onNewMessage callback error:', error);
+                  debugError('[Social Copilot] Telegram onNewMessage callback error:', error);
                 }
               }
             }
           } catch (error) {
-            console.error('[Social Copilot] Telegram MutationObserver error:', error);
+            debugError('[Social Copilot] Telegram MutationObserver error:', error);
           }
         }
       });
 
       this.observer.observe(container, { childList: true, subtree: true });
       if (this.isDev()) {
-        // eslint-disable-next-line no-console
-        console.log('[Social Copilot] Message observer started');
+        debugLog('[Social Copilot] Message observer started');
       }
     };
 

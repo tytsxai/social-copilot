@@ -1,5 +1,6 @@
 import type { ReplyCandidate, ThoughtCard, ThoughtType } from '@social-copilot/core';
 import { escapeHtml } from '../utils/escape-html';
+import { debugWarn } from '../utils/debug';
 import { ThoughtCardsComponent } from './thought-cards';
 
 interface CopilotUIOptions {
@@ -340,7 +341,7 @@ export class CopilotUI {
   }
 
   private async restorePosition() {
-    const storage = (globalThis as any)?.chrome?.storage?.local;
+    const storage = typeof chrome !== 'undefined' ? chrome.storage?.local : undefined;
     if (!storage) {
       this.applyPosition();
       return;
@@ -354,7 +355,7 @@ export class CopilotUI {
         this.position = this.clampPosition(saved.left, saved.top);
       }
     } catch (error) {
-      console.warn('[Social Copilot] Failed to restore panel position', error);
+      debugWarn('[Social Copilot] Failed to restore panel position', error);
     } finally {
       this.applyPosition();
     }
@@ -363,7 +364,7 @@ export class CopilotUI {
   private async savePosition() {
     if (!this.position) return;
 
-    const storage = (globalThis as any)?.chrome?.storage?.local;
+    const storage = typeof chrome !== 'undefined' ? chrome.storage?.local : undefined;
     if (!storage) return;
 
     try {
@@ -371,7 +372,7 @@ export class CopilotUI {
         [this.positionStorageKey]: this.position,
       });
     } catch (error) {
-      console.warn('[Social Copilot] Failed to save panel position', error);
+      debugWarn('[Social Copilot] Failed to save panel position', error);
     }
   }
 

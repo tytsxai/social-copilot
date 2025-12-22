@@ -1,6 +1,7 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
 import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
+import { debugError, debugLog } from '../utils/debug';
 
 /**
  * Slack Web 适配器
@@ -247,20 +248,19 @@ export class SlackAdapter implements PlatformAdapter {
                   const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
                   if (message) callback(message);
                 } catch (error) {
-                  console.error('[Social Copilot] Slack onNewMessage callback error:', error);
+                  debugError('[Social Copilot] Slack onNewMessage callback error:', error);
                 }
               }
             }
           } catch (error) {
-            console.error('[Social Copilot] Slack MutationObserver error:', error);
+            debugError('[Social Copilot] Slack MutationObserver error:', error);
           }
         }
       });
 
       this.observer.observe(container, { childList: true, subtree: true });
       if (this.isDev()) {
-        // eslint-disable-next-line no-console
-        console.log('[Social Copilot] Slack message observer started');
+        debugLog('[Social Copilot] Slack message observer started');
       }
     };
 

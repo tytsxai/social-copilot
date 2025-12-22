@@ -40,6 +40,76 @@ type StoreEntry = {
   expiresAt?: number;
 };
 
+type ScoredRecord = {
+  record: VectorRecord;
+  score: number;
+  order: number;
+};
+
+class MinHeap<T> {
+  private data: T[] = [];
+  private compare: (a: T, b: T) => number;
+
+  constructor(compare: (a: T, b: T) => number) {
+    this.compare = compare;
+  }
+
+  size() {
+    return this.data.length;
+  }
+
+  peek() {
+    return this.data[0];
+  }
+
+  push(item: T) {
+    this.data.push(item);
+    this.siftUp(this.data.length - 1);
+  }
+
+  replaceTop(item: T) {
+    if (this.data.length === 0) {
+      this.data.push(item);
+      return;
+    }
+    this.data[0] = item;
+    this.siftDown(0);
+  }
+
+  toArray() {
+    return this.data.slice();
+  }
+
+  private siftUp(index: number) {
+    let i = index;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.compare(this.data[i], this.data[parent]) >= 0) break;
+      [this.data[i], this.data[parent]] = [this.data[parent], this.data[i]];
+      i = parent;
+    }
+  }
+
+  private siftDown(index: number) {
+    let i = index;
+    const length = this.data.length;
+    while (true) {
+      const left = i * 2 + 1;
+      const right = left + 1;
+      let smallest = i;
+      if (left < length && this.compare(this.data[left], this.data[smallest]) < 0) {
+        smallest = left;
+      }
+      if (right < length && this.compare(this.data[right], this.data[smallest]) < 0) {
+        smallest = right;
+      }
+      if (smallest === i) break;
+      [this.data[i], this.data[smallest]] = [this.data[smallest], this.data[i]];
+      i = smallest;
+    }
+  }
+}
+
 export class InMemoryVectorStore implements VectorStore {
   private store: Map<string, StoreEntry> = new Map();
   private readonly maxSize: number;
@@ -86,22 +156,35 @@ export class InMemoryVectorStore implements VectorStore {
   async query(options: QueryOptions): Promise<Array<{ record: VectorRecord; score: number }>> {
     this.validateVector(options.vector);
     this.pruneExpired();
+    const topK = Math.max(0, options.topK);
+    if (topK === 0) return [];
     const queryNormSquared = this.vectorNormSquared(options.vector);
     const invQueryNorm = queryNormSquared === 0 ? 0 : 1 / Math.sqrt(queryNormSquared);
-    const candidates = Array.from(this.store.values()).filter((entry) => {
-      const rec = entry.record;
-      if (options.partition && rec.partition !== options.partition) return false;
-      if (options.filter && !options.filter(rec)) return false;
-      return true;
+    const heap = new MinHeap<ScoredRecord>((a, b) => {
+      const scoreDiff = a.score - b.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.order - b.order;
     });
+    let order = 0;
 
-    const scored = candidates.map((entry) => ({
-      record: entry.record,
-      score: this.cosineSimilarityWithPrecomputedQueryNorm(options.vector, invQueryNorm, entry.record.vector),
-    }));
+    for (const entry of this.store.values()) {
+      const rec = entry.record;
+      if (options.partition && rec.partition !== options.partition) continue;
+      if (options.filter && !options.filter(rec)) continue;
+      const score = this.cosineSimilarityWithPrecomputedQueryNorm(options.vector, invQueryNorm, rec.vector);
+      const scored = { record: rec, score, order: order++ };
+      if (heap.size() < topK) {
+        heap.push(scored);
+      } else if ((heap.peek()?.score ?? 0) < score) {
+        heap.replaceTop(scored);
+      }
+    }
 
-    scored.sort((a, b) => b.score - a.score);
-    const results = scored.slice(0, Math.max(0, options.topK));
+    const results = heap.toArray().sort((a, b) => {
+      const scoreDiff = b.score - a.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.order - b.order;
+    });
     for (const { record } of results) {
       const key = this.buildKey(record.id, record.partition);
       const entry = this.store.get(key);

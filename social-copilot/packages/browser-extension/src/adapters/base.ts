@@ -1,5 +1,6 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import { contactKeyToString } from '@social-copilot/core';
+import { debugWarn } from '../utils/debug';
 
 export interface AdapterRuntimeInfo {
   /** Adapter layout/version variant selected at runtime */
@@ -69,8 +70,7 @@ export function queryFirst<T extends Element = Element>(
         (typeof process === 'undefined' && typeof location !== 'undefined' && location.hostname === 'localhost');
 
       if (isDev) {
-        // eslint-disable-next-line no-console
-        console.warn('[queryFirst] invalid selector skipped:', selector, err);
+        debugWarn('[queryFirst] invalid selector skipped:', selector, err);
       }
       continue;
     }

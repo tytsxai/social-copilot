@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ProfileUpdater, ProfileUpdaterError } from './updater';
+import { ProfileUpdater } from './updater';
 import type { ContactKey, ContactProfile, LLMInput, LLMOutput, LLMProvider, Message } from '../types';
 
 class FakeLLMProvider implements LLMProvider {
@@ -25,6 +25,32 @@ class FakeLLMProvider implements LLMProvider {
   }
 }
 
+class BlockingLLMProvider implements LLMProvider {
+  readonly name = 'blocking';
+  inflight = 0;
+  maxInflight = 0;
+  deferreds: Array<() => void> = [];
+
+  async generateReply(_input: LLMInput): Promise<LLMOutput> {
+    this.inflight += 1;
+    this.maxInflight = Math.max(this.maxInflight, this.inflight);
+    const gate = new Promise<void>((resolve) => {
+      this.deferreds.push(resolve);
+    });
+    await gate;
+    this.inflight -= 1;
+    return {
+      candidates: [{
+        style: 'rational',
+        text: '{}',
+        confidence: 0.9,
+      }],
+      model: 'fake-model',
+      latency: 1,
+    };
+  }
+}
+
 const contactKey: ContactKey = {
   platform: 'web',
   app: 'telegram',
@@ -34,10 +60,10 @@ const contactKey: ContactKey = {
   isGroup: false,
 };
 
-const buildMessages = (): Message[] => ([
+const buildMessages = (key: ContactKey = contactKey): Message[] => ([
   {
     id: '1',
-    contactKey,
+    contactKey: key,
     direction: 'incoming',
     senderName: 'Alice',
     text: '最近在学摄影',
@@ -45,7 +71,7 @@ const buildMessages = (): Message[] => ([
   },
   {
     id: '2',
-    contactKey,
+    contactKey: key,
     direction: 'incoming',
     senderName: 'Alice',
     text: '喜欢猫咪',
@@ -67,6 +93,12 @@ const baseProfile: ContactProfile = {
 };
 
 describe('ProfileUpdater', () => {
+  const flushMicrotasks = async (times = 2) => {
+    for (let i = 0; i < times; i += 1) {
+      await Promise.resolve();
+    }
+  };
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2024-01-02T00:00:00Z'));
@@ -206,5 +238,44 @@ describe('ProfileUpdater', () => {
 
     expect(updates.interests?.length).toBeLessThanOrEqual(20);
     expect(updates.interests).toContain('新增');
+  });
+
+  test('serializes updates for the same contact', async () => {
+    const provider = new BlockingLLMProvider();
+    const updater = new ProfileUpdater(provider);
+
+    const first = updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
+    await flushMicrotasks();
+    expect(provider.deferreds.length).toBe(1);
+
+    const second = updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
+    await flushMicrotasks();
+    expect(provider.deferreds.length).toBe(1);
+
+    provider.deferreds[0]();
+    await first;
+    await flushMicrotasks();
+    expect(provider.deferreds.length).toBe(2);
+
+    provider.deferreds[1]();
+    await Promise.all([first, second]);
+    expect(provider.maxInflight).toBe(1);
+  });
+
+  test('allows parallel updates for different contacts', async () => {
+    const provider = new BlockingLLMProvider();
+    const updater = new ProfileUpdater(provider);
+    const contactKeyB = { ...contactKey, conversationId: 'conv-2', peerId: 'bob' };
+    const profileB = { ...baseProfile, key: contactKeyB, displayName: 'Bob' };
+
+    const first = updater.extractProfileUpdates(buildMessages(), { ...baseProfile });
+    const second = updater.extractProfileUpdates(buildMessages(contactKeyB), profileB);
+    await Promise.resolve();
+
+    expect(provider.deferreds.length).toBe(2);
+    expect(provider.maxInflight).toBe(2);
+
+    provider.deferreds.forEach((resolve) => resolve());
+    await Promise.all([first, second]);
   });
 });

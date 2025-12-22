@@ -3,6 +3,7 @@ import { parseJsonObjectFromText } from '../utils/json';
 import { safeAssignPlain } from '../utils/safe-merge';
 import type { LLMInput } from '../types';
 import { DEFAULT_INPUT_BUDGETS, normalizeAndClampLLMInput } from '../llm/input-budgets';
+import { contactKeyToStringV1 } from '../types/contact';
 
 export type ProfileUpdaterErrorCode =
   | 'INVALID_EXISTING_PROFILE'
@@ -29,6 +30,7 @@ const MAX_INTEREST_LENGTH = 64;
 export class ProfileUpdater {
   private llm: LLMProvider;
   private updateThreshold: number;
+  private readonly contactLocks = new Map<string, Promise<void>>();
 
   constructor(llm: LLMProvider, updateThreshold = 20) {
     this.llm = llm;
@@ -54,39 +56,64 @@ export class ProfileUpdater {
       return {};
     }
 
-    try {
-      const validatedProfile = this.validateExistingProfile(existingProfile);
-      const memorySummary = this.buildExtractionPrompt(validatedProfile);
+    const validatedProfile = this.validateExistingProfile(existingProfile);
+    const contactId = contactKeyToStringV1(validatedProfile.key);
 
-      const rawInput: LLMInput = {
-        task: 'profile_extraction',
-        context: {
-          contactKey: validatedProfile.key,
-          recentMessages: messages,
-          currentMessage: messages[messages.length - 1],
-        },
-        profile: validatedProfile,
-        memorySummary,
-        styles: ['rational'],
-        language,
-      };
+    return this.withContactLock(contactId, async () => {
+      try {
+        const memorySummary = this.buildExtractionPrompt(validatedProfile);
 
-      const response = await this.llm.generateReply(
-        normalizeAndClampLLMInput(rawInput, DEFAULT_INPUT_BUDGETS)
-      );
+        const rawInput: LLMInput = {
+          task: 'profile_extraction',
+          context: {
+            contactKey: validatedProfile.key,
+            recentMessages: messages,
+            currentMessage: messages[messages.length - 1],
+          },
+          profile: validatedProfile,
+          memorySummary,
+          styles: ['rational'],
+          language,
+        };
 
-      // 解析 LLM 返回的画像更新
-      const content = response.candidates[0]?.text || '';
-      return this.parseProfileUpdates(content, validatedProfile);
-    } catch (error) {
-      if (error instanceof ProfileUpdaterError) {
-        throw error;
+        const response = await this.llm.generateReply(
+          normalizeAndClampLLMInput(rawInput, DEFAULT_INPUT_BUDGETS)
+        );
+
+        // 解析 LLM 返回的画像更新
+        const content = response.candidates[0]?.text || '';
+        return this.parseProfileUpdates(content, validatedProfile);
+      } catch (error) {
+        if (error instanceof ProfileUpdaterError) {
+          throw error;
+        }
+        throw new ProfileUpdaterError(
+          'LLM_REQUEST_FAILED',
+          '[ProfileUpdater] Failed to extract profile updates',
+          { cause: error }
+        );
       }
-      throw new ProfileUpdaterError(
-        'LLM_REQUEST_FAILED',
-        '[ProfileUpdater] Failed to extract profile updates',
-        { cause: error }
-      );
+    });
+  }
+
+  private async withContactLock<T>(contactId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.contactLocks.get(contactId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const chain = previous.then(() => current);
+    this.contactLocks.set(contactId, chain);
+
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.contactLocks.get(contactId) === chain) {
+        this.contactLocks.delete(contactId);
+      }
     }
   }
 
@@ -151,7 +178,7 @@ export class ProfileUpdater {
 
     const sanitizedInterests = this.sanitizeInterests(interests);
 
-    const contactProfile = profile as ContactProfile;
+    const contactProfile = profile as unknown as ContactProfile;
     return {
       ...contactProfile,
       displayName: displayName.trim(),

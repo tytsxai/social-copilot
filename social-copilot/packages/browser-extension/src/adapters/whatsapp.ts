@@ -1,6 +1,7 @@
 import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
 import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
+import { debugError, debugLog } from '../utils/debug';
 
 /**
  * WhatsApp Web 适配器
@@ -316,20 +317,19 @@ export class WhatsAppAdapter implements PlatformAdapter {
                   const message = this.parseMessageElement(messageEl as HTMLElement, contactKey);
                   if (message) callback(message);
                 } catch (error) {
-                  console.error('[Social Copilot] WhatsApp onNewMessage callback error:', error);
+                  debugError('[Social Copilot] WhatsApp onNewMessage callback error:', error);
                 }
               }
             }
           } catch (error) {
-            console.error('[Social Copilot] WhatsApp MutationObserver error:', error);
+            debugError('[Social Copilot] WhatsApp MutationObserver error:', error);
           }
         }
       });
 
       this.observer.observe(container, { childList: true, subtree: true });
       if (this.isDev()) {
-        // eslint-disable-next-line no-console
-        console.log('[Social Copilot] WhatsApp message observer started');
+        debugLog('[Social Copilot] WhatsApp message observer started');
       }
     };
 

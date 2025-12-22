@@ -169,6 +169,24 @@ let diagnosticsDirty = false;
 let diagnosticsLastPersistAt = 0;
 let diagnosticsPersistInFlight: Promise<void> | null = null;
 
+function debugLog(...args: unknown[]): void {
+  if (debugEnabled) {
+    console.warn(...args);
+  }
+}
+
+function debugWarn(...args: unknown[]): void {
+  if (debugEnabled) {
+    console.warn(...args);
+  }
+}
+
+function debugError(...args: unknown[]): void {
+  if (debugEnabled) {
+    console.error(...args);
+  }
+}
+
 function generateRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -407,7 +425,7 @@ async function ensureDiagnosticsReady(): Promise<void> {
         const result = await chrome.storage.local.get([DIAGNOSTICS_STORAGE_KEY]);
         diagnostics = parseDiagnosticsPayload(result[DIAGNOSTICS_STORAGE_KEY]);
       } catch (err) {
-        console.warn('[Social Copilot] Failed to load diagnostics:', err);
+        debugWarn('[Social Copilot] Failed to load diagnostics:', err);
       }
     })();
   }
@@ -432,7 +450,7 @@ async function maybePersistDiagnostics(force = false): Promise<void> {
       await chrome.storage.local.set({ [DIAGNOSTICS_STORAGE_KEY]: snapshot });
     } catch (err) {
       diagnosticsDirty = true;
-      console.warn('[Social Copilot] Failed to persist diagnostics:', err);
+      debugWarn('[Social Copilot] Failed to persist diagnostics:', err);
     } finally {
       diagnosticsPersistInFlight = null;
     }
@@ -457,7 +475,7 @@ async function clearPersistedDiagnostics(): Promise<void> {
   try {
     await chrome.storage.local.remove([DIAGNOSTICS_STORAGE_KEY]);
   } catch (err) {
-    console.warn('[Social Copilot] Failed to clear persisted diagnostics:', err);
+    debugWarn('[Social Copilot] Failed to clear persisted diagnostics:', err);
   }
 }
 
@@ -731,7 +749,7 @@ async function loadDebugEnabled(): Promise<void> {
     const result = await chrome.storage.local.get(DEBUG_ENABLED_STORAGE_KEY);
     debugEnabled = Boolean(result[DEBUG_ENABLED_STORAGE_KEY]);
   } catch (err) {
-    console.warn('[Social Copilot] Failed to load debug flag:', err);
+    debugWarn('[Social Copilot] Failed to load debug flag:', err);
   }
 }
 
@@ -751,7 +769,7 @@ async function loadProfileUpdateCounts(): Promise<void> {
       }
     }
   } catch (err) {
-    console.warn('[Social Copilot] Failed to load profile update counts:', err);
+    debugWarn('[Social Copilot] Failed to load profile update counts:', err);
   }
 }
 
@@ -768,7 +786,7 @@ async function setLastProfileUpdateCount(contactKeyStr: string, count: number): 
   try {
     await persistProfileUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist profile update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist profile update counts:', err);
   }
 }
 
@@ -788,7 +806,7 @@ async function loadMemoryUpdateCounts(): Promise<void> {
       }
     }
   } catch (err) {
-    console.warn('[Social Copilot] Failed to load memory update counts:', err);
+    debugWarn('[Social Copilot] Failed to load memory update counts:', err);
   }
 }
 
@@ -805,7 +823,7 @@ async function setLastMemoryUpdateCount(contactKeyStr: string, count: number): P
   try {
     await persistMemoryUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist memory update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist memory update counts:', err);
   }
 }
 
@@ -833,7 +851,7 @@ function ensureStoreReady(): Promise<void> {
 
 // 初始化
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Social Copilot] Extension installed');
+  debugLog('[Social Copilot] Extension installed');
   await ensureStoreReady();
   await loadConfig();
 });
@@ -845,7 +863,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 // 启动时初始化
 ensureStoreReady()
-  .catch((err) => console.error('[Social Copilot] Init failed:', sanitizeErrorForDiagnostics(err)));
+  .catch((err) => debugError('[Social Copilot] Init failed:', sanitizeErrorForDiagnostics(err)));
 void ensureDiagnosticsReady();
 setupBackgroundErrorReporting();
 
@@ -854,7 +872,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   handleMessage(request)
     .then(sendResponse)
     .catch((error) => {
-      console.error('[Social Copilot] Error:', sanitizeErrorForDiagnostics(error));
+      debugError('[Social Copilot] Error:', sanitizeErrorForDiagnostics(error));
       sendResponse({ error: toUserErrorMessage(error) });
     });
   return true;
@@ -899,7 +917,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     pushDiagnostic({ ...safeEvent, requestId });
     if (debugEnabled) {
       const label = event.ok ? 'ok' : 'err';
-      console.log(`[Social Copilot][diag][${label}]`, event.type, requestId, safeEvent.details ?? safeEvent.error ?? {});
+      debugLog(`[Social Copilot][diag][${label}]`, event.type, requestId, safeEvent.details ?? safeEvent.error ?? {});
     }
   };
 
@@ -1160,7 +1178,7 @@ async function dispatchMessage(
         try {
           await loadConfig();
         } catch (err) {
-          console.warn('[Social Copilot] Failed to load config for status:', sanitizeErrorForDiagnostics(err));
+          debugWarn('[Social Copilot] Failed to load config for status:', sanitizeErrorForDiagnostics(err));
         }
       }
       const hasApiKey = !!llmManager;
@@ -1479,7 +1497,7 @@ async function setConfig(config: Config) {
     try {
       await setSessionKeys(currentConfig.apiKey, currentConfig.enableFallback ? currentConfig.fallbackApiKey : undefined);
     } catch (err) {
-      console.warn(
+      debugWarn(
         '[Social Copilot] Failed to persist session keys (service worker may lose key on restart):',
         sanitizeErrorForDiagnostics(err)
       );
@@ -1513,7 +1531,7 @@ async function setConfig(config: Config) {
   profileUpdater = new ProfileUpdater(profileLLM, 20);
 
   const fallbackLabel = managerConfig.fallback ? managerConfig.fallback.provider : 'disabled';
-  console.log(`[Social Copilot] Config updated: provider=${currentConfig.provider}, fallback=${fallbackLabel}`);
+  debugLog(`[Social Copilot] Config updated: provider=${currentConfig.provider}, fallback=${fallbackLabel}`);
   return { success: true };
 }
 
@@ -1542,7 +1560,7 @@ function buildManagerConfig(config: Config): LLMManagerConfig {
 }
 
 async function handleFallbackEvent(fromProvider: string, toProvider: string, error: Error) {
-  console.warn('[Social Copilot] Fallback triggered:', sanitizeErrorForDiagnostics(error));
+  debugWarn('[Social Copilot] Fallback triggered:', sanitizeErrorForDiagnostics(error));
   fallbackModeActive = true;
   pushDiagnostic({
     ts: Date.now(),
@@ -1685,7 +1703,7 @@ async function handleGenerateReply(payload: {
       usingFallback: Boolean(fallbackModeActive && llmManager.hasFallback()),
     };
   } catch (error) {
-    console.error('[Social Copilot] Failed to generate reply:', sanitizeErrorForDiagnostics(error));
+    debugError('[Social Copilot] Failed to generate reply:', sanitizeErrorForDiagnostics(error));
     const message = toUserErrorMessage(error);
 
     if (currentConfig?.enableMemory ?? false) {
@@ -1711,7 +1729,7 @@ async function maybeMigrateContactState(contactKey: ContactKey, profile: Contact
   try {
     await store.saveProfile(migrated);
   } catch (err) {
-    console.warn('[Social Copilot] Failed to migrate profile key:', err);
+    debugWarn('[Social Copilot] Failed to migrate profile key:', err);
   }
 
   // Best-effort: copy style preferences & memory summary to new key (do not delete old records).
@@ -1806,7 +1824,7 @@ async function maybeUpdateProfile(
 
   if (profileUpdater.shouldUpdate(messageCount, lastUpdate)) {
     if (debugEnabled) {
-      console.log('[Social Copilot] Updating profile for:', profile.displayName);
+      debugLog('[Social Copilot] Updating profile for:', profile.displayName);
     }
 
     try {
@@ -1818,11 +1836,11 @@ async function maybeUpdateProfile(
           profile = refreshed;
         }
         if (debugEnabled) {
-          console.log('[Social Copilot] Profile updated');
+          debugLog('[Social Copilot] Profile updated');
         }
       }
     } catch (error) {
-      console.error('[Social Copilot] Failed to update profile:', sanitizeErrorForDiagnostics(error));
+      debugError('[Social Copilot] Failed to update profile:', sanitizeErrorForDiagnostics(error));
     } finally {
       await setLastProfileUpdateCount(contactKeyStr, messageCount);
     }
@@ -1934,7 +1952,7 @@ async function clearContactMemory(contactKey: ContactKey) {
   try {
     await persistMemoryUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist memory update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist memory update counts:', err);
   }
   return { success: true };
 }
@@ -1953,12 +1971,12 @@ async function clearContactData(contactKey: ContactKey) {
   try {
     await persistProfileUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist profile update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist profile update counts:', err);
   }
   try {
     await persistMemoryUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist memory update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist memory update counts:', err);
   }
 
   return { success: true };
@@ -1983,7 +2001,7 @@ async function getContacts() {
     );
     return { contacts };
   } catch (error) {
-    console.error('[Social Copilot] Failed to get contacts:', sanitizeErrorForDiagnostics(error));
+    debugError('[Social Copilot] Failed to get contacts:', sanitizeErrorForDiagnostics(error));
     return { contacts: [] };
   }
 }
@@ -1999,12 +2017,12 @@ async function clearData() {
   try {
     await chrome.storage.local.remove(PROFILE_UPDATE_COUNT_STORAGE_KEY);
   } catch (err) {
-    console.warn('[Social Copilot] Failed to clear profile update counts:', err);
+    debugWarn('[Social Copilot] Failed to clear profile update counts:', err);
   }
   try {
     await chrome.storage.local.remove(MEMORY_UPDATE_COUNT_STORAGE_KEY);
   } catch (err) {
-    console.warn('[Social Copilot] Failed to clear memory update counts:', err);
+    debugWarn('[Social Copilot] Failed to clear memory update counts:', err);
   }
   llmManager = null;
   fallbackModeActive = false;
@@ -2099,21 +2117,6 @@ interface UserDataBackupV1 {
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function normalizeCountRecord(value: unknown): Record<string, number> {
-  if (!isPlainObject(value)) return {};
-  const out: Record<string, number> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof k !== 'string' || !k) continue;
-    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-    out[k] = v;
-  }
-  return out;
-}
-
 function normalizeCountRecordKeys(record: Record<string, number>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [key, value] of Object.entries(record)) {
@@ -2193,7 +2196,7 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
   try {
     await persistProfileUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist profile update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist profile update counts:', err);
   }
 
   lastMemoryUpdateCount.clear();
@@ -2203,7 +2206,7 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
   try {
     await persistMemoryUpdateCounts();
   } catch (err) {
-    console.warn('[Social Copilot] Failed to persist memory update counts:', err);
+    debugWarn('[Social Copilot] Failed to persist memory update counts:', err);
   }
 
   return {

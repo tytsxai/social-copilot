@@ -364,7 +364,6 @@ describe('Platform adapters (contract)', () => {
 describe('Platform adapters: MutationObserver error isolation', () => {
   test('Slack: callback throw does not break subsequent messages', async () => {
     const restore = mockWindowLocation('https://app.slack.com/client/T123/C456');
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     document.body.innerHTML = `
       <div data-qa="channel_name">general</div>
@@ -396,16 +395,13 @@ describe('Platform adapters: MutationObserver error isolation', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(received).toEqual(['second']);
-    expect(consoleError).toHaveBeenCalled();
 
     dispose();
-    consoleError.mockRestore();
     restore();
   });
 
   test('Telegram: callback throw does not break subsequent messages', async () => {
     const restore = mockWindowLocation('https://web.telegram.org/k/#@alice');
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     window.location.hash = '#@alice';
     document.body.innerHTML = `
@@ -439,16 +435,13 @@ describe('Platform adapters: MutationObserver error isolation', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(received).toEqual(['second']);
-    expect(consoleError).toHaveBeenCalled();
 
     dispose();
-    consoleError.mockRestore();
     restore();
   });
 
   test('WhatsApp: callback throw does not break subsequent messages', async () => {
     const restore = mockWindowLocation('https://web.whatsapp.com/');
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     localStorage.setItem('last-wid', '"111@c.us"');
     document.body.innerHTML = `
@@ -487,10 +480,8 @@ describe('Platform adapters: MutationObserver error isolation', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(received).toEqual(['second']);
-    expect(consoleError).toHaveBeenCalled();
 
     dispose();
-    consoleError.mockRestore();
     restore();
   });
 });

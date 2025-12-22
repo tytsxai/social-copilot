@@ -1,10 +1,58 @@
 import type { ContactKey, Message, ReplyCandidate, ThoughtCard, ThoughtType } from '@social-copilot/core';
 import type { PlatformAdapter } from '../adapters/base';
 import { CopilotUI } from '../ui/copilot-ui';
+import { debugError, debugLog, debugWarn } from '../utils/debug';
 
 export type SupportedApp = 'telegram' | 'whatsapp' | 'slack';
 
 const DEFAULT_SEND_MESSAGE_TIMEOUT_MS = 30_000;
+
+const isDevMode = (): boolean => {
+  return (
+    (typeof process !== 'undefined' &&
+      typeof process.env !== 'undefined' &&
+      process.env.NODE_ENV === 'development') ||
+    (typeof process === 'undefined' && typeof location !== 'undefined' && location.hostname === 'localhost')
+  );
+};
+
+type SelectorMatch = { element: Element; selector: string; index: number };
+
+export const findFirstSelector = (
+  selectors: string[],
+  root: ParentNode = document
+): SelectorMatch | null => {
+  for (let i = 0; i < selectors.length; i += 1) {
+    const selector = selectors[i];
+    const element = root.querySelector(selector);
+    if (element) {
+      return { element, selector, index: i };
+    }
+  }
+  return null;
+};
+
+export const logSelectorFallback = (
+  app: SupportedApp,
+  purpose: string,
+  selectors: string[],
+  match: SelectorMatch | null
+): void => {
+  if (!isDevMode()) return;
+  if (match) {
+    if (match.index > 0) {
+      debugWarn(`[Social Copilot] ${app} selector fallback for ${purpose}`, {
+        selected: match.selector,
+        index: match.index,
+        candidates: selectors,
+      });
+    }
+  } else {
+    debugWarn(`[Social Copilot] ${app} selector missing for ${purpose}`, {
+      candidates: selectors,
+    });
+  }
+};
 
 class SendMessageTimeoutError extends Error {
   readonly name = 'SendMessageTimeoutError';
@@ -28,7 +76,7 @@ function sendMessageWithTimeout<TResponse = unknown>(
     timer = window.setTimeout(() => reject(new SendMessageTimeoutError(timeoutMs)), timeoutMs);
   });
 
-  const sendPromise = chrome.runtime.sendMessage(message as any) as Promise<TResponse>;
+  const sendPromise = chrome.runtime.sendMessage(message as unknown) as Promise<TResponse>;
   return Promise.race([sendPromise, timeoutPromise]).finally(() => {
     if (timer !== undefined) window.clearTimeout(timer);
   });
@@ -129,10 +177,10 @@ export class CopilotContentScript {
   }
 
   async init() {
-    console.log(`[Social Copilot] Initializing ${this.options.app} adapter...`);
+    debugLog(`[Social Copilot] Initializing ${this.options.app} adapter...`);
 
     if (!this.adapter.isMatch()) {
-      console.log(`[Social Copilot] Not a ${this.options.app} page, skipping`);
+      debugLog(`[Social Copilot] Not a ${this.options.app} page, skipping`);
       return;
     }
 
@@ -161,7 +209,7 @@ export class CopilotContentScript {
 
       window.addEventListener('beforeunload', () => this.destroy());
 
-      console.log(`[Social Copilot] ${this.options.app} adapter ready`);
+      debugLog(`[Social Copilot] ${this.options.app} adapter ready`);
     } catch (err) {
       this.reportContentScriptError(err, { phase: 'init' });
       // Best-effort: show a generic adapter-broken message so users aren't left in silence.
@@ -179,7 +227,7 @@ export class CopilotContentScript {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
 
-    console.log(`[Social Copilot] Destroying ${this.options.app} adapter...`);
+    debugLog(`[Social Copilot] Destroying ${this.options.app} adapter...`);
 
     if (this.incomingDebounceTimer !== null) {
       clearTimeout(this.incomingDebounceTimer);
@@ -439,6 +487,8 @@ export class CopilotContentScript {
       const selectors = this.options.waitForChatSelectors;
       let attempts = 0;
       const maxAttempts = 60; // ~30s
+      let loggedFallback = false;
+      let loggedMissing = false;
 
       const check = () => {
         if (this.isDestroyed) {
@@ -447,17 +497,24 @@ export class CopilotContentScript {
         }
 
         attempts += 1;
-        for (const selector of selectors) {
-          if (document.querySelector(selector)) {
-            resolve();
-            return;
+        const match = findFirstSelector(selectors);
+        if (match) {
+          if (!loggedFallback && match.index > 0) {
+            logSelectorFallback(this.options.app, 'wait_for_chat', selectors, match);
+            loggedFallback = true;
           }
+          resolve();
+          return;
         }
 
         if (attempts < maxAttempts) {
           setTimeout(check, 500);
         } else {
-          console.log('[Social Copilot] Timeout waiting for chat container');
+          debugLog('[Social Copilot] Timeout waiting for chat container');
+          if (!loggedMissing) {
+            logSelectorFallback(this.options.app, 'wait_for_chat', selectors, null);
+            loggedMissing = true;
+          }
           resolve();
         }
       };
@@ -649,7 +706,7 @@ export class CopilotContentScript {
       }
     } catch (error) {
       if (!this.isDestroyed) {
-        console.warn('[Social Copilot] Failed to analyze thought:', error);
+        debugWarn('[Social Copilot] Failed to analyze thought:', error);
       }
     }
   }
@@ -791,7 +848,7 @@ export class CopilotContentScript {
       }
     } catch (error) {
       if (!this.isDestroyed) {
-        console.error('[Social Copilot] Failed to generate suggestions:', error);
+        debugError('[Social Copilot] Failed to generate suggestions:', error);
         if (error instanceof SendMessageTimeoutError) {
           this.ui.setError('后台响应超时，请稍后重试');
         } else {
@@ -843,7 +900,7 @@ export class CopilotContentScript {
         }, 2000);
       })
       .catch((error) => {
-        console.warn('[Social Copilot] Clipboard copy failed:', error);
+        debugWarn('[Social Copilot] Clipboard copy failed:', error);
         if (this.isDestroyed) return;
         // Keep candidates visible so the user can manually select/copy from the panel.
         this.ui.setNotification('无法自动填充输入框，且复制失败；请从面板中手动复制粘贴。');

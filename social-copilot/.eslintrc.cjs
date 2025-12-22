@@ -30,6 +30,9 @@ module.exports = {
       env: {
         node: true,
       },
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'off',
+      },
       globals: {
         vi: 'readonly',
         describe: 'readonly',

@@ -7,6 +7,8 @@ export type MessageDirection = 'incoming' | 'outgoing';
 
 /**
  * 单条消息
+ * @security UNTRUSTED - Must be HTML-escaped before rendering.
+ * URLs must be validated with safeUrl() before use in href/src.
  */
 export interface Message {
   /** 消息ID（平台提供或自动生成） */
