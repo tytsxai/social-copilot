@@ -113,7 +113,7 @@ export class ThoughtCardsComponent {
       const isActive = this.selectedThought === card.type;
       const activeClass = isActive ? 'sc-thought-card--active' : '';
       return `
-        <div class="sc-thought-card ${activeClass}" data-type="${escapeHtml(card.type)}">
+        <div class="sc-thought-card ${activeClass}" data-type="${escapeHtml(card.type)}" tabindex="0" role="button" aria-pressed="${isActive ? 'true' : 'false'}">
           <span class="sc-thought-icon">${escapeHtml(card.icon)}</span>
           <span class="sc-thought-label">${escapeHtml(card.label)}</span>
         </div>
@@ -152,16 +152,30 @@ export class ThoughtCardsComponent {
       const cardEl = target.closest('.sc-thought-card');
       if (!cardEl) return;
 
+      // 处理键盘事件 (Enter/Space)
+      if (e.type === 'keydown') {
+        const keyEvent = e as KeyboardEvent;
+        if (keyEvent.key !== 'Enter' && keyEvent.key !== ' ') {
+          return;
+        }
+        // 防止 Space 键滚动页面
+        if (keyEvent.key === ' ') {
+          e.preventDefault();
+        }
+      }
+
       const type = cardEl.getAttribute('data-type') as ThoughtType;
       this.handleCardClick(type);
     };
 
     this.container.addEventListener('click', this.cardClickHandler);
+    this.container.addEventListener('keydown', this.cardClickHandler);
   }
 
   private unbindEvents(): void {
     if (this.container && this.cardClickHandler) {
       this.container.removeEventListener('click', this.cardClickHandler);
+      this.container.removeEventListener('keydown', this.cardClickHandler);
       this.cardClickHandler = null;
     }
   }

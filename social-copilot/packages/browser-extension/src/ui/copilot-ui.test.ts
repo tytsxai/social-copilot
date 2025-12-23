@@ -231,6 +231,66 @@ describe('CopilotUI candidates', () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(candidate);
   });
+
+  test('pressing Enter on a candidate triggers onSelect callback', () => {
+    const onSelect = vi.fn();
+    ui = new CopilotUI({
+      onSelect,
+      onRefresh: () => {},
+    });
+
+    ui.mount();
+    const candidate = { style: 'formal', text: 'hello' } as any;
+    ui.setCandidates([candidate]);
+
+    const clickable = document.querySelector('.sc-candidate') as HTMLElement | null;
+    expect(clickable).not.toBeNull();
+    expect(clickable?.getAttribute('tabindex')).toBe('0');
+    expect(clickable?.getAttribute('role')).toBe('button');
+
+    clickable?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(candidate);
+  });
+
+  test('pressing Space on a candidate triggers onSelect callback and prevents default', () => {
+    const onSelect = vi.fn();
+    ui = new CopilotUI({
+      onSelect,
+      onRefresh: () => {},
+    });
+
+    ui.mount();
+    const candidate = { style: 'formal', text: 'hello' } as any;
+    ui.setCandidates([candidate]);
+
+    const clickable = document.querySelector('.sc-candidate') as HTMLElement | null;
+    const event = new KeyboardEvent('keydown', { key: ' ', bubbles: true });
+    const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+    clickable?.dispatchEvent(event);
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(candidate);
+    expect(preventDefaultSpy).toHaveBeenCalled();
+  });
+
+  test('other keys do not trigger onSelect', () => {
+    const onSelect = vi.fn();
+    ui = new CopilotUI({
+      onSelect,
+      onRefresh: () => {},
+    });
+
+    ui.mount();
+    ui.setCandidates([{ style: 'formal', text: 'hello' } as any]);
+
+    const clickable = document.querySelector('.sc-candidate') as HTMLElement | null;
+    clickable?.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });
 
 describe('CopilotUI mount/unmount', () => {
@@ -285,5 +345,142 @@ describe('CopilotUI mount/unmount', () => {
     const roots = document.querySelectorAll('#social-copilot-root');
     expect(roots).toHaveLength(1);
     expect(roots[0]).toBe(firstRoot);
+  });
+});
+
+describe('CopilotUI States & Storage', () => {
+  let ui: CopilotUI | null = null;
+
+  beforeEach(() => {
+    // Mock chrome storage
+    (global as any).chrome = {
+      storage: {
+        local: {
+          get: vi.fn().mockResolvedValue({}),
+          set: vi.fn().mockResolvedValue(undefined),
+        },
+        onChanged: {
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+        },
+        sync: {
+          get: vi.fn().mockResolvedValue({}),
+          set: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+    };
+  });
+
+  afterEach(() => {
+    ui?.unmount();
+    ui = null;
+    delete (global as any).chrome;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  test('setLoading/setError/setNotification/clearNotification updates UI', () => {
+    ui = new CopilotUI({
+      onSelect: () => {},
+      onRefresh: () => {},
+    });
+    ui.mount();
+
+    ui.setLoading(true);
+    expect(document.querySelector('.sc-loading')).not.toBeNull();
+
+    ui.setError('test error');
+    expect(document.querySelector('.sc-error')?.textContent).toBe('test error');
+    expect(document.querySelector('.sc-loading')).toBeNull();
+
+    ui.setNotification('test notification');
+    expect(document.querySelector('.sc-notice')?.textContent).toBe('test notification');
+
+    ui.clearNotification();
+    expect(document.querySelector('.sc-notice')).toBeNull();
+  });
+
+  test('show/hide toggles display', () => {
+    ui = new CopilotUI({
+      onSelect: () => {},
+      onRefresh: () => {},
+    });
+    ui.mount();
+    const root = document.getElementById('social-copilot-root') as HTMLElement;
+
+    ui.hide();
+    expect(root.style.display).toBe('none');
+
+    ui.show();
+    expect(root.style.display).toBe('block');
+  });
+
+  test('restores position from chrome storage', async () => {
+    const key = `sc-panel-pos-${location.host}`;
+    (chrome.storage.local.get as any).mockResolvedValue({
+      [key]: { top: 100, left: 100 },
+    });
+
+    ui = new CopilotUI({
+      onSelect: () => {},
+      onRefresh: () => {},
+    });
+    ui.mount();
+
+    // Wait for restorePosition async call
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const root = document.getElementById('social-copilot-root') as HTMLElement;
+    expect(root.style.top).toBe('100px');
+    expect(root.style.left).toBe('100px');
+  });
+
+  test('saves position to chrome storage after drag', async () => {
+    ui = new CopilotUI({
+      onSelect: () => {},
+      onRefresh: () => {},
+    });
+    ui.mount();
+
+    const root = document.getElementById('social-copilot-root') as HTMLElement;
+    const header = root.querySelector('.sc-header') as HTMLElement;
+
+    root.getBoundingClientRect = () =>
+      ({
+        top: 100,
+        left: 200,
+        width: 320,
+        height: 240,
+        right: 520,
+        bottom: 340,
+        x: 200,
+        y: 100,
+        toJSON: () => {},
+      }) as any;
+
+    header.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 10, clientY: 20, bubbles: true }));
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 30, clientY: 70, bubbles: true }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+    expect(chrome.storage.local.set).toHaveBeenCalled();
+    const callArgs = (chrome.storage.local.set as any).mock.calls[0][0];
+    const key = `sc-panel-pos-${location.host}`;
+    expect(callArgs[key]).toEqual({ left: 220, top: 150 });
+  });
+
+  test('handles storage error gracefully', async () => {
+    (chrome.storage.local.get as any).mockRejectedValue(new Error('storage error'));
+
+    ui = new CopilotUI({
+      onSelect: () => {},
+      onRefresh: () => {},
+    });
+    ui.mount();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const root = document.getElementById('social-copilot-root') as HTMLElement;
+    // Should still apply default position
+    expect(root.style.right).toBe('20px');
+    expect(root.style.bottom).toBe('80px');
   });
 });
