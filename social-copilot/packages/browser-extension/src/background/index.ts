@@ -35,6 +35,7 @@ import {
   formatZodError,
 } from '@social-copilot/core';
 import type { ProviderType, LLMManagerConfig } from '@social-copilot/core';
+import { interpolateCustomPrompt } from './custom-prompts';
 
 type DiagnosticEventType =
   | 'GENERATE_REPLY'
@@ -1733,13 +1734,17 @@ function buildPromptHookRegistry(config: Config): PromptHookRegistry | undefined
   const registry = new PromptHookRegistry();
   registry.register({
     name: 'custom-prompts',
-    transformSystemPrompt: (prompt) => {
+    transformSystemPrompt: (prompt, input) => {
       if (!customSystemPrompt) return prompt;
-      return `${prompt}\n\n【自定义系统提示】\n${customSystemPrompt}`;
+      const rendered = interpolateCustomPrompt(customSystemPrompt, input).trim();
+      if (!rendered) return prompt;
+      return `${prompt}\n\n【自定义系统提示】\n${rendered}`;
     },
-    transformUserPrompt: (prompt) => {
+    transformUserPrompt: (prompt, input) => {
       if (!customUserPrompt) return prompt;
-      return `${prompt}\n\n【自定义用户提示】\n${customUserPrompt}`;
+      const rendered = interpolateCustomPrompt(customUserPrompt, input).trim();
+      if (!rendered) return prompt;
+      return `${prompt}\n\n【自定义用户提示】\n${rendered}`;
     },
   });
   return registry;

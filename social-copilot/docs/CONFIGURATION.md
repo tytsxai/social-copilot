@@ -43,6 +43,10 @@
 | `debugEnabled` | `boolean` | `false` | 是否启用诊断事件的 console 输出 |
 
 说明：
+- `customSystemPrompt` / `customUserPrompt` 支持少量模板变量（`{{...}}`），会在每次请求构造 prompt 时替换：
+  - `{{contact_name}}`：联系人显示名（优先画像名，否则当前消息 senderName，否则 peerId）
+  - `{{app}}` / `{{platform}}` / `{{is_group}}` / `{{peer_id}}` / `{{conversation_id}}`
+  - `{{styles}}` / `{{suggestion_count}}` / `{{language}}` / `{{thought_direction}}`
 - 为减少安装时的权限告警，生产版本仅支持官方域名作为 `baseUrl` / `fallbackBaseUrl`（DeepSeek/OpenAI/Anthropic）。如需接入自建网关，请使用定制/企业版本。
 
 ### 1.2 API Key 存储策略（安全相关）
