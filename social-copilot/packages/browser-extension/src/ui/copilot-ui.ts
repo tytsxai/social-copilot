@@ -148,12 +148,284 @@ export class CopilotUI {
 
   private render(): string {
     return `
+      <style>
+        #social-copilot-root {
+          position: fixed;
+          z-index: 2147483647;
+          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji",
+            "Segoe UI Emoji", "Segoe UI Symbol";
+          color: #0f172a;
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+          line-height: 1.45;
+        }
+
+        #social-copilot-root,
+        #social-copilot-root * {
+          box-sizing: border-box;
+        }
+
+        #social-copilot-root .sc-panel {
+          width: 320px;
+          max-width: min(92vw, 360px);
+          border-radius: 14px;
+          overflow: hidden;
+          background: rgba(255, 255, 255, 0.95);
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          box-shadow: 0 20px 50px rgba(15, 23, 42, 0.22);
+          backdrop-filter: blur(10px);
+        }
+
+        #social-copilot-root .sc-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 10px;
+          background: linear-gradient(135deg, rgba(91, 94, 246, 0.95) 0%, rgba(124, 58, 237, 0.92) 100%);
+          color: rgba(255, 255, 255, 0.98);
+          cursor: grab;
+          user-select: none;
+        }
+
+        #social-copilot-root .sc-header:active {
+          cursor: grabbing;
+        }
+
+        #social-copilot-root .sc-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          font-weight: 750;
+          letter-spacing: 0.2px;
+          flex: 1;
+          min-width: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        #social-copilot-root .sc-shortcut {
+          font-size: 11px;
+          font-weight: 700;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.18);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          color: rgba(255, 255, 255, 0.92);
+        }
+
+        #social-copilot-root .sc-header button {
+          appearance: none;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          background: rgba(255, 255, 255, 0.12);
+          color: rgba(255, 255, 255, 0.95);
+          width: 30px;
+          height: 30px;
+          border-radius: 10px;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: background 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
+        }
+
+        #social-copilot-root .sc-header button:hover {
+          background: rgba(255, 255, 255, 0.18);
+        }
+
+        #social-copilot-root .sc-header button:active {
+          transform: translateY(0.5px);
+        }
+
+        #social-copilot-root .sc-content {
+          padding: 10px;
+          max-height: 360px;
+          overflow: auto;
+        }
+
+        #social-copilot-root .sc-content::-webkit-scrollbar {
+          width: 10px;
+        }
+
+        #social-copilot-root .sc-content::-webkit-scrollbar-thumb {
+          background: rgba(15, 23, 42, 0.18);
+          border-radius: 999px;
+          border: 2px solid rgba(255, 255, 255, 0.85);
+        }
+
+        #social-copilot-root .sc-notice {
+          padding: 10px 10px;
+          border-radius: 12px;
+          background: rgba(59, 130, 246, 0.10);
+          border: 1px solid rgba(59, 130, 246, 0.20);
+          color: #1e3a8a;
+          font-size: 12px;
+          margin-bottom: 10px;
+          line-height: 1.35;
+        }
+
+        #social-copilot-root .sc-loading,
+        #social-copilot-root .sc-empty {
+          padding: 10px 10px;
+          border-radius: 12px;
+          background: rgba(15, 23, 42, 0.03);
+          border: 1px solid rgba(15, 23, 42, 0.10);
+          color: rgba(15, 23, 42, 0.70);
+          font-size: 12.5px;
+        }
+
+        #social-copilot-root .sc-error {
+          padding: 10px 10px;
+          border-radius: 12px;
+          background: rgba(239, 68, 68, 0.10);
+          border: 1px solid rgba(239, 68, 68, 0.22);
+          color: #7f1d1d;
+          font-size: 12.5px;
+          line-height: 1.35;
+        }
+
+        #social-copilot-root .sc-candidate {
+          padding: 10px 10px;
+          border-radius: 14px;
+          background: rgba(15, 23, 42, 0.02);
+          border: 1px solid rgba(15, 23, 42, 0.10);
+          cursor: pointer;
+          transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+          margin-bottom: 10px;
+        }
+
+        #social-copilot-root .sc-candidate:hover {
+          background: rgba(91, 94, 246, 0.07);
+          border-color: rgba(91, 94, 246, 0.22);
+        }
+
+        #social-copilot-root .sc-candidate:active {
+          transform: translateY(0.5px);
+        }
+
+        #social-copilot-root .sc-style {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 11.5px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.78);
+          background: rgba(91, 94, 246, 0.10);
+          border: 1px solid rgba(91, 94, 246, 0.18);
+          border-radius: 999px;
+          padding: 4px 8px;
+          margin-bottom: 8px;
+        }
+
+        #social-copilot-root .sc-text {
+          margin: 0;
+          font-size: 13px;
+          line-height: 1.55;
+          color: rgba(15, 23, 42, 0.88);
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+
+        #social-copilot-root .sc-thought-cards {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+
+        #social-copilot-root .sc-thought-card {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          background: rgba(15, 23, 42, 0.02);
+          cursor: pointer;
+          user-select: none;
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(15, 23, 42, 0.82);
+          transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+        }
+
+        #social-copilot-root .sc-thought-card:hover {
+          background: rgba(91, 94, 246, 0.08);
+          border-color: rgba(91, 94, 246, 0.22);
+        }
+
+        #social-copilot-root .sc-thought-card:active {
+          transform: translateY(0.5px);
+        }
+
+        #social-copilot-root .sc-thought-card--active {
+          background: linear-gradient(135deg, rgba(91, 94, 246, 0.18) 0%, rgba(124, 58, 237, 0.14) 100%);
+          border-color: rgba(91, 94, 246, 0.30);
+        }
+
+        #social-copilot-root .sc-privacy {
+          padding: 12px;
+          border-radius: 14px;
+          background: rgba(245, 158, 11, 0.10);
+          border: 1px solid rgba(245, 158, 11, 0.22);
+          color: rgba(15, 23, 42, 0.90);
+        }
+
+        #social-copilot-root .sc-privacy-title {
+          font-size: 13px;
+          font-weight: 800;
+          margin-bottom: 6px;
+        }
+
+        #social-copilot-root .sc-privacy-text {
+          font-size: 12.5px;
+          color: rgba(15, 23, 42, 0.78);
+          line-height: 1.5;
+          margin-bottom: 10px;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+
+        #social-copilot-root .sc-privacy-sub {
+          margin-top: 10px;
+          font-size: 11.5px;
+          color: rgba(15, 23, 42, 0.65);
+          line-height: 1.35;
+        }
+
+        #social-copilot-root .sc-privacy-ack {
+          appearance: none;
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(91, 94, 246, 0.22);
+          background: linear-gradient(135deg, rgba(91, 94, 246, 0.95) 0%, rgba(124, 58, 237, 0.92) 100%);
+          color: rgba(255, 255, 255, 0.98);
+          font-size: 13px;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0 16px 30px rgba(91, 94, 246, 0.22);
+          transition: transform 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+        }
+
+        #social-copilot-root .sc-privacy-ack:hover {
+          opacity: 0.96;
+          box-shadow: 0 18px 36px rgba(91, 94, 246, 0.28);
+        }
+
+        #social-copilot-root .sc-privacy-ack:active {
+          transform: translateY(0.5px);
+        }
+      </style>
       <div class="sc-panel">
         <div class="sc-header">
           <span class="sc-title">💬 Social Copilot</span>
           <span class="sc-shortcut" title="快捷键">Alt+S</span>
-          <button class="sc-refresh" title="刷新建议">🔄</button>
-          <button class="sc-close" title="关闭 (Esc)">✕</button>
+          <button class="sc-refresh" type="button" title="刷新建议">↻</button>
+          <button class="sc-close" type="button" title="关闭 (Esc)">✕</button>
         </div>
         <div class="sc-content">
           ${this.renderContent()}
