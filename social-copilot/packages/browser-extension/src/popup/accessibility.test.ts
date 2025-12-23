@@ -1,23 +1,20 @@
+// @vitest-environment jsdom
 import { describe, test, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { JSDOM } from 'jsdom';
 
 describe('Popup Accessibility', () => {
   const htmlPath = resolve(__dirname, 'index.html');
   const htmlContent = readFileSync(htmlPath, 'utf-8');
-  let dom: JSDOM;
-  let document: Document;
 
   beforeEach(() => {
-    dom = new JSDOM(htmlContent);
-    document = dom.window.document;
+    document.documentElement.innerHTML = htmlContent;
   });
 
   test('style-options should be focusable via tabindex', () => {
     const styleOptions = document.querySelectorAll('.style-option');
     expect(styleOptions.length).toBeGreaterThan(0);
-    styleOptions.forEach(option => {
+    styleOptions.forEach((option) => {
       expect(option.getAttribute('tabindex')).toBe('0');
     });
   });
