@@ -6,7 +6,7 @@
   <title>Social Copilot</title>
   <style>
     :root {
-      color-scheme: light;
+      color-scheme: light dark;
       --bg: #f6f7fb;
       --card: #ffffff;
       --text: #0f172a;
@@ -22,10 +22,56 @@
       --radius: 12px;
     }
 
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card: #1e293b;
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --muted-2: #64748b;
+        --border: rgba(241, 245, 249, 0.12);
+        --border-2: rgba(241, 245, 249, 0.08);
+        --shadow: 0 12px 30px rgba(0, 0, 0, 0.40);
+        --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.25);
+        --primary: #818cf8;
+        --primary-2: #a78bfa;
+        --danger: #f87171;
+      }
+    }
+
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
+    }
+
+    /* 统一滚动条样式 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--muted-2);
+    }
+
+    /* 焦点状态规范化 */
+    :focus {
+      outline: none;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
     }
 
     html,
@@ -56,8 +102,14 @@
       gap: 10px;
       padding: 14px 14px;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
+      color: #ffffff;
       box-shadow: var(--shadow-sm);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .header {
+        background: linear-gradient(135deg, #4c51bf 0%, #6b21a8 100%);
+      }
     }
 
     .header h1 {
@@ -88,20 +140,23 @@
       background: transparent;
       font-size: 12.5px;
       font-weight: 650;
-      color: rgba(255, 255, 255, 0.92);
-      transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease;
-    }
-
-    .tabs .tab {
       color: var(--muted);
+      transition: all 0.12s ease;
+      border-radius: var(--radius);
     }
 
     .tab:hover {
       background: rgba(15, 23, 42, 0.04);
+      color: var(--text);
     }
 
     .tab:active {
-      transform: translateY(0.5px);
+      transform: translateY(1px) scale(0.98);
+    }
+
+    .tab:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: -3px;
     }
 
     .tab.active {
@@ -126,20 +181,6 @@
       display: block;
     }
 
-    .tab-content::-webkit-scrollbar {
-      width: 10px;
-    }
-
-    .tab-content::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .tab-content::-webkit-scrollbar-thumb {
-      background: rgba(15, 23, 42, 0.16);
-      border-radius: 999px;
-      border: 2px solid rgba(255, 255, 255, 0.75);
-    }
-
     .status {
       padding: 10px 12px;
       border-radius: 10px;
@@ -155,10 +196,26 @@
       color: #166534;
     }
 
+    @media (prefers-color-scheme: dark) {
+      .status.success {
+        background: rgba(34, 197, 94, 0.15);
+        border-color: rgba(34, 197, 94, 0.30);
+        color: #86efac;
+      }
+    }
+
     .status.warning {
       background: rgba(245, 158, 11, 0.12);
       border-color: rgba(245, 158, 11, 0.25);
       color: #92400e;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .status.warning {
+        background: rgba(245, 158, 11, 0.15);
+        border-color: rgba(245, 158, 11, 0.30);
+        color: #fcd34d;
+      }
     }
 
     .status.info {
@@ -167,15 +224,23 @@
       color: #1e3a8a;
     }
 
+    @media (prefers-color-scheme: dark) {
+      .status.info {
+        background: rgba(59, 130, 246, 0.15);
+        border-color: rgba(59, 130, 246, 0.30);
+        color: #93c5fd;
+      }
+    }
+
     .form-group {
       margin-bottom: 14px;
     }
 
     .form-group.inline {
       display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 12px;
       padding: 10px 12px;
       border: 1px solid var(--border-2);
       border-radius: 12px;
@@ -188,6 +253,9 @@
       font-weight: 650;
       font-size: 12.5px;
       color: rgba(15, 23, 42, 0.86);
+      word-wrap: break-word;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .form-group.inline label {
@@ -195,7 +263,16 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      line-height: 1.2;
+      line-height: 1.5;
+      flex: 1 1 220px;
+      min-width: 0;
+      word-wrap: break-word;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .form-group.inline input[type="checkbox"] {
+      margin-top: 0;
     }
 
     .form-group input,
@@ -206,22 +283,24 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       font-size: 13px;
-      background: #fff;
+      background: var(--card);
       color: var(--text);
-      transition: box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+      transition: all 0.12s ease;
     }
 
     .form-group textarea {
       resize: vertical;
-      min-height: 92px;
+      min-height: 96px;
+      field-sizing: content;
     }
 
-    .form-group input:focus,
-    .form-group select:focus,
-    .form-group textarea:focus {
-      outline: none;
-      border-color: rgba(91, 94, 246, 0.55);
-      box-shadow: 0 0 0 3px rgba(91, 94, 246, 0.18);
+    .form-group input:focus-visible,
+    .form-group select:focus-visible,
+    .form-group textarea:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(91, 94, 246, 0.12);
     }
 
     .form-group small {
@@ -233,30 +312,47 @@
     }
 
     .form-group.inline small {
-      margin-top: 0;
+      margin: 0;
       color: var(--muted);
+      flex: 1 1 160px;
+      min-width: 0;
+      word-wrap: break-word;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      line-height: 1.4;
     }
 
     input[type="checkbox"] {
+      -webkit-appearance: none;
       appearance: none;
       width: 18px;
       height: 18px;
       border: 1px solid var(--border);
       border-radius: 6px;
-      background: #fff;
+      background: var(--card);
       display: inline-grid;
       place-content: center;
       cursor: pointer;
       flex: none;
-      transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+      transition: all 0.12s ease;
+    }
+
+    input[type="checkbox"]:hover {
+      border-color: rgba(91, 94, 246, 0.45);
+      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+    }
+
+    input[type="checkbox"]:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
     }
 
     input[type="checkbox"]::after {
       content: "";
       width: 5px;
       height: 9px;
-      border-right: 2px solid white;
-      border-bottom: 2px solid white;
+      border-right: 2px solid #ffffff;
+      border-bottom: 2px solid #ffffff;
       transform: rotate(45deg) scale(0);
       transform-origin: center;
       transition: transform 0.10s ease;
@@ -274,18 +370,71 @@
     }
 
     input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
       width: 100%;
-      accent-color: var(--primary);
+      height: 6px;
+      background: transparent;
+      cursor: pointer;
+      border: none;
+      margin: 10px 0;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 6px;
+      background: var(--border-2);
+      border-radius: 6px;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 18px;
+      width: 18px;
+      background: var(--primary);
+      border-radius: 50%;
+      margin-top: -6px;
+      box-shadow: 0 2px 6px rgba(91, 94, 246, 0.4);
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    input[type="range"]:hover::-webkit-slider-thumb {
+      transform: scale(1.1);
+    }
+
+    input[type="range"]:active::-webkit-slider-thumb {
+      transform: scale(0.95);
+      box-shadow: 0 1px 4px rgba(91, 94, 246, 0.4);
+    }
+
+    input[type="range"]:focus {
+      outline: none;
+    }
+
+    input[type="range"]:focus-visible::-webkit-slider-thumb {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
     }
 
     a {
       color: var(--primary);
-      text-decoration: none;
+      text-decoration: underline;
+      text-underline-offset: 2px;
       font-weight: 600;
+      transition: opacity 0.12s ease;
+      border-radius: 4px;
     }
 
     a:hover {
       text-decoration: underline;
+      opacity: 0.8;
+    }
+
+    a:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+      border-radius: 2px;
     }
 
     code {
@@ -302,23 +451,43 @@
       width: 100%;
       padding: 12px 12px;
       background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
-      color: white;
+      color: #ffffff;
       border: none;
       border-radius: 12px;
       font-size: 13.5px;
       font-weight: 700;
       cursor: pointer;
       box-shadow: 0 12px 24px rgba(91, 94, 246, 0.24);
-      transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+      transition: all 0.15s ease;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      button.primary {
+        box-shadow: 0 12px 24px rgba(129, 140, 248, 0.30);
+      }
     }
 
     button.primary:hover {
-      opacity: 0.96;
-      box-shadow: 0 14px 28px rgba(91, 94, 246, 0.30);
+      opacity: 0.92;
+      box-shadow: 0 14px 28px rgba(91, 94, 246, 0.32);
+      transform: translateY(-1px);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      button.primary:hover {
+        box-shadow: 0 14px 28px rgba(129, 140, 248, 0.38);
+      }
     }
 
     button.primary:active {
-      transform: translateY(0.5px);
+      transform: translateY(1px) scale(0.98);
+      box-shadow: 0 4px 12px rgba(91, 94, 246, 0.20);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      button.primary:active {
+        box-shadow: 0 4px 12px rgba(129, 140, 248, 0.25);
+      }
     }
 
     button.secondary {
@@ -332,16 +501,31 @@
       font-weight: 650;
       cursor: pointer;
       margin-top: 8px;
-      transition: background 0.12s ease, transform 0.12s ease, border-color 0.12s ease;
+      transition: all 0.15s ease;
     }
 
     button.secondary:hover {
-      background: rgba(15, 23, 42, 0.05);
+      background: rgba(15, 23, 42, 0.06);
       border-color: rgba(91, 94, 246, 0.28);
     }
 
     button.secondary:active {
-      transform: translateY(0.5px);
+      transform: translateY(1px) scale(0.98);
+    }
+
+    button.secondary:focus-visible {
+      background: rgba(91, 94, 246, 0.04);
+    }
+
+    .button-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .button-stack > button {
+      margin-top: 0 !important;
     }
 
     .style-options {
@@ -357,24 +541,31 @@
       font-size: 12px;
       font-weight: 650;
       cursor: pointer;
-      transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+      transition: all 0.12s ease;
       background: rgba(15, 23, 42, 0.02);
       user-select: none;
     }
 
     .style-option:hover {
-      border-color: rgba(91, 94, 246, 0.40);
+      border-color: var(--primary);
       background: rgba(91, 94, 246, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .style-option:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
     }
 
     .style-option:active {
-      transform: translateY(0.5px);
+      transform: translateY(1px) scale(0.98);
     }
 
     .style-option.selected {
       background: linear-gradient(135deg, rgba(91, 94, 246, 0.18) 0%, rgba(124, 58, 237, 0.14) 100%);
       color: var(--text);
       border-color: rgba(91, 94, 246, 0.40);
+      box-shadow: 0 4px 12px rgba(91, 94, 246, 0.12);
     }
 
     .contact-list {
@@ -384,20 +575,19 @@
 
     .contact-item {
       display: flex;
-      align-items: center;
       padding: 12px;
-      cursor: pointer;
       flex-direction: column;
       gap: 10px;
       border: 1px solid var(--border);
       border-radius: 14px;
       background: rgba(15, 23, 42, 0.02);
       margin-bottom: 10px;
+      transition: background 0.12s ease, border-color 0.12s ease;
     }
 
     .contact-item:hover {
-      background: rgba(91, 94, 246, 0.06);
-      border-color: rgba(91, 94, 246, 0.25);
+      background: rgba(15, 23, 42, 0.04);
+      border-color: rgba(15, 23, 42, 0.15);
     }
 
     .contact-header {
@@ -408,6 +598,7 @@
     }
 
     .contact-avatar {
+      flex: none;
       width: 38px;
       height: 38px;
       border-radius: 12px;
@@ -446,7 +637,9 @@
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
-      justify-content: flex-end;
+      justify-content: flex-start;
+      padding-left: 50px;
+      box-sizing: border-box;
     }
 
     .reset-pref-btn,
@@ -460,7 +653,7 @@
       cursor: pointer;
       font-size: 12px;
       font-weight: 650;
-      transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+      transition: all 0.15s ease;
     }
 
     .reset-pref-btn:hover,
@@ -468,10 +661,20 @@
     .clear-contact-btn:hover {
       background: rgba(255, 255, 255, 0.95);
       border-color: rgba(91, 94, 246, 0.30);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+    }
+
+    .reset-pref-btn:active,
+    .clear-memory-btn:active,
+    .clear-contact-btn:active {
+      transform: translateY(1px) scale(0.98);
+      box-shadow: none;
     }
 
     .clear-contact-btn:hover {
       border-color: rgba(239, 68, 68, 0.35);
+      color: var(--danger);
     }
 
     .empty-state {
@@ -497,6 +700,15 @@
       border-radius: 8px;
       padding: 2px 6px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .shortcut-hint kbd {
+        background: rgba(30, 41, 59, 0.85);
+        border: 1px solid rgba(241, 245, 249, 0.15);
+        border-bottom-color: rgba(241, 245, 249, 0.25);
+        color: var(--text);
+      }
     }
 
     .style-stats {
@@ -808,11 +1020,11 @@
     <div class="form-group">
       <label>默认回复风格</label>
       <div class="style-options">
-        <span class="style-option selected" data-style="caring">💗 关心</span>
-        <span class="style-option selected" data-style="humorous">😄 幽默</span>
-        <span class="style-option selected" data-style="casual">😊 随意</span>
-        <span class="style-option" data-style="rational">🧠 理性</span>
-        <span class="style-option" data-style="formal">📝 正式</span>
+        <span class="style-option selected" data-style="caring" tabindex="0">💗 关心</span>
+        <span class="style-option selected" data-style="humorous" tabindex="0">😄 幽默</span>
+        <span class="style-option selected" data-style="casual" tabindex="0">😊 随意</span>
+        <span class="style-option" data-style="rational" tabindex="0">🧠 理性</span>
+        <span class="style-option" data-style="formal" tabindex="0">📝 正式</span>
       </div>
     </div>
 
@@ -853,43 +1065,47 @@
       <strong id="aboutVersion">Social Copilot</strong><br>
       AI 辅助社交伴侣
     </div>
-    <p style="font-size: 13px; color: #666; line-height: 1.6;">
+    <p style="font-size: 13px; color: var(--muted); line-height: 1.6;">
       为聊天应用提供智能回复建议，支持 Telegram Web、WhatsApp Web、Slack Web。
     </p>
-    <p style="font-size: 13px; color: #666; line-height: 1.6; margin-top: 12px;">
+    <p style="font-size: 13px; color: var(--muted); line-height: 1.6; margin-top: 12px;">
       所有数据默认存储在本地，保护您的隐私。
     </p>
-    <p style="font-size: 13px; color: #666; line-height: 1.6; margin-top: 12px;">
+    <p style="font-size: 13px; color: var(--muted); line-height: 1.6; margin-top: 12px;">
       提示：生成回复时会将“必要的对话上下文”发送到你选择的第三方模型服务；可在设置页的「隐私与发送范围」中配置脱敏/匿名化与发送上限。
     </p>
-    <p style="font-size: 12px; color: #888; line-height: 1.6; margin-top: 8px;">
+    <p style="font-size: 12px; color: var(--muted-2); line-height: 1.6; margin-top: 8px;">
       上架发布时建议提供公开的隐私政策 URL（模板见项目文档 `docs/PRIVACY.md`）。
     </p>
 
     <div class="fallback-card" style="margin-top: 12px;">
-      <div class="form-group" style="margin-bottom: 10px;">
+      <div class="form-group" style="margin-bottom: 12px;">
         <label style="font-weight: 600;">备份与恢复</label>
         <small class="muted">导出/导入联系人画像、风格偏好与长期记忆（不包含 API Key，也不包含原文对话消息）。</small>
       </div>
-      <button id="exportUserDataBtn" class="secondary">导出数据备份</button>
-      <button id="importUserDataBtn" class="secondary">导入数据备份</button>
+      <div class="button-stack">
+        <button id="exportUserDataBtn" class="secondary">导出数据备份</button>
+        <button id="importUserDataBtn" class="secondary">导入数据备份</button>
+      </div>
       <input id="importUserDataFile" class="hidden" type="file" accept="application/json">
-      <small class="muted">注意：备份文件包含本地画像/记忆等隐私信息，请妥善保管。</small>
+      <small class="muted" style="display: block; margin-top: 8px;">注意：备份文件包含本地画像/记忆等隐私信息，请妥善保管。</small>
     </div>
 
     <button id="clearDataBtn" class="secondary">清除所有数据</button>
 
     <div class="fallback-card" style="margin-top: 12px;">
-      <div class="form-group inline" style="margin-bottom: 10px;">
+      <div class="form-group inline" style="margin-bottom: 12px;">
         <label for="debugEnabled" style="margin: 0; font-weight: 600;">
           <input type="checkbox" id="debugEnabled">
           启用诊断日志
         </label>
         <small class="muted">记录最近请求，便于排查问题</small>
       </div>
-      <button id="copyDiagnosticsBtn" class="secondary">复制诊断信息</button>
-      <button id="downloadDiagnosticsBtn" class="secondary">下载诊断 JSON</button>
-      <button id="clearDiagnosticsBtn" class="secondary">清空诊断日志</button>
+      <div class="button-stack">
+        <button id="copyDiagnosticsBtn" class="secondary">复制诊断信息</button>
+        <button id="downloadDiagnosticsBtn" class="secondary">下载诊断 JSON</button>
+        <button id="clearDiagnosticsBtn" class="secondary">清空诊断日志</button>
+      </div>
     </div>
   </div>
 

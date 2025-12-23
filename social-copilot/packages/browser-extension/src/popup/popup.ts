@@ -180,19 +180,19 @@ async function loadContacts() {
           <div class="contact-header">
             <div class="contact-avatar">${escapeHtml(contact.displayName.charAt(0).toUpperCase())}</div>
             <div class="contact-info">
-              <div class="contact-name">${escapeHtml(contact.displayName)}</div>
+              <div class="contact-name" title="${escapeHtml(contact.displayName)}">${escapeHtml(contact.displayName)}</div>
               <div class="contact-meta">${escapeHtml(contact.app)} · ${escapeHtml(String(contact.messageCount))} 条消息</div>
             </div>
-            <div class="contact-actions">
-              <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
-              <button class="clear-memory-btn" data-index="${index}">清空记忆</button>
-              <button class="clear-contact-btn" data-index="${index}">清除数据</button>
-            </div>
-	          </div>
-	          <div class="style-stats">
-	            ${renderStyleStats(contact.preference ?? null)}
-	          </div>
-	          <div class="memory-box">
+          </div>
+          <div class="contact-actions">
+            <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
+            <button class="clear-memory-btn" data-index="${index}">清空记忆</button>
+            <button class="clear-contact-btn" data-index="${index}">清除数据</button>
+          </div>
+          <div class="style-stats">
+            ${renderStyleStats(contact.preference ?? null)}
+          </div>
+          <div class="memory-box">
             <div class="memory-title">长期记忆${contact.memoryUpdatedAt ? ` <span class="muted">(${escapeHtml(new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10))})</span>` : ''}</div>
             <div class="memory-text">${contact.memorySummary ? escapeHtml(contact.memorySummary) : '<span class="muted">暂无长期记忆</span>'}</div>
           </div>
@@ -207,8 +207,16 @@ async function loadContacts() {
 
 // 风格选择
 document.querySelectorAll('.style-option').forEach((option) => {
-  option.addEventListener('click', () => {
+  const toggleSelection = () => {
     option.classList.toggle('selected');
+  };
+  option.addEventListener('click', toggleSelection);
+  option.addEventListener('keydown', (ev) => {
+    const keyEv = ev as KeyboardEvent;
+    if (keyEv.key === 'Enter' || keyEv.key === ' ') {
+      keyEv.preventDefault();
+      toggleSelection();
+    }
   });
 });
 
