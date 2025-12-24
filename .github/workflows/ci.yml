@@ -50,6 +50,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Core Boundary Guard
+        run: pnpm check:boundaries
+
       - name: Lint
         run: pnpm lint
 
@@ -58,6 +61,16 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Architecture Audit (AUDIT-025)
+        run: pnpm audit:025 > audit-025.json
+
+      - name: Upload AUDIT-025 Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-025-${{ github.sha }}
+          path: social-copilot/audit-025.json
+          if-no-files-found: error
 
       - name: Release Build (zip)
         run: pnpm release:extension

@@ -8,6 +8,8 @@
     "build": "pnpm -r --filter \"./packages/*\" --if-present build",
     "build:extension": "pnpm --filter @social-copilot/browser-extension build",
     "build:extension:release": "SC_RELEASE=1 pnpm --filter @social-copilot/browser-extension build",
+    "check:boundaries": "node scripts/check-core-boundaries.mjs",
+    "audit:025": "node scripts/audit-025.mjs",
     "test": "pnpm -r --filter \"./packages/*\" --if-present test",
     "test:coverage": "pnpm -r --filter \"./packages/*\" --if-present test:coverage",
     "lint": "eslint . --ext .ts,.tsx",

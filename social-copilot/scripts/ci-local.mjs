@@ -18,6 +18,8 @@ if (shouldInstall) {
   run('pnpm install --frozen-lockfile', { cwd: rootDir });
 }
 
+run('pnpm check:boundaries', { cwd: rootDir });
+run('pnpm audit:025 > audit-025.json', { cwd: rootDir });
 run('pnpm lint', { cwd: rootDir });
 run('pnpm typecheck', { cwd: rootDir });
 run('pnpm test', { cwd: rootDir });

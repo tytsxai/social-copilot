@@ -45,3 +45,4 @@ packages/mobile/web-build/
 # Misc
 *.orig
 .kiro/
+social-copilot/audit-025.json
