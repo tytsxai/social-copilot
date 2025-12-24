@@ -2,6 +2,7 @@ import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
 import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
 import { debugError, debugLog } from '../utils/debug';
+import { getMergedSelectors } from '../utils/remote-config';
 
 /**
  * WhatsApp Web 适配器
@@ -16,6 +17,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   private variant: 'legacy' | 'testid' = 'legacy';
   private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
+  
+  // 存储合并后的选择器
+  private mergedSelectors: Record<string, string> | null = null;
 
   private isDev(): boolean {
     return (
@@ -88,7 +92,24 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   private get selectors() {
     this.resolveVariant();
-    return this.selectorVariants[this.variant];
+    // 优先使用合并后的远程选择器，否则回退到本地硬编码
+    return (this.mergedSelectors as typeof this.selectorVariants['legacy']) || this.selectorVariants[this.variant];
+  }
+
+  /**
+   * 尝试从远程配置更新选择器
+   * 这是一个非阻塞操作，失败不影响当前运行
+   */
+  private async updateSelectorsFromRemote() {
+    try {
+      this.resolveVariant();
+      const currentDefault = this.selectorVariants[this.variant];
+      const merged = await getMergedSelectors('whatsapp', this.variant, currentDefault);
+      this.mergedSelectors = merged;
+      debugLog('[Social Copilot] Selectors updated from remote config', merged);
+    } catch (e) {
+      debugError('[Social Copilot] Failed to update selectors remotely', e);
+    }
   }
 
   private findChatContainer(): HTMLElement | null {
@@ -275,6 +296,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   onNewMessage(callback: (message: Message) => void): () => void {
     this.isDisposed = false;
+    
+    // 初始化时异步拉取远程配置
+    void this.updateSelectorsFromRemote();
     
     const findContainer = (): HTMLElement | null => {
       return this.findChatContainer();
