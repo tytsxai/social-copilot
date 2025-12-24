@@ -66,7 +66,7 @@ jobs:
         run: pnpm audit:025 > audit-025.json
 
       - name: Upload AUDIT-025 Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: audit-025-${{ github.sha }}
           path: social-copilot/audit-025.json
@@ -76,7 +76,7 @@ jobs:
         run: pnpm release:extension
 
       - name: Upload Extension Zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: social-copilot-extension-${{ github.sha }}
           path: social-copilot/packages/browser-extension/release/*.zip
