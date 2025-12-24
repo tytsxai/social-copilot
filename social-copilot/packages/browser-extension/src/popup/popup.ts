@@ -56,6 +56,7 @@ const copyDiagnosticsBtn = document.getElementById('copyDiagnosticsBtn')!;
 const downloadDiagnosticsBtn = document.getElementById('downloadDiagnosticsBtn')!;
 const clearDiagnosticsBtn = document.getElementById('clearDiagnosticsBtn')!;
 const aboutVersionEl = document.getElementById('aboutVersion');
+const IS_RELEASE = __SC_RELEASE__;
 
 let lastStatus: {
   hasApiKey?: boolean;
@@ -92,6 +93,27 @@ try {
 } catch {
   // ignore
 }
+
+function hideReleaseOnlyFields() {
+  if (!IS_RELEASE) return;
+
+  const toHide = [
+    allowInsecureHttpCheckbox,
+    allowPrivateHostsCheckbox,
+    fallbackAllowInsecureHttpCheckbox,
+    fallbackAllowPrivateHostsCheckbox,
+  ];
+
+  for (const checkbox of toHide) {
+    checkbox.checked = false;
+    const row = checkbox.closest('.form-group');
+    if (row instanceof HTMLElement) {
+      row.style.display = 'none';
+    }
+  }
+}
+
+hideReleaseOnlyFields();
 
 // Tab 切换
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -411,8 +433,8 @@ function buildConfigFromForm() {
   const apiKey = apiKeyInput.value.trim();
   const provider = providerSelect.value;
   const baseUrlRaw = baseUrlInput.value;
-  const allowInsecureHttp = allowInsecureHttpCheckbox.checked;
-  const allowPrivateHosts = allowPrivateHostsCheckbox.checked;
+  const allowInsecureHttp = IS_RELEASE ? false : allowInsecureHttpCheckbox.checked;
+  const allowPrivateHosts = IS_RELEASE ? false : allowPrivateHostsCheckbox.checked;
   const model = modelInput.value.trim();
   const persistApiKey = persistApiKeyCheckbox.checked;
   const enableMemory = enableMemoryCheckbox.checked;
@@ -430,8 +452,8 @@ function buildConfigFromForm() {
   const enableFallback = enableFallbackCheckbox.checked;
   const fallbackProvider = fallbackProviderSelect.value;
   const fallbackBaseUrlRaw = fallbackBaseUrlInput.value;
-  const fallbackAllowInsecureHttp = fallbackAllowInsecureHttpCheckbox.checked;
-  const fallbackAllowPrivateHosts = fallbackAllowPrivateHostsCheckbox.checked;
+  const fallbackAllowInsecureHttp = IS_RELEASE ? false : fallbackAllowInsecureHttpCheckbox.checked;
+  const fallbackAllowPrivateHosts = IS_RELEASE ? false : fallbackAllowPrivateHostsCheckbox.checked;
   const fallbackModel = fallbackModelInput.value.trim();
   const fallbackApiKey = fallbackApiKeyInput.value.trim();
   const suggestionCount = Number(suggestionCountSelect.value);
@@ -492,6 +514,17 @@ function buildConfigFromForm() {
     fallbackApiKey,
     suggestionCount,
   };
+}
+
+function buildModelHint(errors: Array<string | undefined | null>): string {
+  const text = errors.filter(Boolean).join(' ').toLowerCase();
+  if (!text) return '';
+  const looksLikeModelIssue =
+    text.includes('model_not_found') ||
+    text.includes('unknown model') ||
+    text.includes('invalid model') ||
+    (text.includes('model') && (text.includes('not found') || text.includes('does not exist') || text.includes('not exist')));
+  return looksLikeModelIssue ? '（提示：模型名称可能无效，请核对提供商最新模型列表）' : '';
 }
 
 // 检查状态
@@ -691,10 +724,12 @@ testConnectionBtn?.addEventListener('click', async () => {
     const primaryErr = response?.primary?.ok ? '' : `主模型：${response?.primary?.error || '连接失败'}`;
     const fallbackErr =
       response?.fallback && !response.fallback.ok ? `；备用：${response.fallback.error || '连接失败'}` : '';
-    statusEl.textContent = `⚠ ${primaryErr || '连接失败'}${fallbackErr}`;
+    const hint = buildModelHint([response?.primary?.error, response?.fallback?.error]);
+    statusEl.textContent = `⚠ ${primaryErr || '连接失败'}${fallbackErr}${hint}`;
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ ${(err as Error).message}`;
+    const hint = buildModelHint([(err as Error).message]);
+    statusEl.textContent = `⚠ ${(err as Error).message}${hint}`;
   } finally {
     testConnectionBtn.disabled = false;
   }

@@ -40,6 +40,9 @@ function copyStaticAssets() {
 }
 
 export default defineConfig({
+  define: {
+    __SC_RELEASE__: JSON.stringify(isRelease),
+  },
   plugins: [copyStaticAssets()],
   build: {
     outDir: 'dist',

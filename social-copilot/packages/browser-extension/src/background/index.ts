@@ -37,6 +37,8 @@ import {
 import type { ProviderType, LLMManagerConfig } from '@social-copilot/core';
 import { interpolateCustomPrompt } from './custom-prompts';
 
+const IS_RELEASE = __SC_RELEASE__;
+
 type DiagnosticEventType =
   | 'GENERATE_REPLY'
   | 'ANALYZE_THOUGHT'
@@ -137,6 +139,17 @@ interface Config {
   persistApiKey?: boolean;
   /** 用户是否已确认隐私告知（未确认则不调用第三方模型） */
   privacyAcknowledged?: boolean;
+}
+
+function applyReleaseRestrictions(config: Config): Config {
+  if (!IS_RELEASE) return config;
+  return {
+    ...config,
+    allowInsecureHttp: false,
+    allowPrivateHosts: false,
+    fallbackAllowInsecureHttp: false,
+    fallbackAllowPrivateHosts: false,
+  };
 }
 
 // 初始化存储
@@ -1188,7 +1201,7 @@ async function dispatchMessage(
         return { error: `TEST_CONNECTION 配置验证失败：${errorMessage}` };
       }
 
-      const config = validationResult.data as Config;
+      const config = applyReleaseRestrictions(validationResult.data as Config);
       const testInput: LLMInput = {
         context: {
           contactKey: {
@@ -1534,17 +1547,18 @@ async function loadConfig() {
 }
 
 async function setConfig(config: Config) {
-  const incomingApiKey = (config.apiKey ?? '').trim();
+  const enforced = applyReleaseRestrictions(config);
+  const incomingApiKey = (enforced.apiKey ?? '').trim();
   const apiKey = incomingApiKey || currentConfig?.apiKey || '';
   if (!apiKey) {
     return { error: 'API Key is required' };
   }
 
-  const normalizedStyles = sanitizeStyles(config.styles);
-  const normalizedSuggestionCount = normalizeSuggestionCount(config.suggestionCount);
+  const normalizedStyles = sanitizeStyles(enforced.styles);
+  const normalizedSuggestionCount = normalizeSuggestionCount(enforced.suggestionCount);
 
-  const enableFallback = config.enableFallback ?? false;
-  const incomingFallbackApiKey = (config.fallbackApiKey ?? '').trim();
+  const enableFallback = enforced.enableFallback ?? false;
+  const incomingFallbackApiKey = (enforced.fallbackApiKey ?? '').trim();
   const fallbackApiKey = enableFallback
     ? (incomingFallbackApiKey || currentConfig?.fallbackApiKey || '')
     : undefined;
@@ -1552,44 +1566,44 @@ async function setConfig(config: Config) {
     return { error: 'Fallback API Key is required' };
   }
 
-  const autoTrigger = config.autoTrigger === undefined ? (currentConfig?.autoTrigger ?? true) : Boolean(config.autoTrigger);
-  const autoAgent = config.autoAgent === undefined ? (currentConfig?.autoAgent ?? false) : Boolean(config.autoAgent);
-  const privacyAcknowledged = config.privacyAcknowledged === undefined
+  const autoTrigger = enforced.autoTrigger === undefined ? (currentConfig?.autoTrigger ?? true) : Boolean(enforced.autoTrigger);
+  const autoAgent = enforced.autoAgent === undefined ? (currentConfig?.autoAgent ?? false) : Boolean(enforced.autoAgent);
+  const privacyAcknowledged = enforced.privacyAcknowledged === undefined
     ? (currentConfig?.privacyAcknowledged ?? false)
-    : Boolean(config.privacyAcknowledged);
+    : Boolean(enforced.privacyAcknowledged);
 
-  const customSystemPrompt = typeof config.customSystemPrompt === 'string' ? config.customSystemPrompt.trim() : '';
-  const customUserPrompt = typeof config.customUserPrompt === 'string' ? config.customUserPrompt.trim() : '';
+  const customSystemPrompt = typeof enforced.customSystemPrompt === 'string' ? enforced.customSystemPrompt.trim() : '';
+  const customUserPrompt = typeof enforced.customUserPrompt === 'string' ? enforced.customUserPrompt.trim() : '';
 
   currentConfig = {
-    ...config,
+    ...enforced,
     apiKey,
-    baseUrl: normalizeBaseUrl(config.baseUrl),
-    allowInsecureHttp: config.allowInsecureHttp ?? false,
-    allowPrivateHosts: config.allowPrivateHosts ?? false,
-    model: normalizeModel(config.model),
-    language: normalizeLanguage(config.language),
+    baseUrl: normalizeBaseUrl(enforced.baseUrl),
+    allowInsecureHttp: enforced.allowInsecureHttp ?? false,
+    allowPrivateHosts: enforced.allowPrivateHosts ?? false,
+    model: normalizeModel(enforced.model),
+    language: normalizeLanguage(enforced.language),
     autoTrigger,
-    autoInGroups: Boolean(config.autoInGroups),
+    autoInGroups: Boolean(enforced.autoInGroups),
     autoAgent,
     customSystemPrompt: customSystemPrompt || undefined,
     customUserPrompt: customUserPrompt || undefined,
-    redactPii: config.redactPii ?? true,
-    anonymizeSenders: config.anonymizeSenders ?? true,
-    contextMessageLimit: normalizeOptionalInt(config.contextMessageLimit, { min: 1, max: 50 }),
-    maxCharsPerMessage: normalizeOptionalInt(config.maxCharsPerMessage, { min: 50, max: 4000 }),
-    maxTotalChars: normalizeOptionalInt(config.maxTotalChars, { min: 200, max: 20_000 }),
-    temperature: normalizeOptionalInt(config.temperature, { min: 0, max: 100 }) ?? (currentConfig?.temperature ?? 80),
+    redactPii: enforced.redactPii ?? true,
+    anonymizeSenders: enforced.anonymizeSenders ?? true,
+    contextMessageLimit: normalizeOptionalInt(enforced.contextMessageLimit, { min: 1, max: 50 }),
+    maxCharsPerMessage: normalizeOptionalInt(enforced.maxCharsPerMessage, { min: 50, max: 4000 }),
+    maxTotalChars: normalizeOptionalInt(enforced.maxTotalChars, { min: 200, max: 20_000 }),
+    temperature: normalizeOptionalInt(enforced.temperature, { min: 0, max: 100 }) ?? (currentConfig?.temperature ?? 80),
     enableFallback,
-    fallbackBaseUrl: enableFallback ? normalizeBaseUrl(config.fallbackBaseUrl) : undefined,
-    fallbackAllowInsecureHttp: enableFallback ? (config.fallbackAllowInsecureHttp ?? false) : false,
-    fallbackAllowPrivateHosts: enableFallback ? (config.fallbackAllowPrivateHosts ?? false) : false,
-    fallbackModel: normalizeModel(config.fallbackModel),
+    fallbackBaseUrl: enableFallback ? normalizeBaseUrl(enforced.fallbackBaseUrl) : undefined,
+    fallbackAllowInsecureHttp: enableFallback ? (enforced.fallbackAllowInsecureHttp ?? false) : false,
+    fallbackAllowPrivateHosts: enableFallback ? (enforced.fallbackAllowPrivateHosts ?? false) : false,
+    fallbackModel: normalizeModel(enforced.fallbackModel),
     fallbackApiKey,
     styles: normalizedStyles,
     suggestionCount: normalizedSuggestionCount,
-    enableMemory: config.enableMemory ?? false,
-    persistApiKey: config.persistApiKey ?? false,
+    enableMemory: enforced.enableMemory ?? false,
+    persistApiKey: enforced.persistApiKey ?? false,
     privacyAcknowledged,
   };
 
@@ -1703,24 +1717,25 @@ async function setConfig(config: Config) {
 }
 
 function buildManagerConfig(config: Config): LLMManagerConfig {
-  const fallbackEnabled = (config.enableFallback ?? false) && !!config.fallbackApiKey;
+  const enforced = applyReleaseRestrictions(config);
+  const fallbackEnabled = (enforced.enableFallback ?? false) && !!enforced.fallbackApiKey;
   return {
     primary: {
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      allowInsecureHttp: config.allowInsecureHttp ?? false,
-      allowPrivateHosts: config.allowPrivateHosts ?? false,
+      provider: enforced.provider,
+      apiKey: enforced.apiKey,
+      model: enforced.model,
+      baseUrl: enforced.baseUrl,
+      allowInsecureHttp: enforced.allowInsecureHttp ?? false,
+      allowPrivateHosts: enforced.allowPrivateHosts ?? false,
     },
     fallback: fallbackEnabled
       ? {
-          provider: config.fallbackProvider || config.provider,
-          apiKey: config.fallbackApiKey as string,
-          model: config.fallbackModel,
-          baseUrl: config.fallbackBaseUrl,
-          allowInsecureHttp: config.fallbackAllowInsecureHttp ?? false,
-          allowPrivateHosts: config.fallbackAllowPrivateHosts ?? false,
+          provider: enforced.fallbackProvider || enforced.provider,
+          apiKey: enforced.fallbackApiKey as string,
+          model: enforced.fallbackModel,
+          baseUrl: enforced.fallbackBaseUrl,
+          allowInsecureHttp: enforced.fallbackAllowInsecureHttp ?? false,
+          allowPrivateHosts: enforced.fallbackAllowPrivateHosts ?? false,
         }
       : undefined,
   };

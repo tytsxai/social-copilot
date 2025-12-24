@@ -48,6 +48,7 @@
   - `{{app}}` / `{{platform}}` / `{{is_group}}` / `{{peer_id}}` / `{{conversation_id}}`
   - `{{styles}}` / `{{suggestion_count}}` / `{{language}}` / `{{thought_direction}}`
 - 为减少安装时的权限告警，生产版本仅支持官方域名作为 `baseUrl` / `fallbackBaseUrl`（DeepSeek/OpenAI/Anthropic）。如需接入自建网关，请使用定制/企业版本。
+- Release 构建会强制 `allowInsecureHttp=false` / `allowPrivateHosts=false`，并在设置页隐藏相关开关。
 
 ### 1.2 API Key 存储策略（安全相关）
 
