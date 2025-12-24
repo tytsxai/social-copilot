@@ -615,3 +615,79 @@ describe('LLMManager cache key', () => {
     expect(keyA).toEqual(keyB);
   });
 });
+
+describe('LLMManager network retry', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  /**
+   * **Feature: network-retry**
+   * **Validates: Retries on network errors**
+   */
+  test('retries on network errors before failing or falling back', async () => {
+    const output = buildOutput('deepseek-model');
+    const primarySpy = vi.spyOn(DeepSeekProvider.prototype, 'generateReply')
+      .mockRejectedValueOnce(new Error('fetch failed')) // Attempt 1: Network error
+      .mockRejectedValueOnce(new Error('503 Service Unavailable')) // Attempt 2: Server error
+      .mockResolvedValueOnce(output); // Attempt 3: Success
+
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+      cache: { enabled: false },
+    });
+
+    const result = await manager.generateReply({ ...baseInput });
+
+    expect(result).toEqual(output);
+    expect(primarySpy).toHaveBeenCalledTimes(3);
+  });
+
+  test('submits network error to fallback if all retries fail', async () => {
+    // Fail 3 times (initial + 2 retries)
+    const primarySpy = vi.spyOn(DeepSeekProvider.prototype, 'generateReply')
+      .mockRejectedValue(new Error('fetch failed'));
+
+    const fallbackOutput = buildOutput('openai-model');
+    const fallbackSpy = vi.spyOn(OpenAIProvider.prototype, 'generateReply')
+      .mockResolvedValue(fallbackOutput);
+
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+      fallback: { provider: 'openai', apiKey: 'fallback-key' },
+      cache: { enabled: false },
+    });
+
+    const result = await manager.generateReply({ ...baseInput });
+
+    expect(result).toEqual(fallbackOutput);
+    // It should try 3 times on primary (0, 1, 2)
+    expect(primarySpy).toHaveBeenCalledTimes(3);
+    // Then 1 time on fallback
+    expect(fallbackSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not retry on non-network errors', async () => {
+    const error = new Error('Invalid API Key'); // Not a network error
+    const primarySpy = vi.spyOn(DeepSeekProvider.prototype, 'generateReply')
+      .mockRejectedValue(error);
+
+    const fallbackOutput = buildOutput('openai-model');
+    const fallbackSpy = vi.spyOn(OpenAIProvider.prototype, 'generateReply')
+      .mockResolvedValue(fallbackOutput);
+
+    const manager = new LLMManager({
+      primary: { provider: 'deepseek', apiKey: 'primary-key' },
+      fallback: { provider: 'openai', apiKey: 'fallback-key' },
+      cache: { enabled: false },
+    });
+
+    const result = await manager.generateReply({ ...baseInput });
+
+    expect(result).toEqual(fallbackOutput);
+    // Should call primary ONLY ONCE because it's not a retriable error
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+    expect(fallbackSpy).toHaveBeenCalledTimes(1);
+  });
+});

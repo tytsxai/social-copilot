@@ -330,6 +330,36 @@ export class LLMManager {
       }
     };
 
+    // helper to attempt provider call with network retries
+    const invokeWithNetworkRetry = async (provider: LLMProvider, input: LLMInput, maxRetries = 2): Promise<LLMOutput> => {
+      let lastError: unknown;
+      
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          return await invokeWithRetry(provider, input);
+        } catch (error) {
+          lastError = error;
+          const isNetworkError = error instanceof Error && (
+            error.message.includes('fetch failed') || 
+            error.message.includes('network') || 
+            error.message.includes('timeout') ||
+            error.message.includes('ECONNREFUSED') ||
+            error.message.includes('503') ||
+            error.message.includes('502') ||
+            error.message.includes('500')
+          );
+
+          // If it's not a network/server error, or if it's the last attempt, throw
+          if (!isNetworkError || attempt === maxRetries) throw error;
+
+          // Exponential backoff: 500ms, 1000ms, 2000ms...
+          const delay = 500 * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+      throw lastError; // Should be unreachable
+    };
+
     // If primary previously failed but we want to try recovery
     if (this.primaryFailed) {
       const withinCooldown = this.primaryFailureCount > 1 && (now - this.primaryFailedAt) < this.primaryCooldownMs;
@@ -345,7 +375,8 @@ export class LLMManager {
         }
       } else {
         try {
-          const result = await invokeWithRetry(this.primaryProvider, input);
+          // Use network retry for recovery attempt too
+          const result = await invokeWithNetworkRetry(this.primaryProvider, input);
           // Primary recovered
           this.primaryFailed = false;
           this.primaryFailedAt = 0;
@@ -362,7 +393,7 @@ export class LLMManager {
     } else {
       // Try primary first
       try {
-        return await invokeWithRetry(this.primaryProvider, input);
+        return await invokeWithNetworkRetry(this.primaryProvider, input);
       } catch (error) {
         const primaryError = error instanceof Error ? error : new Error(String(error));
         errors.push(primaryError);
