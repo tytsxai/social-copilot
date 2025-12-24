@@ -1401,6 +1401,11 @@ async function dispatchMessage(
     case 'CLEAR_CONTACT_DATA':
       return clearContactData(request.contactKey as ContactKey);
 
+    case 'OPEN_OPTIONS_PAGE': {
+      chrome.runtime.openOptionsPage();
+      return { success: true };
+    }
+
     case 'REPORT_ADAPTER_HEALTH': {
       const payload = request.payload as Record<string, unknown> | undefined;
       const ok = Boolean(payload?.ok);
@@ -1819,7 +1824,7 @@ async function handleGenerateReply(payload: {
     await loadConfig();
   }
   if (!llmManager || !currentConfig) {
-    return { error: '请先设置 API Key' };
+    return { error: 'NO_API_KEY' }; // 使用错误码，方便前端处理
   }
   if (!currentConfig.privacyAcknowledged) {
     return { error: '首次使用请先在扩展设置中确认隐私告知。' };

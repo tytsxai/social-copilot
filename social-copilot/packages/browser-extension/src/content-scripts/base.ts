@@ -174,6 +174,9 @@ export class CopilotContentScript {
       onRefresh: () => this.handleRefresh(),
       onThoughtSelect: (thought) => this.handleThoughtSelect(thought),
       onPrivacyAcknowledge: () => this.handlePrivacyAcknowledge(),
+      onOpenSettings: () => {
+        void sendMessageWithTimeout({ type: 'OPEN_OPTIONS_PAGE' });
+      },
     });
   }
 

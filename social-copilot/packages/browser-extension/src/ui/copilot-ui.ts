@@ -8,6 +8,7 @@ interface CopilotUIOptions {
   onRefresh: () => void;
   onThoughtSelect?: (thought: ThoughtType | null) => void;
   onPrivacyAcknowledge?: () => void;
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -180,6 +181,13 @@ export class CopilotUI {
     }
 
     if (this.error) {
+      if (this.error === 'NO_API_KEY') {
+        return `${notice}
+          <div class="sc-error">
+            未配置 API Key
+            <button class="sc-privacy-ack" style="margin-top:8px" data-action="open-settings">前往设置</button>
+          </div>`;
+      }
       return `${notice}<div class="sc-error">${escapeHtml(this.error)}</div>`;
     }
 
@@ -264,7 +272,11 @@ export class CopilotUI {
 
       const ackBtn = target.closest('.sc-privacy-ack');
       if (ackBtn) {
-        this.options.onPrivacyAcknowledge?.();
+        if (ackBtn.getAttribute('data-action') === 'open-settings') {
+          this.options.onOpenSettings?.();
+        } else {
+          this.options.onPrivacyAcknowledge?.();
+        }
         return;
       }
       if (candidateEl) {
@@ -304,6 +316,8 @@ export class CopilotUI {
       left: this.position?.left ?? rect.left,
     };
 
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
     document.addEventListener('mousemove', this.handleDragMove);
     document.addEventListener('mouseup', this.handleDragEnd);
     event.preventDefault();
@@ -321,6 +335,8 @@ export class CopilotUI {
   private handleDragEnd = () => {
     if (!this.dragStart) return;
 
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
     this.detachDragListeners();
     void this.savePosition();
   };
