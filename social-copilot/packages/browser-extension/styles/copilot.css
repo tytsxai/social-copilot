@@ -1,80 +1,88 @@
 /* Social Copilot 悬浮面板样式 */
 #social-copilot-root {
+  /* 基础重置：防止宿主页面样式污染 */
+  all: initial; 
+  display: block;
+  
   color-scheme: light dark;
-  --sc-bg: rgba(255, 255, 255, 0.95);
+  --sc-bg: rgba(255, 255, 255, 0.98);
   --sc-card: #ffffff;
   --sc-text: #0f172a;
   --sc-muted: #64748b;
   --sc-muted-2: #94a3b8;
-  --sc-border: rgba(15, 23, 42, 0.12);
-  --sc-border-2: rgba(15, 23, 42, 0.08);
-  --sc-shadow: 0 20px 50px rgba(15, 23, 42, 0.22);
-  --sc-shadow-sm: 0 6px 18px rgba(15, 23, 42, 0.08);
+  --sc-border: rgba(15, 23, 42, 0.08);
+  --sc-border-2: rgba(15, 23, 42, 0.05);
+  --sc-shadow: 0 12px 40px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  --sc-shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.04);
   --sc-primary: #5b5ef6;
   --sc-primary-2: #7c3aed;
   --sc-danger: #ef4444;
-  --sc-radius: 14px;
-  --sc-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
-  --primary: var(--sc-primary);
-  --border: var(--sc-border);
-  --card: var(--sc-card);
-
-  /* Spacing Variables */
-  --spacing-sm: 8px;
-  --spacing-md: 12px;
-  --spacing-lg: 16px;
-
+  --sc-radius: 16px;
+  --sc-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  
   position: fixed;
   z-index: 2147483647;
+  isolation: isolate; /* 强制创建新的层叠上下文，防止 z-index 失效 */
   font-family: var(--sc-font);
   color: var(--sc-text);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
   line-height: 1.5;
 }
 
 @media (prefers-color-scheme: dark) {
   #social-copilot-root {
-    --sc-bg: rgba(15, 23, 42, 0.95);
+    --sc-bg: rgba(30, 41, 59, 0.98);
     --sc-card: #1e293b;
-    --sc-text: #f1f5f9;
+    --sc-text: #f8fafc;
     --sc-muted: #94a3b8;
     --sc-muted-2: #64748b;
-    --sc-border: rgba(241, 245, 249, 0.12);
-    --sc-border-2: rgba(241, 245, 249, 0.08);
-    --sc-shadow: 0 20px 50px rgba(0, 0, 0, 0.50);
-    --sc-shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.35);
+    --sc-border: rgba(255, 255, 255, 0.08);
+    --sc-border-2: rgba(255, 255, 255, 0.04);
+    --sc-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --sc-shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.2);
     --sc-primary: #818cf8;
     --sc-primary-2: #a78bfa;
     --sc-danger: #f87171;
   }
 }
 
-#social-copilot-root,
 #social-copilot-root * {
   box-sizing: border-box;
+  font-family: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
 }
 
 #social-copilot-root .sc-panel {
-  width: 320px;
-  max-width: min(92vw, 360px);
+  width: 330px;
+  max-width: min(92vw, 380px);
+  /* 限制最大高度为视口的 85%，防止在小屏幕上溢出 */
+  max-height: 85vh; 
+  display: flex;
+  flex-direction: column;
   border-radius: var(--sc-radius);
   overflow: hidden;
   background: var(--sc-bg);
   border: 1px solid var(--sc-border);
   box-shadow: var(--sc-shadow);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease;
 }
 
 #social-copilot-root .sc-header {
+  /* 防止头部被压缩 */
+  flex: none; 
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
+  gap: 8px;
+  padding: 12px 16px;
   background: linear-gradient(135deg, var(--sc-primary) 0%, var(--sc-primary-2) 100%);
-  color: rgba(255, 255, 255, 0.98);
+  color: #ffffff;
   cursor: grab;
   user-select: none;
 }
@@ -138,166 +146,70 @@
 }
 
 #social-copilot-root .sc-content {
-  padding: var(--spacing-md);
-  max-height: 360px;
+  flex: 1; /* 让内容区域填充剩余空间 */
+  min-height: 0; /* Flexbox 滚动容器的必要设置 */
+  padding: 16px;
+  /* 理想最大高度 400px，但受限于父容器的 85vh */
+  max-height: 400px; 
   overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* 统一滚动条样式 */
-#social-copilot-root .sc-content::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-#social-copilot-root .sc-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-#social-copilot-root .sc-content::-webkit-scrollbar-thumb {
-  background: var(--sc-border);
-  border-radius: 10px;
-}
-
-#social-copilot-root .sc-content::-webkit-scrollbar-thumb:hover {
-  background: var(--sc-muted-2);
-}
-
-@keyframes sc-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-#social-copilot-root .sc-content > * {
-  animation: sc-fade-in 0.2s ease-out forwards;
-}
-
-/* 统一状态样式 */
-#social-copilot-root .sc-notice {
-  padding: var(--spacing-md);
-  border-radius: 12px;
-  background: rgba(59, 130, 246, 0.10);
-  border: 1px solid rgba(59, 130, 246, 0.20);
-  color: #1e3a8a;
-  font-size: 12px;
-  margin-bottom: var(--spacing-md);
-  line-height: 1.4;
-}
-
-#social-copilot-root .sc-loading,
-#social-copilot-root .sc-empty {
-  padding: var(--spacing-md);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.03);
-  border: 1px solid var(--sc-border-2);
-  color: var(--sc-muted);
-  font-size: 12.5px;
-  text-align: center;
-}
-
-#social-copilot-root .sc-error {
-  padding: var(--spacing-md);
-  border-radius: 12px;
-  background: rgba(239, 68, 68, 0.10);
-  border: 1px solid rgba(239, 68, 68, 0.22);
-  color: #7f1d1d;
-  font-size: 12.5px;
-  line-height: 1.4;
+  overscroll-behavior: contain; /* 防止滚动穿透到宿主页面 */
 }
 
 #social-copilot-root .sc-candidate {
-  padding: var(--spacing-md);
-  border-radius: var(--sc-radius);
-  background: rgba(15, 23, 42, 0.02);
-  border: 1px solid var(--sc-border-2);
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--sc-card);
+  border: 1px solid var(--sc-border);
+  box-shadow: var(--sc-shadow-sm);
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
-  margin-bottom: var(--spacing-md);
-}
-
-#social-copilot-root .sc-candidate:last-child {
-  margin-bottom: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-bottom: 12px;
 }
 
 #social-copilot-root .sc-candidate:hover {
-  background: rgba(91, 94, 246, 0.07);
-  border-color: rgba(91, 94, 246, 0.22);
-}
-
-#social-copilot-root .sc-candidate:active {
-  transform: translateY(0.5px);
-}
-
-#social-copilot-root .sc-candidate:focus-visible {
-  outline: 2px solid var(--sc-primary);
-  outline-offset: 2px;
+  border-color: var(--sc-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(91, 94, 246, 0.08);
 }
 
 #social-copilot-root .sc-style {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  font-weight: 750;
-  color: rgba(15, 23, 42, 0.78);
-  background: rgba(91, 94, 246, 0.10);
-  border: 1px solid rgba(91, 94, 246, 0.18);
-  border-radius: 999px;
-  padding: 4px 8px;
-  margin-bottom: var(--spacing-sm);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--sc-primary);
+  background: rgba(91, 94, 246, 0.08);
+  padding: 2px 8px;
+  border-radius: 6px;
+  margin-bottom: 8px;
 }
 
 #social-copilot-root .sc-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: rgba(15, 23, 42, 0.88);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-#social-copilot-root .sc-thought-cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--sc-text);
+  font-weight: 450;
 }
 
 #social-copilot-root .sc-thought-card {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--sc-border);
+  background: var(--sc-card);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  cursor: pointer;
-  user-select: none;
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(15, 23, 42, 0.82);
-  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
-}
-
-#social-copilot-root .sc-thought-card:hover {
-  background: color-mix(in srgb, var(--primary) 10%, var(--card));
-  border-color: var(--primary);
-}
-
-#social-copilot-root .sc-thought-card:active {
-  transform: translateY(0.5px);
-}
-
-#social-copilot-root .sc-thought-card:focus-visible {
-  outline: 2px solid var(--sc-primary);
-  outline-offset: 2px;
+  gap: 6px;
 }
 
 #social-copilot-root .sc-thought-card--active {
-  background: color-mix(in srgb, var(--primary) 18%, var(--card));
-  border-color: var(--primary);
-  color: var(--sc-text);
-  box-shadow: 0 0 0 1px var(--primary);
+  background: var(--sc-primary);
+  color: #ffffff;
+  border-color: var(--sc-primary);
+  box-shadow: 0 4px 12px rgba(91, 94, 246, 0.25);
 }
 
 #social-copilot-root .sc-thought-icon {
