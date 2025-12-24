@@ -31,7 +31,8 @@ class BlockingLLMProvider implements LLMProvider {
   maxInflight = 0;
   deferreds: Array<() => void> = [];
 
-  async generateReply(_input: LLMInput): Promise<LLMOutput> {
+  async generateReply(input: LLMInput): Promise<LLMOutput> {
+    void input;
     this.inflight += 1;
     this.maxInflight = Math.max(this.maxInflight, this.inflight);
     const gate = new Promise<void>((resolve) => {

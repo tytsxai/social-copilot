@@ -1,5 +1,6 @@
 export function escapeHtml(input: unknown): string {
   return String(input).replace(
+    // eslint-disable-next-line no-control-regex
     /[&<>"'\x00-\x1F\x7F\u2028\u2029]/g,
     (char) => {
       switch (char) {
