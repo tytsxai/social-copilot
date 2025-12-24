@@ -16,6 +16,9 @@ export default defineConfig({
       exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
     },
   },
+  define: {
+    __SC_RELEASE__: 'false',
+  },
   resolve: {
     alias: {
       '@social-copilot/core': resolve(__dirname, '../core/src'),

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "platforms": {
+    "whatsapp": {
+      "legacy": {
+        "chatContainer": "#main .copyable-area [role=\"application\"]",
+        "message": "[data-id]",
+        "inputBox": "#main footer [contenteditable=\"true\"]"
+      },
+      "testid": {
+        "chatContainer": "#main [data-testid=\"conversation-panel-body\"] [role=\"application\"]",
+        "message": "[data-id], [data-testid=\"msg-container\"]",
+        "inputBox": "#main [data-testid=\"conversation-compose-box-input\"][contenteditable=\"true\"]"
+      }
+    },
+    "telegram": {
+      "message": ".message",
+      "inputBox": ".input-message-input"
+    },
+    "slack": {
+      "message": ".c-message_kit__message",
+      "inputBox": ".ql-editor"
+    }
+  }
+}
