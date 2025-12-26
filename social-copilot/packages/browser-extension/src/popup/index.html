@@ -4,10 +4,344 @@
   <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Social Copilot</title>
-    <link rel="stylesheet" href="popup.css">
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --text: #0f172a;
+        --muted: #64748b;
+        --muted-2: #94a3b8;
+        --border: rgba(15, 23, 42, 0.08);
+        --border-2: rgba(15, 23, 42, 0.05);
+        --primary: #5b5ef6;
+        --primary-2: #7c3aed;
+        --danger: #ef4444;
+        --radius: 16px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f172a;
+          --card: #1e293b;
+          --text: #f1f5f9;
+          --muted: #94a3b8;
+          --muted-2: #64748b;
+          --border: rgba(241, 245, 249, 0.12);
+          --border-2: rgba(241, 245, 249, 0.08);
+          --primary: #818cf8;
+          --primary-2: #a78bfa;
+          --danger: #f87171;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: rgba(148, 163, 184, 0.6);
+        border-radius: 999px;
+        border: 2px solid transparent;
+        background-clip: content-box;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      body {
+        width: 380px;
+        min-width: 380px;
+        max-height: 600px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 13.5px;
+        line-height: 1.5;
+        color: var(--text);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: var(--primary);
+        text-decoration: underline;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      a:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      .header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px;
+        background: var(--card);
+        color: var(--text);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .header .logo {
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 9px;
+        font-weight: 900;
+        font-size: 11px;
+        letter-spacing: 0.4px;
+        color: #fff;
+        background: var(--primary);
+        box-shadow: 0 6px 14px rgba(91, 94, 246, 0.25);
+      }
+
+      .header h1 {
+        font-size: 14px;
+        font-weight: 850;
+        line-height: 1.2;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        padding: 10px 12px 0;
+      }
+
+      .tab {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        font-weight: 700;
+        cursor: pointer;
+        transition: border-color 0.2s ease, transform 0.05s ease;
+      }
+
+      .tab:hover {
+        border-color: var(--primary);
+      }
+
+      .tab:active {
+        transform: translateY(0.5px);
+      }
+
+      .tab:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+
+      .tab.active {
+        border-color: var(--primary);
+        background: rgba(91, 94, 246, 0.08);
+      }
+
+      .tab-content {
+        display: none;
+        padding: 20px;
+        margin: 12px;
+        border-radius: var(--radius);
+        background: var(--card);
+        border: 1px solid var(--border);
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .status {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+      }
+
+      .status.success {
+        border-color: rgba(22, 163, 74, 0.45);
+      }
+
+      .status.warning {
+        border-color: rgba(245, 158, 11, 0.5);
+      }
+
+      .status.info {
+        border-color: rgba(91, 94, 246, 0.35);
+      }
+
+      .form-group {
+        margin-top: 12px;
+      }
+
+      .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 700;
+        font-size: 13px;
+        color: var(--text);
+        opacity: 0.9;
+      }
+
+      .form-group input,
+      .form-group select,
+      .form-group textarea {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        font-size: 13.5px;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .form-group input:focus-visible,
+      .form-group select:focus-visible,
+      .form-group textarea:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+
+      input[type="checkbox"]:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+
+      input[type="range"]:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+
+      .form-group.inline {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        word-wrap: break-word;
+      }
+
+      .form-group.inline label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .form-group small,
+      .muted {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      textarea {
+        min-height: 96px;
+        field-sizing: content;
+      }
+
+      input[type="range"] {
+        -webkit-appearance: none;
+        width: 100%;
+        height: 28px;
+        background: transparent;
+      }
+
+      input[type="range"]::-webkit-slider-runnable-track {
+        height: 6px;
+        background: rgba(148, 163, 184, 0.45);
+        border-radius: 999px;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        background: var(--primary);
+        margin-top: -5px;
+        border: 2px solid var(--card);
+      }
+
+      button.primary {
+        width: 100%;
+        padding: 14px;
+        background: var(--primary);
+        color: #ffffff;
+        border: none;
+        border-radius: 14px;
+        font-size: 14px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      button.primary:hover {
+        opacity: 0.95;
+      }
+
+      button.primary:active {
+        transform: scale(0.99);
+      }
+
+      button.secondary {
+        width: 100%;
+        padding: 12px;
+        background: var(--card);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        font-size: 13.5px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      button.secondary:hover {
+        border-color: var(--primary);
+      }
+
+      button.secondary:active {
+        transform: translateY(0.5px);
+      }
+
+      .style-option:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+
+      .reset-pref-btn,
+      .clear-memory-btn,
+      .clear-contact-btn {
+        cursor: pointer;
+      }
+
+      .button-stack {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+      }
+    </style>
   </head>
   <body>
-    <div class="header">    <span>💬</span>
+  <div class="header">
+    <span class="logo">SC</span>
     <h1>Social Copilot</h1>
   </div>
 
@@ -304,7 +638,7 @@
       提示：生成回复时会将“必要的对话上下文”发送到你选择的第三方模型服务；可在设置页的「隐私与发送范围」中配置脱敏/匿名化与发送上限。
     </p>
     <p style="font-size: 12px; color: var(--muted-2); line-height: 1.6; margin-top: 8px;">
-      <a href="https://github.com/your-org/social-copilot/blob/main/docs/PRIVACY.md" target="_blank" rel="noopener noreferrer">隐私政策</a>
+      <a href="privacy.html" target="_blank" rel="noopener noreferrer">隐私政策</a>
     </p>
 
     <div class="fallback-card" style="margin-top: 12px;">
@@ -330,6 +664,18 @@
         </label>
         <small class="muted">记录最近请求，便于排查问题</small>
       </div>
+
+      <div class="form-group" style="margin-top: 0;">
+        <label for="remoteSelectorsUrl">远程选择器配置 URL（可选）</label>
+        <input
+          type="text"
+          id="remoteSelectorsUrl"
+          placeholder="https://raw.githubusercontent.com/<owner>/<repo>/<branch>/selectors.json"
+          autocomplete="off"
+        >
+        <small class="muted">仅支持 raw.githubusercontent.com 的 https JSON；留空则禁用远程配置</small>
+      </div>
+
       <div class="button-stack">
         <button id="copyDiagnosticsBtn" class="secondary">复制诊断信息</button>
         <button id="downloadDiagnosticsBtn" class="secondary">下载诊断 JSON</button>

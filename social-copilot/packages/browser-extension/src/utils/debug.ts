@@ -1,3 +1,5 @@
+import { addStorageOnChangedListener, storageLocalGet } from './webext';
+
 const DEBUG_ENABLED_STORAGE_KEY = 'debugEnabled';
 
 let debugEnabled = false;
@@ -7,11 +9,7 @@ function ensureDebugInitialized(): void {
   if (debugInitialized) return;
   debugInitialized = true;
 
-  const storage = typeof chrome !== 'undefined' ? chrome.storage?.local : undefined;
-  if (!storage) return;
-
-  storage
-    .get(DEBUG_ENABLED_STORAGE_KEY)
+  void storageLocalGet<Record<string, unknown>>(DEBUG_ENABLED_STORAGE_KEY)
     .then((result) => {
       debugEnabled = Boolean(result[DEBUG_ENABLED_STORAGE_KEY]);
     })
@@ -19,7 +17,7 @@ function ensureDebugInitialized(): void {
       // ignore
     });
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  addStorageOnChangedListener((changes, areaName) => {
     if (areaName !== 'local') return;
     const change = changes[DEBUG_ENABLED_STORAGE_KEY];
     if (change) {

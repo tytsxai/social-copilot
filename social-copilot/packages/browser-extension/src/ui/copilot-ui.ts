@@ -1,6 +1,7 @@
 import type { ReplyCandidate, ThoughtCard, ThoughtType } from '@social-copilot/core';
 import { escapeHtml } from '../utils/escape-html';
 import { debugWarn } from '../utils/debug';
+import { storageLocalGet, storageLocalSet } from '../utils/webext';
 import { ThoughtCardsComponent } from './thought-cards';
 
 interface CopilotUIOptions {
@@ -379,14 +380,8 @@ export class CopilotUI {
   }
 
   private async restorePosition() {
-    const storage = typeof chrome !== 'undefined' ? chrome.storage?.local : undefined;
-    if (!storage) {
-      this.applyPosition();
-      return;
-    }
-
     try {
-      const result = await storage.get(this.positionStorageKey);
+      const result = await storageLocalGet(this.positionStorageKey);
       const saved = result[this.positionStorageKey] as { top?: number; left?: number } | undefined;
 
       if (saved && typeof saved.top === 'number' && typeof saved.left === 'number') {
@@ -402,11 +397,8 @@ export class CopilotUI {
   private async savePosition() {
     if (!this.position) return;
 
-    const storage = typeof chrome !== 'undefined' ? chrome.storage?.local : undefined;
-    if (!storage) return;
-
     try {
-      await storage.set({
+      await storageLocalSet({
         [this.positionStorageKey]: this.position,
       });
     } catch (error) {

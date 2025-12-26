@@ -174,25 +174,34 @@ describe('Contact List Layout', () => {
     // Test Reset Preference
     const resetBtn = contactList.querySelector('.reset-pref-btn') as HTMLButtonElement;
     resetBtn.click();
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'RESET_STYLE_PREFERENCE',
-      contactKey: mockContacts[0].key
-    }));
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'RESET_STYLE_PREFERENCE',
+        contactKey: mockContacts[0].key,
+      }),
+      expect.any(Function)
+    );
 
     // Test Clear Memory
     const clearMemoryBtn = contactList.querySelector('.clear-memory-btn') as HTMLButtonElement;
     clearMemoryBtn.click();
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'CLEAR_CONTACT_MEMORY',
-      contactKey: mockContacts[0].key
-    }));
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'CLEAR_CONTACT_MEMORY',
+        contactKey: mockContacts[0].key,
+      }),
+      expect.any(Function)
+    );
 
     // Test Clear Data
     const clearDataBtn = contactList.querySelector('.clear-contact-btn') as HTMLButtonElement;
     clearDataBtn.click();
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'CLEAR_CONTACT_DATA',
-      contactKey: mockContacts[0].key
-    }));
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'CLEAR_CONTACT_DATA',
+        contactKey: mockContacts[0].key,
+      }),
+      expect.any(Function)
+    );
   });
 });

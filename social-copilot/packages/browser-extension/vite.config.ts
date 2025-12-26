@@ -28,7 +28,7 @@ function copyStaticAssets() {
       const assets = [
         { source: resolve(__dirname, 'manifest.json'), destination: resolve(outDir, 'manifest.json') },
         { source: resolve(__dirname, 'src/popup/index.html'), destination: resolve(outDir, 'popup/index.html') },
-        { source: resolve(__dirname, 'src/popup/popup.css'), destination: resolve(outDir, 'popup/popup.css') },
+        { source: resolve(__dirname, 'src/popup/privacy.html'), destination: resolve(outDir, 'popup/privacy.html') },
         { source: resolve(__dirname, 'styles'), destination: resolve(outDir, 'styles') },
         { source: resolve(__dirname, 'icons'), destination: resolve(outDir, 'icons') },
       ];

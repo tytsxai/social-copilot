@@ -2,6 +2,14 @@ import type { ContactKey } from '@social-copilot/core';
 import { parseAndValidateUserDataBackup, validateImportFileSize } from './importUserData';
 import { escapeHtml } from '../utils/escape-html';
 import { renderStyleStats } from './preferences';
+import {
+  runtimeGetManifestVersion,
+  runtimeSendMessage,
+  storageLocalClear,
+  storageLocalGet,
+  storageLocalRemove,
+  storageLocalSet,
+} from '../utils/webext';
 
 // DOM 元素
 const statusEl = document.getElementById('status')!;
@@ -56,9 +64,10 @@ const copyDiagnosticsBtn = document.getElementById('copyDiagnosticsBtn')!;
 const downloadDiagnosticsBtn = document.getElementById('downloadDiagnosticsBtn')!;
 const clearDiagnosticsBtn = document.getElementById('clearDiagnosticsBtn')!;
 const aboutVersionEl = document.getElementById('aboutVersion');
+const remoteSelectorsUrlInput = document.getElementById('remoteSelectorsUrl') as HTMLInputElement | null;
 const IS_RELEASE = __SC_RELEASE__;
 
-let lastStatus: {
+type StatusResponse = {
   hasApiKey?: boolean;
   hasFallback?: boolean;
   activeProvider?: string;
@@ -66,7 +75,56 @@ let lastStatus: {
   debugEnabled?: boolean;
   privacyAcknowledged?: boolean;
   autoTrigger?: boolean;
-} | null = null;
+  storeOk?: boolean;
+  storeError?: { message?: string };
+};
+
+type TestConnectionResponse = {
+  error?: string;
+  primary?: { ok?: boolean; provider?: string; model?: string; error?: string };
+  fallback?: { ok?: boolean; provider?: string; model?: string; error?: string };
+};
+
+type SetConfigResponse = { error?: string };
+type ExportUserDataResponse = { json?: string; error?: string };
+type ImportUserDataResponse = { success?: boolean; error?: string; imported?: Record<string, number> };
+type ClearDataResponse = { success?: boolean; error?: string };
+
+type PopupStoredConfigRecord = Record<string, unknown> &
+  Partial<{
+    apiKey: string;
+    provider: string;
+    baseUrl: string;
+    allowInsecureHttp: boolean;
+    allowPrivateHosts: boolean;
+    model: string;
+    styles: string[];
+    language: string;
+    autoInGroups: boolean;
+    autoTrigger: boolean;
+    autoAgent: boolean;
+    customSystemPrompt: string;
+    customUserPrompt: string;
+    privacyAcknowledged: boolean;
+    redactPii: boolean;
+    anonymizeSenders: boolean;
+    contextMessageLimit: number | string;
+    maxCharsPerMessage: number | string;
+    maxTotalChars: number | string;
+    temperature: number | string;
+    fallbackProvider: string;
+    fallbackBaseUrl: string;
+    fallbackAllowInsecureHttp: boolean;
+    fallbackAllowPrivateHosts: boolean;
+    fallbackModel: string;
+    fallbackApiKey: string;
+    enableFallback: boolean;
+    suggestionCount: number | string;
+    persistApiKey: boolean;
+    enableMemory: boolean;
+  }>;
+
+let lastStatus: StatusResponse | null = null;
 
 function normalizeTemperaturePercent(value: unknown): number {
   const fallback = 80;
@@ -88,7 +146,8 @@ temperatureInput?.addEventListener('input', () => {
 
 try {
   if (aboutVersionEl) {
-    aboutVersionEl.textContent = `Social Copilot v${chrome.runtime.getManifest().version}`;
+    const version = runtimeGetManifestVersion();
+    aboutVersionEl.textContent = version ? `Social Copilot v${version}` : 'Social Copilot';
   }
 } catch {
   // ignore
@@ -144,6 +203,8 @@ type ContactListItem = {
   preference?: { styleHistory?: { style: string; count: number }[] } | null;
 };
 
+type GetContactsResponse = { contacts?: ContactListItem[] };
+
 let contactsCache: ContactListItem[] = [];
 
 if (contactListEl) {
@@ -160,25 +221,25 @@ if (contactListEl) {
     try {
       if (btn.classList.contains('reset-pref-btn')) {
         if (!confirm(`重置 ${contact.displayName} 的风格偏好？`)) return;
-        await chrome.runtime.sendMessage({ type: 'RESET_STYLE_PREFERENCE', contactKey: contact.key });
+        await runtimeSendMessage({ type: 'RESET_STYLE_PREFERENCE', contactKey: contact.key });
         await loadContacts();
         return;
       }
       if (btn.classList.contains('clear-memory-btn')) {
         if (!confirm(`清空 ${contact.displayName} 的长期记忆？`)) return;
-        await chrome.runtime.sendMessage({ type: 'CLEAR_CONTACT_MEMORY', contactKey: contact.key });
+        await runtimeSendMessage({ type: 'CLEAR_CONTACT_MEMORY', contactKey: contact.key });
         await loadContacts();
         return;
       }
       if (btn.classList.contains('clear-contact-btn')) {
         if (!confirm(`清除 ${contact.displayName} 的全部本地数据（消息/画像/偏好/记忆）？`)) return;
-        await chrome.runtime.sendMessage({ type: 'CLEAR_CONTACT_DATA', contactKey: contact.key });
+        await runtimeSendMessage({ type: 'CLEAR_CONTACT_DATA', contactKey: contact.key });
         await loadContacts();
         return;
       }
     } catch (err) {
       statusEl.className = 'status warning';
-      statusEl.textContent = `⚠ 操作失败：${(err as Error).message}`;
+      statusEl.textContent = `操作失败：${(err as Error).message}`;
     }
   });
 }
@@ -186,8 +247,8 @@ if (contactListEl) {
 async function loadContacts() {
   if (!contactListEl) return;
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_CONTACTS_WITH_PREFS' });
-    const contacts = (response?.contacts ?? []) as ContactListItem[];
+    const response = await runtimeSendMessage<GetContactsResponse>({ type: 'GET_CONTACTS_WITH_PREFS' });
+    const contacts = response?.contacts ?? [];
     contactsCache = contacts;
 
     if (contacts.length === 0) {
@@ -530,13 +591,13 @@ function buildModelHint(errors: Array<string | undefined | null>): string {
 // 检查状态
 async function checkStatus() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
+    const response = await runtimeSendMessage<StatusResponse>({ type: 'GET_STATUS' });
     lastStatus = response ?? null;
 
     if (response?.storeOk === false) {
       statusEl.className = 'status warning';
       const errMsg = response.storeError?.message ? `（${response.storeError.message}）` : '';
-      statusEl.textContent = `⚠ 本地数据库初始化失败${errMsg}：请先导出诊断并点击“清除数据”恢复`;
+      statusEl.textContent = `本地数据库初始化失败${errMsg}：请先导出诊断并点击“清除数据”恢复`;
       return;
     }
 
@@ -546,7 +607,7 @@ async function checkStatus() {
 
       if (!privacyOk) {
         statusEl.className = 'status warning';
-        statusEl.textContent = '⚠ 已配置，但需确认隐私告知才能生成建议';
+        statusEl.textContent = '已配置，但需确认隐私告知才能生成建议';
         return;
       }
 
@@ -555,20 +616,20 @@ async function checkStatus() {
       const modelText = response.activeModel ? ` / ${response.activeModel}` : '';
       const fallbackText = response.hasFallback ? '，已启用备用模型' : '';
       const autoText = autoTrigger ? '' : '，自动触发已关闭';
-      statusEl.textContent = `✓ ${providerText}${modelText}${fallbackText}${autoText}`;
+      statusEl.textContent = `${providerText}${modelText}${fallbackText}${autoText}`;
     } else {
       statusEl.className = 'status warning';
-      statusEl.textContent = '⚠ 请设置 API Key';
+      statusEl.textContent = '请设置 API Key';
     }
   } catch (error) {
     statusEl.className = 'status warning';
-    statusEl.textContent = '⚠ 无法连接到扩展';
+    statusEl.textContent = '无法连接到扩展';
   }
 }
 
 // 加载已保存的设置
 async function loadSettings() {
-  const result = await chrome.storage.local.get([
+  const result = await storageLocalGet<PopupStoredConfigRecord>([
     'apiKey',
     'provider',
     'baseUrl',
@@ -600,6 +661,15 @@ async function loadSettings() {
     'persistApiKey',
     'enableMemory',
   ]);
+
+  if (remoteSelectorsUrlInput) {
+    const remoteSelectorsUrl = await storageLocalGet<Record<string, unknown> & { remoteSelectorsUrl?: unknown }>(
+      'remoteSelectorsUrl'
+    );
+    remoteSelectorsUrlInput.value = typeof remoteSelectorsUrl.remoteSelectorsUrl === 'string'
+      ? remoteSelectorsUrl.remoteSelectorsUrl
+      : '';
+  }
 
   if (result.apiKey) {
     apiKeyInput.value = result.apiKey;
@@ -677,10 +747,11 @@ async function loadSettings() {
     suggestionCountSelect.value = String(result.suggestionCount);
   }
 
-  if (result.styles && Array.isArray(result.styles)) {
+  const selectedStyles = Array.isArray(result.styles) ? result.styles : null;
+  if (selectedStyles) {
     document.querySelectorAll('.style-option').forEach((option) => {
       const style = option.getAttribute('data-style');
-      if (result.styles.includes(style)) {
+      if (style && selectedStyles.includes(style)) {
         option.classList.add('selected');
       } else {
         option.classList.remove('selected');
@@ -700,7 +771,7 @@ testConnectionBtn?.addEventListener('click', async () => {
     if (!config.apiKey) throw new Error('请输入 API Key');
     if (config.enableFallback && !config.fallbackApiKey) throw new Error('请输入备用 API Key');
 
-    const response = await chrome.runtime.sendMessage({ type: 'TEST_CONNECTION', config });
+    const response = await runtimeSendMessage<TestConnectionResponse>({ type: 'TEST_CONNECTION', config });
     if (response?.error) throw new Error(response.error);
 
     const primaryOk = Boolean(response?.primary?.ok);
@@ -716,7 +787,7 @@ testConnectionBtn?.addEventListener('click', async () => {
           ? `；备用：${response.fallback.provider} / ${response.fallback.model}`
           : `；备用：${response.fallback.provider}`
         : '';
-      statusEl.textContent = `✓ 连接成功：${primaryText}${fallbackText}`;
+      statusEl.textContent = `连接成功：${primaryText}${fallbackText}`;
       return;
     }
 
@@ -725,11 +796,11 @@ testConnectionBtn?.addEventListener('click', async () => {
     const fallbackErr =
       response?.fallback && !response.fallback.ok ? `；备用：${response.fallback.error || '连接失败'}` : '';
     const hint = buildModelHint([response?.primary?.error, response?.fallback?.error]);
-    statusEl.textContent = `⚠ ${primaryErr || '连接失败'}${fallbackErr}${hint}`;
+    statusEl.textContent = `${primaryErr || '连接失败'}${fallbackErr}${hint}`;
   } catch (err) {
     statusEl.className = 'status warning';
     const hint = buildModelHint([(err as Error).message]);
-    statusEl.textContent = `⚠ ${(err as Error).message}${hint}`;
+    statusEl.textContent = `${(err as Error).message}${hint}`;
   } finally {
     testConnectionBtn.disabled = false;
   }
@@ -751,7 +822,7 @@ saveBtn.addEventListener('click', async () => {
   }
 
   if (!config.apiKey) {
-    const status = lastStatus ?? (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }));
+    const status = lastStatus ?? (await runtimeSendMessage<StatusResponse>({ type: 'GET_STATUS' }));
     if (!status?.hasApiKey) {
       alert('请输入 API Key');
       return;
@@ -759,7 +830,7 @@ saveBtn.addEventListener('click', async () => {
   }
 
   if (config.enableFallback && !config.fallbackApiKey) {
-    const status = lastStatus ?? (await chrome.runtime.sendMessage({ type: 'GET_STATUS' }));
+    const status = lastStatus ?? (await runtimeSendMessage<StatusResponse>({ type: 'GET_STATUS' }));
     if (!status?.hasFallback) {
       alert('请输入备用 API Key');
       return;
@@ -767,19 +838,28 @@ saveBtn.addEventListener('click', async () => {
   }
 
   // 通知 background（由 background 决定是否持久化 key）
-  const response = await chrome.runtime.sendMessage({
+  const response = await runtimeSendMessage<SetConfigResponse>({
     type: 'SET_CONFIG',
     config,
   });
 
   if (response?.error) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ ${response.error}`;
+    statusEl.textContent = `${response.error}`;
     return;
   }
 
   statusEl.className = 'status success';
-  statusEl.textContent = '✓ 设置已保存';
+  statusEl.textContent = '设置已保存';
+
+  if (remoteSelectorsUrlInput) {
+    const value = remoteSelectorsUrlInput.value.trim();
+    if (value) {
+      await storageLocalSet({ remoteSelectorsUrl: value });
+    } else {
+      await storageLocalRemove('remoteSelectorsUrl');
+    }
+  }
 
   if (!config.persistApiKey) {
     apiKeyInput.value = '';
@@ -807,19 +887,19 @@ function nextFrame(): Promise<void> {
 exportUserDataBtn.addEventListener('click', async () => {
   try {
     statusEl.className = 'status info';
-    statusEl.textContent = 'ℹ️ 正在导出…';
+    statusEl.textContent = '正在导出…';
     await nextFrame();
 
-    const res = await chrome.runtime.sendMessage({ type: 'EXPORT_USER_DATA_JSON' });
-    const json = res?.json as string | undefined;
+    const res = await runtimeSendMessage<ExportUserDataResponse>({ type: 'EXPORT_USER_DATA_JSON' });
+    const json = typeof res?.json === 'string' ? res.json : undefined;
     if (!json) throw new Error(res?.error || '导出失败');
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     downloadJson(`social-copilot-backup-${ts}.json`, json);
     statusEl.className = 'status info';
-    statusEl.textContent = 'ℹ️ 已导出数据备份 JSON（不包含 API Key）';
+    statusEl.textContent = '已导出数据备份 JSON（不包含 API Key）';
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ 导出失败：${(err as Error).message}`;
+    statusEl.textContent = `导出失败：${(err as Error).message}`;
   }
 });
 
@@ -841,10 +921,10 @@ importUserDataFile.addEventListener('change', async () => {
     validateImportFileSize(file.size);
     const text = await file.text();
     const data = parseAndValidateUserDataBackup(text);
-    const res = await chrome.runtime.sendMessage({ type: 'IMPORT_USER_DATA', data });
+    const res = await runtimeSendMessage<ImportUserDataResponse>({ type: 'IMPORT_USER_DATA', data });
     if (!res?.success) {
       statusEl.className = 'status warning';
-      statusEl.textContent = `⚠ 导入失败：${res?.error || '未知错误'}`;
+      statusEl.textContent = `导入失败：${res?.error || '未知错误'}`;
       return;
     }
     const imported = res?.imported as Record<string, number> | undefined;
@@ -852,11 +932,11 @@ importUserDataFile.addEventListener('change', async () => {
       ? `profiles=${imported.profiles ?? 0}, prefs=${imported.stylePreferences ?? 0}, memories=${imported.contactMemories ?? 0}`
       : 'ok';
     statusEl.className = 'status info';
-    statusEl.textContent = `ℹ️ 已导入数据备份（${summary}）`;
+    statusEl.textContent = `已导入数据备份（${summary}）`;
     await checkStatus();
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ 导入失败：${(err as Error).message}`;
+    statusEl.textContent = `导入失败：${(err as Error).message}`;
   }
 });
 
@@ -864,16 +944,16 @@ importUserDataFile.addEventListener('change', async () => {
 clearDataBtn.addEventListener('click', async () => {
   if (confirm('确定要清除所有数据吗？这将删除所有联系人记录和设置。')) {
     try {
-      await chrome.storage.local.clear();
-      const res = await chrome.runtime.sendMessage({ type: 'CLEAR_DATA' });
+      await storageLocalClear();
+      const res = await runtimeSendMessage<ClearDataResponse>({ type: 'CLEAR_DATA' });
       if (res?.success === false) {
         statusEl.className = 'status warning';
-        statusEl.textContent = `⚠ 清除未完全成功：${res.error ?? '未知错误'}（可尝试关闭所有聊天站点标签页后重试）`;
+        statusEl.textContent = `清除未完全成功：${res.error ?? '未知错误'}（可尝试关闭所有聊天站点标签页后重试）`;
         return;
       }
 
       statusEl.className = 'status warning';
-      statusEl.textContent = '⚠ 数据已清除，请重新设置';
+      statusEl.textContent = '数据已清除，请重新设置';
       apiKeyInput.value = '';
       fallbackApiKeyInput.value = '';
       enableFallbackCheckbox.checked = false;
@@ -881,7 +961,7 @@ clearDataBtn.addEventListener('click', async () => {
       await checkStatus();
     } catch (err) {
       statusEl.className = 'status warning';
-      statusEl.textContent = `⚠ 清除失败：${(err as Error).message}`;
+      statusEl.textContent = `清除失败：${(err as Error).message}`;
     }
   }
 });
@@ -889,7 +969,7 @@ clearDataBtn.addEventListener('click', async () => {
 // 诊断与调试
 async function loadDebugFlag() {
   try {
-    const stored = await chrome.storage.local.get('debugEnabled');
+    const stored = await storageLocalGet<Record<string, unknown> & { debugEnabled?: unknown }>('debugEnabled');
     debugEnabledCheckbox.checked = Boolean(stored.debugEnabled);
   } catch {
     debugEnabledCheckbox.checked = false;
@@ -899,20 +979,20 @@ async function loadDebugFlag() {
 debugEnabledCheckbox.addEventListener('change', async () => {
   try {
     const enabled = debugEnabledCheckbox.checked;
-    await chrome.runtime.sendMessage({ type: 'SET_DEBUG_ENABLED', enabled });
+    await runtimeSendMessage({ type: 'SET_DEBUG_ENABLED', enabled });
     statusEl.className = 'status info';
-    statusEl.textContent = enabled ? 'ℹ️ 已启用诊断日志' : 'ℹ️ 已关闭诊断日志';
+    statusEl.textContent = enabled ? '已启用诊断日志' : '已关闭诊断日志';
     await checkStatus();
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ 设置诊断失败：${(err as Error).message}`;
+    statusEl.textContent = `设置诊断失败：${(err as Error).message}`;
   }
 });
 
 async function getDiagnosticsJson(): Promise<string> {
-  const res = await chrome.runtime.sendMessage({ type: 'GET_DIAGNOSTICS_JSON', pretty: true });
+  const res = await runtimeSendMessage<{ json?: string }>({ type: 'GET_DIAGNOSTICS_JSON', pretty: true });
   if (res?.json && typeof res.json === 'string') return res.json;
-  const snapshot = await chrome.runtime.sendMessage({ type: 'GET_DIAGNOSTICS' });
+  const snapshot = await runtimeSendMessage<unknown>({ type: 'GET_DIAGNOSTICS' });
   return JSON.stringify(snapshot, null, 2);
 }
 
@@ -921,17 +1001,17 @@ copyDiagnosticsBtn.addEventListener('click', async () => {
     const json = await getDiagnosticsJson();
     await navigator.clipboard.writeText(json);
     statusEl.className = 'status info';
-    statusEl.textContent = 'ℹ️ 诊断信息已复制到剪贴板';
+    statusEl.textContent = '诊断信息已复制到剪贴板';
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ 复制失败：${(err as Error).message}`;
+    statusEl.textContent = `复制失败：${(err as Error).message}`;
   }
 });
 
 downloadDiagnosticsBtn.addEventListener('click', async () => {
   try {
     statusEl.className = 'status info';
-    statusEl.textContent = 'ℹ️ 正在生成诊断 JSON…';
+    statusEl.textContent = '正在生成诊断 JSON…';
     await nextFrame();
 
     const json = await getDiagnosticsJson();
@@ -943,21 +1023,21 @@ downloadDiagnosticsBtn.addEventListener('click', async () => {
     a.click();
     URL.revokeObjectURL(url);
     statusEl.className = 'status info';
-    statusEl.textContent = 'ℹ️ 已下载诊断 JSON';
+    statusEl.textContent = '已下载诊断 JSON';
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ 下载失败：${(err as Error).message}`;
+    statusEl.textContent = `下载失败：${(err as Error).message}`;
   }
 });
 
 clearDiagnosticsBtn.addEventListener('click', async () => {
   try {
-    await chrome.runtime.sendMessage({ type: 'CLEAR_DIAGNOSTICS' });
+    await runtimeSendMessage({ type: 'CLEAR_DIAGNOSTICS' });
     statusEl.className = 'status info';
-    statusEl.textContent = 'ℹ️ 已清空诊断日志';
+    statusEl.textContent = '已清空诊断日志';
   } catch (err) {
     statusEl.className = 'status warning';
-    statusEl.textContent = `⚠ 清空失败：${(err as Error).message}`;
+    statusEl.textContent = `清空失败：${(err as Error).message}`;
   }
 });
 

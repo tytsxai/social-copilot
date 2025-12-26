@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Social Copilot 隐私政策</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --text: #0f172a;
+        --muted: #64748b;
+        --border: rgba(15, 23, 42, 0.08);
+        --primary: #5b5ef6;
+        --radius: 16px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f172a;
+          --card: #1e293b;
+          --text: #f1f5f9;
+          --muted: #94a3b8;
+          --border: rgba(241, 245, 249, 0.12);
+          --primary: #818cf8;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.6;
+      }
+
+      .card {
+        max-width: 760px;
+        margin: 0 auto;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 18px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 18px;
+        font-weight: 900;
+      }
+
+      h2 {
+        margin: 16px 0 8px;
+        font-size: 14px;
+        font-weight: 900;
+      }
+
+      p {
+        margin: 8px 0;
+        color: var(--muted);
+      }
+
+      ul {
+        margin: 8px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+      }
+
+      a {
+        color: var(--primary);
+        text-decoration: underline;
+      }
+
+      a:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>隐私政策（简版）</h1>
+      <p>
+        Social Copilot 会在网页聊天界面中运行，并根据你的设置生成回复建议。
+        生成建议时，扩展可能会将“必要的对话上下文”发送到你选择的第三方模型服务（例如 DeepSeek/OpenAI/Claude）。
+      </p>
+
+      <h2>本地存储</h2>
+      <ul>
+        <li>配置与偏好默认存储在本地（浏览器扩展存储 / IndexedDB）。</li>
+        <li>API Key 默认不持久化；如你勾选“记住 API Key”则会本地保存。</li>
+        <li>如启用“长期记忆”，扩展会本地存储联系人摘要（不展示原文消息）。</li>
+      </ul>
+
+      <h2>发送范围控制</h2>
+      <ul>
+        <li>可在设置中开启“脱敏/匿名化”，并限制上下文条数与字符预算。</li>
+        <li>未勾选“隐私告知确认”前，扩展不会调用第三方模型接口。</li>
+      </ul>
+
+      <h2>清除数据</h2>
+      <ul>
+        <li>你可以在“关于”页点击“清除所有数据”删除本地记录并重置扩展状态。</li>
+      </ul>
+
+      <p class="hint">提示：如需导出排障信息，可在“关于”页下载诊断 JSON。</p>
+    </div>
+  </body>
+</html>

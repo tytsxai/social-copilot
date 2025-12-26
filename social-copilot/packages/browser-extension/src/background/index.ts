@@ -10,6 +10,15 @@ import {
   sanitizeOutboundContext,
   redactSecrets,
 } from '@social-copilot/core';
+import {
+  storageLocalClear,
+  storageLocalGet,
+  storageLocalRemove,
+  storageLocalSet,
+  storageSessionGet,
+  storageSessionRemove,
+  storageSessionSet,
+} from '../utils/webext';
 import type {
   Message,
   ContactKey,
@@ -450,7 +459,7 @@ async function ensureDiagnosticsReady(): Promise<void> {
   if (!diagnosticsReady) {
     diagnosticsReady = (async () => {
       try {
-        const result = await chrome.storage.local.get([DIAGNOSTICS_STORAGE_KEY]);
+        const result = await storageLocalGet([DIAGNOSTICS_STORAGE_KEY]);
         diagnostics = parseDiagnosticsPayload(result[DIAGNOSTICS_STORAGE_KEY]);
       } catch (err) {
         debugWarn('[Social Copilot] Failed to load diagnostics:', err);
@@ -475,7 +484,7 @@ async function maybePersistDiagnostics(force = false): Promise<void> {
     diagnosticsDirty = false;
     diagnosticsLastPersistAt = Date.now();
     try {
-      await chrome.storage.local.set({ [DIAGNOSTICS_STORAGE_KEY]: snapshot });
+      await storageLocalSet({ [DIAGNOSTICS_STORAGE_KEY]: snapshot });
     } catch (err) {
       diagnosticsDirty = true;
       debugWarn('[Social Copilot] Failed to persist diagnostics:', err);
@@ -501,7 +510,7 @@ async function clearPersistedDiagnostics(): Promise<void> {
   diagnosticsLastPersistAt = Date.now();
   diagnosticsPersistInFlight = null;
   try {
-    await chrome.storage.local.remove([DIAGNOSTICS_STORAGE_KEY]);
+    await storageLocalRemove([DIAGNOSTICS_STORAGE_KEY]);
   } catch (err) {
     debugWarn('[Social Copilot] Failed to clear persisted diagnostics:', err);
   }
@@ -711,62 +720,52 @@ function getProviderDefaultModel(provider: ProviderType): string {
   }
 }
 
-function getSessionStorageArea(): chrome.storage.StorageArea | null {
-  const storage = chrome.storage as unknown as { session?: chrome.storage.StorageArea };
-  return storage.session ?? null;
-}
-
 async function setSessionKeys(apiKey: string, fallbackApiKey?: string): Promise<void> {
-  const session = getSessionStorageArea();
-  if (session) {
-    const payload: Record<string, unknown> = { apiKey };
-    if (fallbackApiKey) payload.fallbackApiKey = fallbackApiKey;
-    await session.set(payload);
+  const payload: Record<string, unknown> = { apiKey };
+  if (fallbackApiKey) payload.fallbackApiKey = fallbackApiKey;
+  const writtenToSession = await storageSessionSet(payload);
+  if (writtenToSession) {
     if (!fallbackApiKey) {
-      await session.remove(['fallbackApiKey']);
+      await storageSessionRemove(['fallbackApiKey']);
     }
     return;
   }
 
   // Fallback: store session keys in local storage and clear them on browser startup.
-  const payload: Record<string, unknown> = { [SESSION_API_KEY_FALLBACK_STORAGE_KEY]: apiKey };
-  if (fallbackApiKey) payload[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] = fallbackApiKey;
-  await chrome.storage.local.set(payload);
+  const localPayload: Record<string, unknown> = { [SESSION_API_KEY_FALLBACK_STORAGE_KEY]: apiKey };
+  if (fallbackApiKey) localPayload[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] = fallbackApiKey;
+  await storageLocalSet(localPayload);
   if (!fallbackApiKey) {
-    await chrome.storage.local.remove([SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY]);
+    await storageLocalRemove([SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY]);
   }
 }
 
 async function getSessionKeys(): Promise<{ apiKey?: string; fallbackApiKey?: string }> {
-  const session = getSessionStorageArea();
-  if (session) {
-    const result = await session.get(['apiKey', 'fallbackApiKey']);
+  const result = await storageSessionGet(['apiKey', 'fallbackApiKey']);
+  if (result) {
     return {
-      apiKey: typeof result.apiKey === 'string' ? result.apiKey : undefined,
-      fallbackApiKey: typeof result.fallbackApiKey === 'string' ? result.fallbackApiKey : undefined,
+      apiKey: typeof result.apiKey === 'string' ? (result.apiKey as string) : undefined,
+      fallbackApiKey: typeof result.fallbackApiKey === 'string' ? (result.fallbackApiKey as string) : undefined,
     };
   }
 
-  const result = await chrome.storage.local.get([
+  const local = await storageLocalGet([
     SESSION_API_KEY_FALLBACK_STORAGE_KEY,
     SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
   ]);
   return {
-    apiKey: typeof result[SESSION_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
-      ? (result[SESSION_API_KEY_FALLBACK_STORAGE_KEY] as string)
+    apiKey: typeof local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
+      ? (local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] as string)
       : undefined,
-    fallbackApiKey: typeof result[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
-      ? (result[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] as string)
+    fallbackApiKey: typeof local[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
+      ? (local[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] as string)
       : undefined,
   };
 }
 
 async function clearSessionKeys(): Promise<void> {
-  const session = getSessionStorageArea();
-  if (session) {
-    await session.remove(['apiKey', 'fallbackApiKey']);
-  }
-  await chrome.storage.local.remove([
+  await storageSessionRemove(['apiKey', 'fallbackApiKey']);
+  await storageLocalRemove([
     SESSION_API_KEY_FALLBACK_STORAGE_KEY,
     SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
   ]);
@@ -789,7 +788,7 @@ function buildDiagnosticsSnapshot(): Record<string, unknown> {
 
 async function loadDebugEnabled(): Promise<void> {
   try {
-    const result = await chrome.storage.local.get(DEBUG_ENABLED_STORAGE_KEY);
+    const result = await storageLocalGet(DEBUG_ENABLED_STORAGE_KEY);
     debugEnabled = Boolean(result[DEBUG_ENABLED_STORAGE_KEY]);
   } catch (err) {
     debugWarn('[Social Copilot] Failed to load debug flag:', err);
@@ -798,7 +797,7 @@ async function loadDebugEnabled(): Promise<void> {
 
 async function loadProfileUpdateCounts(): Promise<void> {
   try {
-    const result = await chrome.storage.local.get(PROFILE_UPDATE_COUNT_STORAGE_KEY);
+    const result = await storageLocalGet(PROFILE_UPDATE_COUNT_STORAGE_KEY);
     const stored = result[PROFILE_UPDATE_COUNT_STORAGE_KEY] as Record<string, unknown> | undefined;
     if (stored && typeof stored === 'object') {
       for (const [key, value] of Object.entries(stored)) {
@@ -821,7 +820,7 @@ async function persistProfileUpdateCounts(): Promise<void> {
   for (const [key, value] of lastProfileUpdateCount.entries()) {
     payload[key] = value;
   }
-  await chrome.storage.local.set({ [PROFILE_UPDATE_COUNT_STORAGE_KEY]: payload });
+  await storageLocalSet({ [PROFILE_UPDATE_COUNT_STORAGE_KEY]: payload });
 }
 
 async function setLastProfileUpdateCount(contactKeyStr: string, count: number): Promise<void> {
@@ -835,7 +834,7 @@ async function setLastProfileUpdateCount(contactKeyStr: string, count: number): 
 
 async function loadMemoryUpdateCounts(): Promise<void> {
   try {
-    const result = await chrome.storage.local.get(MEMORY_UPDATE_COUNT_STORAGE_KEY);
+    const result = await storageLocalGet(MEMORY_UPDATE_COUNT_STORAGE_KEY);
     const stored = result[MEMORY_UPDATE_COUNT_STORAGE_KEY] as Record<string, unknown> | undefined;
     if (stored && typeof stored === 'object') {
       for (const [key, value] of Object.entries(stored)) {
@@ -858,7 +857,7 @@ async function persistMemoryUpdateCounts(): Promise<void> {
   for (const [key, value] of lastMemoryUpdateCount.entries()) {
     payload[key] = value;
   }
-  await chrome.storage.local.set({ [MEMORY_UPDATE_COUNT_STORAGE_KEY]: payload });
+  await storageLocalSet({ [MEMORY_UPDATE_COUNT_STORAGE_KEY]: payload });
 }
 
 async function setLastMemoryUpdateCount(contactKeyStr: string, count: number): Promise<void> {
@@ -1005,6 +1004,40 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     throw err;
   }
 }
+
+type StoredConfigRecord = Record<string, unknown> &
+  Partial<{
+    apiKey: string;
+    provider: ProviderType;
+    baseUrl: string;
+    allowInsecureHttp: boolean;
+    allowPrivateHosts: boolean;
+    model: string;
+    styles: ReplyStyle[];
+    language: 'zh' | 'en' | 'auto';
+    autoTrigger: boolean;
+    autoInGroups: boolean;
+    autoAgent: boolean;
+    customSystemPrompt: string;
+    customUserPrompt: string;
+    privacyAcknowledged: boolean;
+    redactPii: boolean;
+    anonymizeSenders: boolean;
+    contextMessageLimit: number | string;
+    maxCharsPerMessage: number | string;
+    maxTotalChars: number | string;
+    temperature: number | string;
+    fallbackProvider: ProviderType;
+    fallbackBaseUrl: string;
+    fallbackAllowInsecureHttp: boolean;
+    fallbackAllowPrivateHosts: boolean;
+    fallbackModel: string;
+    fallbackApiKey: string;
+    enableFallback: boolean;
+    suggestionCount: number;
+    persistApiKey: boolean;
+    enableMemory: boolean;
+  }>;
 
 function normalizeDiagnosticType(type: string): DiagnosticEventType {
   switch (type) {
@@ -1286,7 +1319,7 @@ async function dispatchMessage(
     case 'ACK_PRIVACY': {
       const acknowledged = true;
       try {
-        await chrome.storage.local.set({ privacyAcknowledged: acknowledged });
+        await storageLocalSet({ privacyAcknowledged: acknowledged });
       } catch {
         // ignore
       }
@@ -1298,7 +1331,7 @@ async function dispatchMessage(
 
     case 'SET_DEBUG_ENABLED': {
       debugEnabled = Boolean(request.enabled);
-      await chrome.storage.local.set({ [DEBUG_ENABLED_STORAGE_KEY]: debugEnabled });
+      await storageLocalSet({ [DEBUG_ENABLED_STORAGE_KEY]: debugEnabled });
       return { success: true, debugEnabled };
     }
 
@@ -1471,7 +1504,7 @@ async function dispatchMessage(
 }
 
 async function loadConfig() {
-  const result = await chrome.storage.local.get([
+  const result = await storageLocalGet<StoredConfigRecord>([
     'apiKey',
     'provider',
     'baseUrl',
@@ -1652,7 +1685,7 @@ async function setConfig(config: Config) {
     if (currentConfig.enableFallback && currentConfig.fallbackApiKey) {
       toSet.fallbackApiKey = currentConfig.fallbackApiKey;
     }
-    await chrome.storage.local.set(toSet);
+    await storageLocalSet(toSet);
     const keysToRemove: string[] = [];
     if (!currentConfig.baseUrl) keysToRemove.push('baseUrl');
     if (!currentConfig.customSystemPrompt) keysToRemove.push('customSystemPrompt');
@@ -1662,18 +1695,18 @@ async function setConfig(config: Config) {
       keysToRemove.push('fallbackApiKey');
     }
     if (keysToRemove.length) {
-      await chrome.storage.local.remove(keysToRemove);
+      await storageLocalRemove(keysToRemove);
     }
     await clearSessionKeys();
   } else {
-    await chrome.storage.local.set(baseConfigToPersist);
+    await storageLocalSet(baseConfigToPersist);
     const keysToRemove: string[] = ['apiKey', 'fallbackApiKey'];
     if (!currentConfig.baseUrl) keysToRemove.push('baseUrl');
     if (!currentConfig.customSystemPrompt) keysToRemove.push('customSystemPrompt');
     if (!currentConfig.customUserPrompt) keysToRemove.push('customUserPrompt');
     if (!currentConfig.fallbackBaseUrl) keysToRemove.push('fallbackBaseUrl');
     if (keysToRemove.length) {
-      await chrome.storage.local.remove(keysToRemove);
+      await storageLocalRemove(keysToRemove);
     }
     try {
       await setSessionKeys(currentConfig.apiKey, currentConfig.enableFallback ? currentConfig.fallbackApiKey : undefined);
@@ -2250,7 +2283,7 @@ async function getContactsWithPrefs() {
 }
 
 async function clearData() {
-  await chrome.storage.local.clear();
+  await storageLocalClear();
   await clearSessionKeys();
   lastProfileUpdateCount.clear();
   lastMemoryUpdateCount.clear();
@@ -2258,12 +2291,12 @@ async function clearData() {
   await clearPersistedDiagnostics();
   debugEnabled = false;
   try {
-    await chrome.storage.local.remove(PROFILE_UPDATE_COUNT_STORAGE_KEY);
+    await storageLocalRemove(PROFILE_UPDATE_COUNT_STORAGE_KEY);
   } catch (err) {
     debugWarn('[Social Copilot] Failed to clear profile update counts:', err);
   }
   try {
-    await chrome.storage.local.remove(MEMORY_UPDATE_COUNT_STORAGE_KEY);
+    await storageLocalRemove(MEMORY_UPDATE_COUNT_STORAGE_KEY);
   } catch (err) {
     debugWarn('[Social Copilot] Failed to clear memory update counts:', err);
   }

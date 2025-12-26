@@ -1,6 +1,6 @@
 {
   "name": "@social-copilot/browser-extension",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "vite build --watch",

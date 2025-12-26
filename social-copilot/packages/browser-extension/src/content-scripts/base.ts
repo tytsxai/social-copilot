@@ -2,6 +2,13 @@ import type { ContactKey, Message, ReplyCandidate, ThoughtCard, ThoughtType } fr
 import type { PlatformAdapter } from '../adapters/base';
 import { CopilotUI } from '../ui/copilot-ui';
 import { debugError, debugLog, debugWarn } from '../utils/debug';
+import {
+  addStorageOnChangedListener,
+  removeStorageOnChangedListener,
+  runtimeSendMessage,
+  storageLocalGet,
+  storageLocalSet,
+} from '../utils/webext';
 
 export type SupportedApp = 'telegram' | 'whatsapp' | 'slack';
 
@@ -76,7 +83,7 @@ function sendMessageWithTimeout<TResponse = unknown>(
     timer = window.setTimeout(() => reject(new SendMessageTimeoutError(timeoutMs)), timeoutMs);
   });
 
-  const sendPromise = chrome.runtime.sendMessage(message as unknown) as Promise<TResponse>;
+  const sendPromise = runtimeSendMessage<TResponse>(message);
   return Promise.race([sendPromise, timeoutPromise]).finally(() => {
     if (timer !== undefined) window.clearTimeout(timer);
   });
@@ -260,7 +267,7 @@ export class CopilotContentScript {
     }
 
     if (this.storageChangeHandler) {
-      chrome.storage.onChanged.removeListener(this.storageChangeHandler);
+      removeStorageOnChangedListener(this.storageChangeHandler);
       this.storageChangeHandler = null;
     }
 
@@ -606,7 +613,7 @@ export class CopilotContentScript {
 
   private async loadLocalSettings(): Promise<void> {
     try {
-      const result = await chrome.storage.local.get([
+      const result = await storageLocalGet([
         'autoInGroups',
         'autoTrigger',
         'autoAgent',
@@ -663,7 +670,7 @@ export class CopilotContentScript {
       }
     };
 
-    chrome.storage.onChanged.addListener(this.storageChangeHandler);
+    addStorageOnChangedListener(this.storageChangeHandler);
   }
 
   private normalizeContextMessageLimit(value: unknown): number {
@@ -685,7 +692,7 @@ export class CopilotContentScript {
     } catch {
       // Fallback: best-effort persist flag locally (background may still reject if not synced).
       try {
-        await chrome.storage.local.set({ privacyAcknowledged: true });
+        await storageLocalSet({ privacyAcknowledged: true });
       } catch {
         // ignore
       }

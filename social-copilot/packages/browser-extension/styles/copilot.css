@@ -66,11 +66,9 @@
   flex-direction: column;
   border-radius: var(--sc-radius);
   overflow: hidden;
-  background: var(--sc-bg);
+  background: var(--sc-card);
   border: 1px solid var(--sc-border);
   box-shadow: var(--sc-shadow);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease;
 }
 
@@ -81,7 +79,7 @@
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  background: linear-gradient(135deg, var(--sc-primary) 0%, var(--sc-primary-2) 100%);
+  background: var(--sc-primary);
   color: #ffffff;
   cursor: grab;
   user-select: none;
@@ -257,7 +255,7 @@
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid rgba(91, 94, 246, 0.22);
-  background: linear-gradient(135deg, var(--sc-primary) 0%, var(--sc-primary-2) 100%);
+  background: var(--sc-primary);
   color: rgba(255, 255, 255, 0.98);
   font-size: 13px;
   font-weight: 800;

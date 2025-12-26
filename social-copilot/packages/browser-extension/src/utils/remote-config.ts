@@ -1,4 +1,5 @@
 import { debugError, debugLog } from './debug';
+import { storageLocalGet, storageLocalSet } from './webext';
 
 export interface SelectorConfig {
   version: number;
@@ -12,28 +13,56 @@ export interface SelectorConfig {
   };
 }
 
-// 重要：请将此处的 your-username 替换为你存放 selectors.json 的真实 GitHub 用户名
-const USERNAME = 'your-username'; 
-const CONFIG_URL = `https://raw.githubusercontent.com/${USERNAME}/social-copilot-config/main/selectors.json`; 
+const REMOTE_SELECTORS_URL_STORAGE_KEY = 'remoteSelectorsUrl';
 const STORAGE_KEY = 'remote_selector_config';
 const CACHE_DURATION_MS = 1000 * 60 * 60 * 24; // 24小时缓存
+const FETCH_TIMEOUT_MS = 7000;
+
+function validateRemoteSelectorsUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (!value) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  if (url.hostname !== 'raw.githubusercontent.com') return null;
+  if (!url.pathname.endsWith('.json')) return null;
+  return url.toString();
+}
+
+async function getRemoteSelectorsUrl(): Promise<string | null> {
+  const stored = await storageLocalGet(REMOTE_SELECTORS_URL_STORAGE_KEY);
+  return validateRemoteSelectorsUrl(stored[REMOTE_SELECTORS_URL_STORAGE_KEY]);
+}
 
 export async function fetchRemoteSelectors(): Promise<SelectorConfig | null> {
   try {
-    // 1. 尝试读取本地缓存
-    const stored = await chrome.storage.local.get(STORAGE_KEY);
-    const cached = stored[STORAGE_KEY] as { timestamp: number; data: SelectorConfig } | undefined;
+    const configUrl = await getRemoteSelectorsUrl();
+    if (!configUrl) return null;
 
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
+    // 1. 尝试读取本地缓存
+    const stored = await storageLocalGet(STORAGE_KEY);
+    const cached = stored[STORAGE_KEY] as { timestamp: number; url?: string; data: SelectorConfig } | undefined;
+
+    if (cached && cached.url === configUrl && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
       debugLog('Using cached remote selectors', cached.data);
       return cached.data;
     }
 
     // 2. 缓存过期或不存在，发起网络请求
     // 注意：需要在 manifest.json 中添加 host_permissions 或确保 fetch 允许跨域
-    const response = await fetch(CONFIG_URL, {
-        method: 'GET',
-        cache: 'no-cache'
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const response = await fetch(configUrl, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    }).finally(() => {
+      globalThis.clearTimeout(timeout);
     });
 
     if (!response.ok) {
@@ -43,9 +72,10 @@ export async function fetchRemoteSelectors(): Promise<SelectorConfig | null> {
     const data = await response.json() as SelectorConfig;
 
     // 3. 写入缓存
-    await chrome.storage.local.set({
+    await storageLocalSet({
       [STORAGE_KEY]: {
         timestamp: Date.now(),
+        url: configUrl,
         data
       }
     });

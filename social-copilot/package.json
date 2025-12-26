@@ -1,6 +1,6 @@
 {
   "name": "social-copilot",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "AI-powered social companion for chat applications",
   "scripts": {
