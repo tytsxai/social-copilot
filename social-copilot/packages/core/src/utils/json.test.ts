@@ -396,6 +396,7 @@ describe('Property-based tests', () => {
   it('handles deeply nested structures', () => {
     // Use safe string generator without bracket characters
     const safeString = fc.string().filter((s) => !hasBracketChars(s));
+    const safeKey = safeString.filter((s) => !isDangerousKey(s));
 
     const deepObjectArb = fc.letrec((tie) => ({
       value: fc.oneof(
@@ -404,7 +405,7 @@ describe('Property-based tests', () => {
         fc.boolean(),
         fc.constant(null),
         fc.array(tie('value'), { maxLength: 3 }),
-        fc.dictionary(safeString, tie('value'), { maxKeys: 3 })
+        fc.dictionary(safeKey, tie('value'), { maxKeys: 3 })
       ),
     })).value;
 
