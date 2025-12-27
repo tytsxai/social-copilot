@@ -1,10 +1,25 @@
 type ChromeLastError = { message?: string };
 
+type WebExtEventLike<TListener> = {
+  addListener?: (listener: TListener) => void;
+  removeListener?: (listener: TListener) => void;
+};
+
+type RuntimeOnMessageListener = (
+  message: unknown,
+  sender: unknown,
+  sendResponse: (response?: unknown) => void
+) => boolean | void;
+
 type WebExtRuntimeLike = {
   lastError?: ChromeLastError;
+  id?: string;
   sendMessage?: (...args: unknown[]) => unknown;
   openOptionsPage?: () => void;
   getManifest?: () => { version?: string };
+  onInstalled?: WebExtEventLike<(...args: unknown[]) => unknown>;
+  onStartup?: WebExtEventLike<() => unknown>;
+  onMessage?: WebExtEventLike<RuntimeOnMessageListener>;
 };
 
 type WebExtStorageAreaLike = {
@@ -40,6 +55,10 @@ const getChromeApi = (): ChromeApiLike | null => {
 const getBrowserApi = (): ChromeApiLike | null => {
   const g = globalThis as typeof globalThis & { browser?: ChromeApiLike };
   return g.browser ?? null;
+};
+
+const getPreferredApi = (): ChromeApiLike | null => {
+  return getBrowserApi() ?? getChromeApi();
 };
 
 const isThenable = (value: unknown): value is Promise<unknown> => {
@@ -115,8 +134,7 @@ export async function runtimeSendMessage<TResponse = unknown>(message: unknown):
 
 export function runtimeOpenOptionsPage(): void {
   try {
-    getChromeApi()?.runtime?.openOptionsPage?.();
-    getBrowserApi()?.runtime?.openOptionsPage?.();
+    getPreferredApi()?.runtime?.openOptionsPage?.();
   } catch {
     // ignore
   }
@@ -124,11 +142,32 @@ export function runtimeOpenOptionsPage(): void {
 
 export function runtimeGetManifestVersion(): string {
   try {
-    const version = getChromeApi()?.runtime?.getManifest?.()?.version ?? getBrowserApi()?.runtime?.getManifest?.()?.version;
+    const version = getPreferredApi()?.runtime?.getManifest?.()?.version;
     return typeof version === 'string' ? version : '';
   } catch {
     return '';
   }
+}
+
+export function runtimeGetId(): string | null {
+  try {
+    const id = getPreferredApi()?.runtime?.id;
+    return typeof id === 'string' && id.trim() ? id.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function addRuntimeOnInstalledListener(listener: (...args: unknown[]) => unknown): void {
+  getPreferredApi()?.runtime?.onInstalled?.addListener?.(listener);
+}
+
+export function addRuntimeOnStartupListener(listener: () => unknown): void {
+  getPreferredApi()?.runtime?.onStartup?.addListener?.(listener);
+}
+
+export function addRuntimeOnMessageListener(listener: RuntimeOnMessageListener): void {
+  getPreferredApi()?.runtime?.onMessage?.addListener?.(listener);
 }
 
 export function getStorageSessionArea(): WebExtStorageAreaLike | null {
@@ -250,13 +289,11 @@ export async function storageLocalClear(): Promise<void> {
 export function addStorageOnChangedListener(
   listener: (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void
 ): void {
-  getChromeApi()?.storage?.onChanged?.addListener?.(listener);
-  getBrowserApi()?.storage?.onChanged?.addListener?.(listener);
+  getPreferredApi()?.storage?.onChanged?.addListener?.(listener);
 }
 
 export function removeStorageOnChangedListener(
   listener: (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void
 ): void {
-  getChromeApi()?.storage?.onChanged?.removeListener?.(listener);
-  getBrowserApi()?.storage?.onChanged?.removeListener?.(listener);
+  getPreferredApi()?.storage?.onChanged?.removeListener?.(listener);
 }

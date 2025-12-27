@@ -7,10 +7,17 @@ import {
   ThoughtAnalyzer,
   ReplyParseError,
   parseJsonObjectFromText,
+  redactPii,
   sanitizeOutboundContext,
   redactSecrets,
 } from '@social-copilot/core';
 import {
+  addRuntimeOnInstalledListener,
+  addRuntimeOnMessageListener,
+  addRuntimeOnStartupListener,
+  runtimeGetId,
+  runtimeGetManifestVersion,
+  runtimeOpenOptionsPage,
   storageLocalClear,
   storageLocalGet,
   storageLocalRemove,
@@ -773,7 +780,7 @@ async function clearSessionKeys(): Promise<void> {
 
 function buildDiagnosticsSnapshot(): Record<string, unknown> {
   return {
-    version: chrome.runtime.getManifest().version,
+    version: runtimeGetManifestVersion(),
     debugEnabled,
     maxEvents: DIAGNOSTICS_MAX_EVENTS,
     eventCount: diagnostics.length,
@@ -892,13 +899,13 @@ function ensureStoreReady(): Promise<void> {
 }
 
 // 初始化
-chrome.runtime.onInstalled.addListener(async () => {
+addRuntimeOnInstalledListener(async () => {
   debugLog('[Social Copilot] Extension installed');
   await ensureStoreReady();
   await loadConfig();
 });
 
-chrome.runtime.onStartup.addListener(() => {
+addRuntimeOnStartupListener(() => {
   // Ensure session-only keys do not survive browser restarts (fallback path stores them in local).
   void clearSessionKeys();
 });
@@ -910,8 +917,20 @@ void ensureDiagnosticsReady();
 setupBackgroundErrorReporting();
 
 // 监听消息
-chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-  handleMessage(request)
+addRuntimeOnMessageListener((request, sender, sendResponse) => {
+  const runtimeId = runtimeGetId();
+  const senderId =
+    sender && typeof sender === 'object' && 'id' in (sender as Record<string, unknown>)
+      ? (sender as Record<string, unknown>).id
+      : undefined;
+
+  // Reject cross-extension messages (prevents other installed extensions from invoking privileged handlers).
+  if (runtimeId && typeof senderId === 'string' && senderId !== runtimeId) {
+    sendResponse({ error: 'Unauthorized message sender' });
+    return false;
+  }
+
+  handleMessage(request as { type: string; [key: string]: unknown })
     .then(sendResponse)
     .catch((error) => {
       debugError('[Social Copilot] Error:', sanitizeErrorForDiagnostics(error));
@@ -919,6 +938,19 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     });
   return true;
 });
+
+function sanitizeMessageForLocalStore(message: Message, includeText: boolean): Message {
+  const senderName = message.direction === 'incoming' ? '对方' : '我';
+  const base: Message = { ...message, senderName, raw: undefined };
+
+  if (!includeText) {
+    return { ...base, text: '' };
+  }
+
+  const rawText = typeof message.text === 'string' ? message.text : String(message.text ?? '');
+  const text = redactPii(rawText).slice(0, 500);
+  return { ...base, text };
+}
 
 async function handleMessage(request: { type: string; [key: string]: unknown }) {
   await ensureDiagnosticsReady();
@@ -1435,7 +1467,7 @@ async function dispatchMessage(
       return clearContactData(request.contactKey as ContactKey);
 
     case 'OPEN_OPTIONS_PAGE': {
-      chrome.runtime.openOptionsPage();
+      runtimeOpenOptionsPage();
       return { success: true };
     }
 
@@ -1865,9 +1897,10 @@ async function handleGenerateReply(payload: {
 
   const language = resolveLanguage(currentConfig.language, currentMessage, messages);
 
-  // 保存消息
+  // Persist minimal local message records for dedup/counting; only store redacted text when memory is enabled.
+  const includeTextInLocalStore = Boolean(currentConfig?.enableMemory ?? false);
   for (const msg of messages) {
-    await store.saveMessage(msg);
+    await store.saveMessage(sanitizeMessageForLocalStore(msg, includeTextInLocalStore));
   }
 
   const messageCount = await store.getMessageCount(contactKey);
@@ -2421,7 +2454,7 @@ async function exportUserData(): Promise<{ backup: UserDataBackupV1 }> {
     backup: {
       schemaVersion: 1,
       exportedAt: new Date().toISOString(),
-      extensionVersion: chrome.runtime.getManifest().version,
+      extensionVersion: runtimeGetManifestVersion(),
       data: {
         profiles,
         stylePreferences,
