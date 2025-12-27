@@ -18,6 +18,68 @@ const STORAGE_KEY = 'remote_selector_config';
 const CACHE_DURATION_MS = 1000 * 60 * 60 * 24; // 24小时缓存
 const FETCH_TIMEOUT_MS = 7000;
 
+const MAX_REMOTE_CONFIG_BYTES = 100_000;
+const MAX_SELECTOR_ENTRIES = 120;
+const MAX_SELECTOR_KEY_LENGTH = 64;
+const MAX_SELECTOR_VALUE_LENGTH = 400;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> | null {
+  if (!isPlainRecord(value)) return null;
+  const result: Record<string, string> = {};
+  let kept = 0;
+  for (const [key, raw] of Object.entries(value)) {
+    if (kept >= MAX_SELECTOR_ENTRIES) break;
+    if (typeof key !== 'string') continue;
+    if (key.length === 0 || key.length > MAX_SELECTOR_KEY_LENGTH) continue;
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) continue;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (trimmed.length > MAX_SELECTOR_VALUE_LENGTH) continue;
+      if (/\r|\n/.test(trimmed)) continue;
+      result[key] = trimmed;
+      kept += 1;
+    }
+  }
+  return Object.keys(result).length ? result : null;
+}
+
+function parseSelectorConfig(raw: unknown): SelectorConfig | null {
+  if (!isPlainRecord(raw)) return null;
+
+  const version = raw.version;
+  if (typeof version !== 'number' || !Number.isFinite(version)) return null;
+
+  const platformsRaw = raw.platforms;
+  if (!isPlainRecord(platformsRaw)) return null;
+
+  const platforms: SelectorConfig['platforms'] = {};
+
+  const whatsappRaw = platformsRaw.whatsapp;
+  if (isPlainRecord(whatsappRaw)) {
+    const legacy = normalizeStringRecord(whatsappRaw.legacy);
+    const testid = normalizeStringRecord(whatsappRaw.testid);
+    if (legacy || testid) {
+      platforms.whatsapp = {
+        ...(legacy ? { legacy } : {}),
+        ...(testid ? { testid } : {}),
+      };
+    }
+  }
+
+  const telegram = normalizeStringRecord(platformsRaw.telegram);
+  if (telegram) platforms.telegram = telegram;
+
+  const slack = normalizeStringRecord(platformsRaw.slack);
+  if (slack) platforms.slack = slack;
+
+  return { version, platforms };
+}
+
 function validateRemoteSelectorsUrl(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const value = raw.trim();
@@ -69,7 +131,29 @@ export async function fetchRemoteSelectors(): Promise<SelectorConfig | null> {
       throw new Error(`Remote config fetch failed: ${response.statusText}`);
     }
 
-    const data = await response.json() as SelectorConfig;
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) {
+      const len = Number(contentLength);
+      if (Number.isFinite(len) && len > MAX_REMOTE_CONFIG_BYTES) {
+        throw new Error('Remote config too large');
+      }
+    }
+
+    const text = await response.text();
+    if (text.length > MAX_REMOTE_CONFIG_BYTES) {
+      throw new Error('Remote config too large');
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text) as unknown;
+    } catch {
+      throw new Error('Remote config JSON parse failed');
+    }
+    const data = parseSelectorConfig(raw);
+    if (!data) {
+      throw new Error('Remote config JSON schema mismatch');
+    }
 
     // 3. 写入缓存
     await storageLocalSet({
@@ -101,16 +185,21 @@ export async function getMergedSelectors(
 ): Promise<Record<string, string>> {
   const remoteConfig = await fetchRemoteSelectors();
   
-  if (!remoteConfig?.platforms?.[platform]) {
+  const platformConfig = remoteConfig?.platforms?.[platform];
+  if (!platformConfig) {
     return defaultSelectors;
   }
 
-  // @ts-expect-error - variant access needs structural safety but keeping it simple for now
-  const remoteVariant = remoteConfig.platforms[platform][variant];
-  
-  if (!remoteVariant) {
-    return defaultSelectors;
+  let remoteVariant: Record<string, string> | null = null;
+  if (platform === 'whatsapp') {
+    const whatsapp = platformConfig as SelectorConfig['platforms']['whatsapp'] | undefined;
+    if (variant === 'legacy') remoteVariant = whatsapp?.legacy ?? null;
+    if (variant === 'testid') remoteVariant = whatsapp?.testid ?? null;
+  } else {
+    remoteVariant = platformConfig as Record<string, string>;
   }
+
+  if (!remoteVariant) return defaultSelectors;
 
   // 远程覆盖本地
   return { ...defaultSelectors, ...remoteVariant };
