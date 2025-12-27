@@ -51,7 +51,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["chunks/*", "assets/*"],
+      "resources": ["assets/*"],
       "matches": ["https://web.telegram.org/*", "https://web.whatsapp.com/*", "https://app.slack.com/*"]
     }
   ]

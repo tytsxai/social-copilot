@@ -58,8 +58,8 @@ export default defineConfig({
       },
       output: {
         entryFileNames: '[name].js',
-        chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name].[ext]',
+        chunkFileNames: isRelease ? 'assets/[name]-[hash].js' : 'assets/[name].js',
+        assetFileNames: isRelease ? 'assets/[name]-[hash].[ext]' : 'assets/[name].[ext]',
         format: 'es',
       },
     },
