@@ -78,13 +78,30 @@ function sendMessageWithTimeout<TResponse = unknown>(
   timeoutMs: number = DEFAULT_SEND_MESSAGE_TIMEOUT_MS
 ): Promise<TResponse> {
   let timer: number | undefined;
+  let settled = false;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = window.setTimeout(() => reject(new SendMessageTimeoutError(timeoutMs)), timeoutMs);
   });
 
   const sendPromise = runtimeSendMessage<TResponse>(message);
-  return Promise.race([sendPromise, timeoutPromise]).finally(() => {
+  const guardedSendPromise = new Promise<TResponse>((resolve, reject) => {
+    sendPromise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      }
+    );
+  });
+
+  return Promise.race([guardedSendPromise, timeoutPromise]).finally(() => {
+    settled = true;
     if (timer !== undefined) window.clearTimeout(timer);
   });
 }

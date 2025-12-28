@@ -92,7 +92,15 @@ function validateRemoteSelectorsUrl(raw: unknown): string | null {
   }
   if (url.protocol !== 'https:') return null;
   if (url.hostname !== 'raw.githubusercontent.com') return null;
-  if (!url.pathname.endsWith('.json')) return null;
+  const pathname = url.pathname;
+  if (!pathname.endsWith('/selectors.json')) return null;
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length !== 4) return null;
+  if (segments[2] !== 'main') return null;
+  const owner = segments[0];
+  const repo = segments[1];
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner)) return null;
+  if (!/^[A-Za-z0-9_.-]+$/.test(repo)) return null;
   return url.toString();
 }
 

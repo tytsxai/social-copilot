@@ -1,7 +1,6 @@
 import type { ContactKey } from '@social-copilot/core';
 import { parseAndValidateUserDataBackup, validateImportFileSize } from './importUserData';
-import { escapeHtml } from '../utils/escape-html';
-import { renderStyleStats } from './preferences';
+import { getStyleLabel } from './preferences';
 import {
   runtimeGetManifestVersion,
   runtimeSendMessage,
@@ -65,6 +64,8 @@ const downloadDiagnosticsBtn = document.getElementById('downloadDiagnosticsBtn')
 const clearDiagnosticsBtn = document.getElementById('clearDiagnosticsBtn')!;
 const aboutVersionEl = document.getElementById('aboutVersion');
 const remoteSelectorsUrlInput = document.getElementById('remoteSelectorsUrl') as HTMLInputElement | null;
+const advancedModeCheckbox = document.getElementById('advancedMode') as HTMLInputElement | null;
+const advancedFields = document.getElementById('advancedFields') as HTMLElement | null;
 const IS_RELEASE = __SC_RELEASE__;
 
 type StatusResponse = {
@@ -92,6 +93,7 @@ type ClearDataResponse = { success?: boolean; error?: string };
 
 type PopupStoredConfigRecord = Record<string, unknown> &
   Partial<{
+    advancedMode: boolean;
     apiKey: string;
     provider: string;
     baseUrl: string;
@@ -244,47 +246,153 @@ if (contactListEl) {
   });
 }
 
+function clearChildren(el: HTMLElement) {
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+function buildEmptyState(text: string): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'empty-state';
+  el.textContent = text;
+  return el;
+}
+
+function buildStyleStats(preference: ContactListItem['preference']): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const history = preference?.styleHistory;
+  if (!history || history.length === 0) {
+    const muted = document.createElement('span');
+    muted.className = 'muted';
+    muted.textContent = '暂无风格选择记录';
+    frag.appendChild(muted);
+    return frag;
+  }
+
+  const sorted = [...history].sort((a, b) => b.count - a.count);
+  for (const entry of sorted) {
+    const pill = document.createElement('span');
+    pill.className = 'style-pill';
+
+    const label = document.createTextNode(`${getStyleLabel(entry.style)} `);
+    const count = document.createElement('strong');
+    count.textContent = String(entry.count);
+
+    pill.appendChild(label);
+    pill.appendChild(count);
+    frag.appendChild(pill);
+  }
+
+  return frag;
+}
+
 async function loadContacts() {
   if (!contactListEl) return;
+
+  const listEl = contactListEl as HTMLElement;
+  clearChildren(listEl);
+
   try {
     const response = await runtimeSendMessage<GetContactsResponse>({ type: 'GET_CONTACTS_WITH_PREFS' });
     const contacts = response?.contacts ?? [];
     contactsCache = contacts;
 
     if (contacts.length === 0) {
-      contactListEl.innerHTML = '<div class="empty-state">暂无联系人记录</div>';
+      listEl.appendChild(buildEmptyState('暂无联系人记录'));
       return;
     }
 
-    contactListEl.innerHTML = contacts
-      .map(
-        (contact, index) => `
-        <div class="contact-item">
-          <div class="contact-header">
-            <div class="contact-avatar">${escapeHtml(contact.displayName.charAt(0).toUpperCase())}</div>
-            <div class="contact-info">
-              <div class="contact-name" title="${escapeHtml(contact.displayName)}">${escapeHtml(contact.displayName)}</div>
-              <div class="contact-meta">${escapeHtml(contact.app)} · ${escapeHtml(String(contact.messageCount))} 条消息</div>
-            </div>
-          </div>
-          <div class="contact-actions">
-            <button class="reset-pref-btn" data-index="${index}">重置偏好</button>
-            <button class="clear-memory-btn" data-index="${index}">清空记忆</button>
-            <button class="clear-contact-btn" data-index="${index}">清除数据</button>
-          </div>
-          <div class="style-stats">
-            ${renderStyleStats(contact.preference ?? null)}
-          </div>
-          <div class="memory-box">
-            <div class="memory-title">长期记忆${contact.memoryUpdatedAt ? ` <span class="muted">(${escapeHtml(new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10))})</span>` : ''}</div>
-            <div class="memory-text">${contact.memorySummary ? escapeHtml(contact.memorySummary) : '<span class="muted">暂无长期记忆</span>'}</div>
-          </div>
-        </div>
-      `
-      )
-      .join('');
-  } catch (err) {
-    contactListEl.innerHTML = '<div class="empty-state">加载失败</div>';
+    for (const [index, contact] of contacts.entries()) {
+      const item = document.createElement('div');
+      item.className = 'contact-item';
+
+      const header = document.createElement('div');
+      header.className = 'contact-header';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'contact-avatar';
+      avatar.textContent = contact.displayName.charAt(0).toUpperCase();
+
+      const info = document.createElement('div');
+      info.className = 'contact-info';
+
+      const name = document.createElement('div');
+      name.className = 'contact-name';
+      name.setAttribute('title', contact.displayName);
+      name.textContent = contact.displayName;
+
+      const meta = document.createElement('div');
+      meta.className = 'contact-meta';
+      meta.textContent = `${contact.app} · ${contact.messageCount} 条消息`;
+
+      info.appendChild(name);
+      info.appendChild(meta);
+
+      header.appendChild(avatar);
+      header.appendChild(info);
+
+      const actions = document.createElement('div');
+      actions.className = 'contact-actions';
+
+      const resetBtn = document.createElement('button');
+      resetBtn.className = 'reset-pref-btn';
+      resetBtn.setAttribute('data-index', String(index));
+      resetBtn.textContent = '重置偏好';
+
+      const clearMemoryBtn = document.createElement('button');
+      clearMemoryBtn.className = 'clear-memory-btn';
+      clearMemoryBtn.setAttribute('data-index', String(index));
+      clearMemoryBtn.textContent = '清空记忆';
+
+      const clearContactBtn = document.createElement('button');
+      clearContactBtn.className = 'clear-contact-btn';
+      clearContactBtn.setAttribute('data-index', String(index));
+      clearContactBtn.textContent = '清除数据';
+
+      actions.appendChild(resetBtn);
+      actions.appendChild(clearMemoryBtn);
+      actions.appendChild(clearContactBtn);
+
+      const styleStats = document.createElement('div');
+      styleStats.className = 'style-stats';
+      styleStats.appendChild(buildStyleStats(contact.preference ?? null));
+
+      const memoryBox = document.createElement('div');
+      memoryBox.className = 'memory-box';
+
+      const memoryTitle = document.createElement('div');
+      memoryTitle.className = 'memory-title';
+      memoryTitle.appendChild(document.createTextNode('长期记忆'));
+      if (contact.memoryUpdatedAt) {
+        memoryTitle.appendChild(document.createTextNode(' '));
+        const date = document.createElement('span');
+        date.className = 'muted';
+        date.textContent = `(${new Date(contact.memoryUpdatedAt).toISOString().slice(0, 10)})`;
+        memoryTitle.appendChild(date);
+      }
+
+      const memoryText = document.createElement('div');
+      memoryText.className = 'memory-text';
+      if (contact.memorySummary) {
+        memoryText.textContent = contact.memorySummary;
+      } else {
+        const muted = document.createElement('span');
+        muted.className = 'muted';
+        muted.textContent = '暂无长期记忆';
+        memoryText.appendChild(muted);
+      }
+
+      memoryBox.appendChild(memoryTitle);
+      memoryBox.appendChild(memoryText);
+
+      item.appendChild(header);
+      item.appendChild(actions);
+      item.appendChild(styleStats);
+      item.appendChild(memoryBox);
+
+      listEl.appendChild(item);
+    }
+  } catch {
+    listEl.appendChild(buildEmptyState('加载失败'));
   }
 }
 
@@ -305,7 +413,7 @@ document.querySelectorAll('.style-option').forEach((option) => {
 
 // Provider 切换时更新提示
 providerSelect.addEventListener('change', () => {
-  updateApiKeyHint(providerSelect.value, apiKeyHint);
+  refreshApiKeyHint();
   updateBaseUrlUi(providerSelect.value, baseUrlInput, baseUrlHint);
   updateModelUi(providerSelect.value, modelInput, modelHint, modelSuggestions);
 });
@@ -319,6 +427,16 @@ fallbackProviderSelect.addEventListener('change', () => {
 enableFallbackCheckbox.addEventListener('change', () => {
   toggleFallbackFields();
 });
+
+advancedModeCheckbox?.addEventListener('change', () => {
+  toggleAdvancedFields();
+  refreshApiKeyHint();
+});
+
+function toggleAdvancedFields() {
+  if (!advancedModeCheckbox || !advancedFields) return;
+  advancedFields.classList.toggle('hidden', !advancedModeCheckbox.checked);
+}
 
 function getProviderModelMeta(provider: string): { defaultModel: string; docsUrl: string; suggestions: string[] } {
   if (provider === 'openai') {
@@ -360,9 +478,31 @@ function getProviderBaseUrlMeta(provider: string): { defaultBaseUrl: string; doc
 function updateBaseUrlUi(provider: string, inputEl: HTMLInputElement, hintEl: HTMLElement) {
   const meta = getProviderBaseUrlMeta(provider);
   inputEl.placeholder = meta.defaultBaseUrl;
-  hintEl.innerHTML = `留空则使用默认：<code>${escapeHtml(meta.defaultBaseUrl)}</code>，<a href="${escapeHtml(
-    meta.docsUrl
-  )}" target="_blank" rel="noopener noreferrer">查看接口文档</a>（默认仅支持官方域名，不要包含 <code>/v1</code>）`;
+
+  while (hintEl.firstChild) hintEl.removeChild(hintEl.firstChild);
+
+  hintEl.appendChild(document.createTextNode('留空则使用默认：'));
+
+  const codeEl = document.createElement('code');
+  codeEl.textContent = meta.defaultBaseUrl;
+  hintEl.appendChild(codeEl);
+
+  hintEl.appendChild(document.createTextNode('，'));
+
+  const linkEl = document.createElement('a');
+  linkEl.href = meta.docsUrl;
+  linkEl.target = '_blank';
+  linkEl.rel = 'noopener noreferrer';
+  linkEl.textContent = '查看接口文档';
+  hintEl.appendChild(linkEl);
+
+  hintEl.appendChild(document.createTextNode('（默认仅支持官方域名，不要包含 '));
+
+  const v1CodeEl = document.createElement('code');
+  v1CodeEl.textContent = '/v1';
+  hintEl.appendChild(v1CodeEl);
+
+  hintEl.appendChild(document.createTextNode('）'));
 }
 
 function isPrivateOrLocalHost(hostname: string): boolean {
@@ -451,22 +591,55 @@ function updateModelUi(
     datalistEl.appendChild(opt);
   }
 
-  hintEl.innerHTML = `不填写则使用默认：<code>${escapeHtml(meta.defaultModel)}</code>，<a href="${escapeHtml(
-    meta.docsUrl
-  )}" target="_blank" rel="noopener noreferrer">查看模型列表</a>`;
+  while (hintEl.firstChild) hintEl.removeChild(hintEl.firstChild);
+
+  hintEl.appendChild(document.createTextNode('不填写则使用默认：'));
+
+  const codeEl = document.createElement('code');
+  codeEl.textContent = meta.defaultModel;
+  hintEl.appendChild(codeEl);
+
+  hintEl.appendChild(document.createTextNode('，'));
+
+  const linkEl = document.createElement('a');
+  linkEl.href = meta.docsUrl;
+  linkEl.target = '_blank';
+  linkEl.rel = 'noopener noreferrer';
+  linkEl.textContent = '查看模型列表';
+  hintEl.appendChild(linkEl);
 }
 
 function updateApiKeyHint(provider: string, hintEl: HTMLElement) {
-  if (provider === 'openai') {
-    hintEl.innerHTML =
-      '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">获取 OpenAI API Key</a>';
+  while (hintEl.firstChild) hintEl.removeChild(hintEl.firstChild);
+
+  const linkEl = document.createElement('a');
+  linkEl.target = '_blank';
+  linkEl.rel = 'noopener noreferrer';
+
+  if (provider === 'builtin') {
+    linkEl.href = 'https://siliconflow.cn/';
+    linkEl.textContent = '获取官方服务 API Key';
+  } else if (provider === 'openai') {
+    linkEl.href = 'https://platform.openai.com/api-keys';
+    linkEl.textContent = '获取 OpenAI API Key';
   } else if (provider === 'claude') {
-    hintEl.innerHTML =
-      '<a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer">获取 Claude API Key</a>';
+    linkEl.href = 'https://console.anthropic.com/';
+    linkEl.textContent = '获取 Claude API Key';
   } else {
-    hintEl.innerHTML =
-      '<a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">获取 DeepSeek API Key</a>';
+    linkEl.href = 'https://platform.deepseek.com/';
+    linkEl.textContent = '获取 DeepSeek API Key';
   }
+
+  hintEl.appendChild(linkEl);
+}
+
+function getEffectiveProviderForApiKey(): string {
+  const advancedMode = advancedModeCheckbox?.checked ?? false;
+  return advancedMode ? providerSelect.value : 'builtin';
+}
+
+function refreshApiKeyHint() {
+  updateApiKeyHint(getEffectiveProviderForApiKey(), apiKeyHint);
 }
 
 function toggleFallbackFields() {
@@ -491,12 +664,13 @@ function getSelectedStyles(): string[] {
 }
 
 function buildConfigFromForm() {
+  const advancedMode = advancedModeCheckbox?.checked ?? false;
   const apiKey = apiKeyInput.value.trim();
-  const provider = providerSelect.value;
-  const baseUrlRaw = baseUrlInput.value;
-  const allowInsecureHttp = IS_RELEASE ? false : allowInsecureHttpCheckbox.checked;
-  const allowPrivateHosts = IS_RELEASE ? false : allowPrivateHostsCheckbox.checked;
-  const model = modelInput.value.trim();
+  const provider = advancedMode ? providerSelect.value : 'builtin';
+  const baseUrlRaw = advancedMode ? baseUrlInput.value : '';
+  const allowInsecureHttp = IS_RELEASE ? false : (advancedMode && allowInsecureHttpCheckbox.checked);
+  const allowPrivateHosts = IS_RELEASE ? false : (advancedMode && allowPrivateHostsCheckbox.checked);
+  const model = advancedMode ? modelInput.value.trim() : '';
   const persistApiKey = persistApiKeyCheckbox.checked;
   const enableMemory = enableMemoryCheckbox.checked;
   const language = languageSelect.value;
@@ -521,7 +695,7 @@ function buildConfigFromForm() {
   const customSystemPrompt = customSystemPromptInput.value.trim();
   const customUserPrompt = customUserPromptInput.value.trim();
 
-  const baseUrl = parseOptionalBaseUrl(baseUrlRaw, { allowInsecureHttp, allowPrivateHosts });
+  const baseUrl = advancedMode ? parseOptionalBaseUrl(baseUrlRaw, { allowInsecureHttp, allowPrivateHosts }) : undefined;
   const fallbackBaseUrl = enableFallback
     ? parseOptionalBaseUrl(fallbackBaseUrlRaw, {
         allowInsecureHttp: fallbackAllowInsecureHttp,
@@ -529,7 +703,9 @@ function buildConfigFromForm() {
       })
     : undefined;
 
-  ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL', { allowInsecureHttp, allowPrivateHosts });
+  if (advancedMode) {
+    ensureAllowedBaseUrl(provider, baseUrl, '主用 Base URL', { allowInsecureHttp, allowPrivateHosts });
+  }
   if (enableFallback) {
     const fallbackProviderForValidation = fallbackProvider || provider;
     ensureAllowedBaseUrl(fallbackProviderForValidation, fallbackBaseUrl, '备用 Base URL', {
@@ -544,6 +720,7 @@ function buildConfigFromForm() {
   }
 
   return {
+    advancedMode,
     apiKey,
     provider,
     baseUrl,
@@ -630,6 +807,7 @@ async function checkStatus() {
 // 加载已保存的设置
 async function loadSettings() {
   const result = await storageLocalGet<PopupStoredConfigRecord>([
+    'advancedMode',
     'apiKey',
     'provider',
     'baseUrl',
@@ -671,6 +849,16 @@ async function loadSettings() {
       : '';
   }
 
+  if (advancedModeCheckbox) {
+    const inferred = typeof result.advancedMode === 'boolean'
+      ? result.advancedMode
+      : typeof result.provider === 'string'
+        ? result.provider !== 'builtin'
+        : false;
+    advancedModeCheckbox.checked = inferred;
+    toggleAdvancedFields();
+  }
+
   if (result.apiKey) {
     apiKeyInput.value = result.apiKey;
   }
@@ -690,6 +878,7 @@ async function loadSettings() {
   }
 
   providerSelect.dispatchEvent(new Event('change'));
+  refreshApiKeyHint();
 
   if (result.fallbackProvider) {
     fallbackProviderSelect.value = result.fallbackProvider;

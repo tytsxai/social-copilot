@@ -1,5 +1,4 @@
 import type { ThoughtCard, ThoughtType } from '@social-copilot/core';
-import { escapeHtml } from '../utils/escape-html';
 
 const MAX_CARDS = 6;
 
@@ -43,7 +42,7 @@ export class ThoughtCardsComponent {
 
     this.container = document.createElement('div');
     this.container.className = 'sc-thought-cards';
-    this.container.innerHTML = this.renderCards();
+    this.container.appendChild(this.renderCards());
     parentElement.insertBefore(this.container, parentElement.firstChild);
 
     this.bindEvents();
@@ -104,23 +103,34 @@ export class ThoughtCardsComponent {
     this.parentElement = null;
   }
 
-  private renderCards(): string {
-    if (this.cards.length === 0) {
-      return '';
+  private renderCards(): DocumentFragment {
+    const frag = document.createDocumentFragment();
+
+    for (const card of this.cards) {
+      const isActive = this.selectedThought === card.type;
+
+      const cardEl = document.createElement('div');
+      cardEl.className = `sc-thought-card${isActive ? ' sc-thought-card--active' : ''}`;
+      cardEl.setAttribute('data-type', card.type);
+      cardEl.setAttribute('tabindex', '0');
+      cardEl.setAttribute('role', 'button');
+      cardEl.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+
+      const icon = document.createElement('span');
+      icon.className = 'sc-thought-icon';
+      icon.textContent = card.icon;
+
+      const label = document.createElement('span');
+      label.className = 'sc-thought-label';
+      label.textContent = card.label;
+
+      cardEl.appendChild(icon);
+      cardEl.appendChild(label);
+
+      frag.appendChild(cardEl);
     }
 
-    const cardsHtml = this.cards.map((card) => {
-      const isActive = this.selectedThought === card.type;
-      const activeClass = isActive ? 'sc-thought-card--active' : '';
-      return `
-        <div class="sc-thought-card ${activeClass}" data-type="${escapeHtml(card.type)}" tabindex="0" role="button" aria-pressed="${isActive ? 'true' : 'false'}">
-          <span class="sc-thought-icon">${escapeHtml(card.icon)}</span>
-          <span class="sc-thought-label">${escapeHtml(card.label)}</span>
-        </div>
-      `;
-    }).join('');
-
-    return cardsHtml;
+    return frag;
   }
 
   private update(): void {
@@ -141,7 +151,8 @@ export class ThoughtCardsComponent {
       this.bindEvents();
     }
 
-    this.container.innerHTML = this.renderCards();
+    while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
+    this.container.appendChild(this.renderCards());
   }
 
   private bindEvents(): void {

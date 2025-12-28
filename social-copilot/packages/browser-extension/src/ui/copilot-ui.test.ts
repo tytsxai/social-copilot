@@ -12,7 +12,7 @@ describe('CopilotUI XSS', () => {
     document.body.innerHTML = '';
   });
 
-  test('escapes candidate style label before rendering to innerHTML', () => {
+  test('renders candidate style label without HTML injection', () => {
     ui = new CopilotUI({
       onSelect: () => {},
       onRefresh: () => {},
@@ -29,11 +29,10 @@ describe('CopilotUI XSS', () => {
     const styleEl = document.querySelector('.sc-style') as HTMLElement | null;
     expect(styleEl).not.toBeNull();
     expect(styleEl?.querySelector('img')).toBeNull();
-    expect(styleEl?.innerHTML).toContain('&lt;img');
     expect(styleEl?.textContent).toContain('<img');
   });
 
-  test('escapes candidate text before rendering to innerHTML', () => {
+  test('renders candidate text without HTML injection', () => {
     ui = new CopilotUI({
       onSelect: () => {},
       onRefresh: () => {},
@@ -50,7 +49,7 @@ describe('CopilotUI XSS', () => {
     const textEl = document.querySelector('.sc-text') as HTMLElement | null;
     expect(textEl).not.toBeNull();
     expect(textEl?.querySelector('svg')).toBeNull();
-    expect(textEl?.innerHTML).toContain('&lt;svg');
+    expect(textEl?.textContent).toContain('<svg');
   });
 });
 

@@ -45,8 +45,28 @@ describe('remote-config', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('rejects non-main branch or non-selectors.json urls', async () => {
+    const invalidUrls = [
+      'https://raw.githubusercontent.com/owner/repo/dev/selectors.json',
+      'https://raw.githubusercontent.com/owner/repo/main/other.json',
+      'https://raw.githubusercontent.com/owner/repo/main/nested/selectors.json',
+    ];
+
+    for (const url of invalidUrls) {
+      mockedStorageLocalGet.mockImplementation(async (key) => {
+        if (key === 'remoteSelectorsUrl') return { remoteSelectorsUrl: url };
+        return {};
+      });
+
+      mockFetchOnce(new Response('{}', { status: 200 }));
+      await expect(fetchRemoteSelectors()).resolves.toBeNull();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      mockedStorageLocalGet.mockReset();
+    }
+  });
+
   it('fetches, validates and caches selector config', async () => {
-    const url = 'https://raw.githubusercontent.com/owner/repo/main/selectors.json';
+    const url = 'https://raw.githubusercontent.com/tytsxai/social-copilot/main/selectors.json';
     mockedStorageLocalGet.mockImplementation(async (key) => {
       if (key === 'remoteSelectorsUrl') return { remoteSelectorsUrl: url };
       if (key === 'remote_selector_config') return {};
@@ -73,7 +93,7 @@ describe('remote-config', () => {
   });
 
   it('enforces remote config size limits', async () => {
-    const url = 'https://raw.githubusercontent.com/owner/repo/main/selectors.json';
+    const url = 'https://raw.githubusercontent.com/tytsxai/social-copilot/main/selectors.json';
     mockedStorageLocalGet.mockImplementation(async (key) => {
       if (key === 'remoteSelectorsUrl') return { remoteSelectorsUrl: url };
       if (key === 'remote_selector_config') return {};
@@ -90,7 +110,7 @@ describe('remote-config', () => {
   });
 
   it('sanitizes selector key/value pairs', async () => {
-    const url = 'https://raw.githubusercontent.com/owner/repo/main/selectors.json';
+    const url = 'https://raw.githubusercontent.com/tytsxai/social-copilot/main/selectors.json';
     mockedStorageLocalGet.mockImplementation(async (key) => {
       if (key === 'remoteSelectorsUrl') return { remoteSelectorsUrl: url };
       if (key === 'remote_selector_config') return {};
@@ -120,7 +140,7 @@ describe('remote-config', () => {
   });
 
   it('merges remote selectors over defaults (whatsapp variants)', async () => {
-    const url = 'https://raw.githubusercontent.com/owner/repo/main/selectors.json';
+    const url = 'https://raw.githubusercontent.com/tytsxai/social-copilot/main/selectors.json';
     mockedStorageLocalGet.mockImplementation(async (key) => {
       if (key === 'remoteSelectorsUrl') return { remoteSelectorsUrl: url };
       if (key === 'remote_selector_config') return {};

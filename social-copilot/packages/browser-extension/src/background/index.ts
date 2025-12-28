@@ -10,6 +10,7 @@ import {
   redactPii,
   sanitizeOutboundContext,
   redactSecrets,
+  BUILTIN_MODEL,
 } from '@social-copilot/core';
 import {
   addRuntimeOnInstalledListener,
@@ -102,6 +103,7 @@ interface DiagnosticEvent {
 
 // 配置类型
 interface Config {
+  advancedMode?: boolean;
   apiKey: string;
   provider: ProviderType;
   /** 可选：覆盖 provider 默认 Base URL（不要包含 /v1） */
@@ -194,6 +196,8 @@ const DEBUG_ENABLED_STORAGE_KEY = 'debugEnabled';
  */
 const SESSION_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_apiKey';
 const SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_fallbackApiKey';
+const SESSION_KEYS_FALLBACK_TIMESTAMP_KEY = '__sc_session_key_ts';
+const SESSION_KEYS_FALLBACK_TTL_MS = 1000 * 60 * 60;
 /** Ring buffer size for exported diagnostics snapshot. */
 const DIAGNOSTICS_MAX_EVENTS = 200;
 /** Persist diagnostics across MV3 service worker restarts (local-only, no PII/raw chat text). */
@@ -721,6 +725,8 @@ function getProviderDefaultModel(provider: ProviderType): string {
       return 'gpt-5.2-chat-latest';
     case 'claude':
       return 'claude-sonnet-4-5';
+    case 'builtin':
+      return BUILTIN_MODEL;
     case 'deepseek':
     default:
       return 'deepseek-v3.2';
@@ -739,7 +745,10 @@ async function setSessionKeys(apiKey: string, fallbackApiKey?: string): Promise<
   }
 
   // Fallback: store session keys in local storage and clear them on browser startup.
-  const localPayload: Record<string, unknown> = { [SESSION_API_KEY_FALLBACK_STORAGE_KEY]: apiKey };
+  const localPayload: Record<string, unknown> = {
+    [SESSION_API_KEY_FALLBACK_STORAGE_KEY]: apiKey,
+    [SESSION_KEYS_FALLBACK_TIMESTAMP_KEY]: Date.now(),
+  };
   if (fallbackApiKey) localPayload[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] = fallbackApiKey;
   await storageLocalSet(localPayload);
   if (!fallbackApiKey) {
@@ -759,7 +768,21 @@ async function getSessionKeys(): Promise<{ apiKey?: string; fallbackApiKey?: str
   const local = await storageLocalGet([
     SESSION_API_KEY_FALLBACK_STORAGE_KEY,
     SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
+    SESSION_KEYS_FALLBACK_TIMESTAMP_KEY,
   ]);
+
+  const storedAt = typeof local[SESSION_KEYS_FALLBACK_TIMESTAMP_KEY] === 'number'
+    ? (local[SESSION_KEYS_FALLBACK_TIMESTAMP_KEY] as number)
+    : undefined;
+  if (!storedAt || Date.now() - storedAt > SESSION_KEYS_FALLBACK_TTL_MS) {
+    await storageLocalRemove([
+      SESSION_API_KEY_FALLBACK_STORAGE_KEY,
+      SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
+      SESSION_KEYS_FALLBACK_TIMESTAMP_KEY,
+    ]);
+    return {};
+  }
+
   return {
     apiKey: typeof local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
       ? (local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] as string)
@@ -775,6 +798,7 @@ async function clearSessionKeys(): Promise<void> {
   await storageLocalRemove([
     SESSION_API_KEY_FALLBACK_STORAGE_KEY,
     SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
+    SESSION_KEYS_FALLBACK_TIMESTAMP_KEY,
   ]);
 }
 
@@ -1314,11 +1338,13 @@ async function dispatchMessage(
         }
       };
 
+      const inferredAdvancedMode = config.advancedMode ?? (config.provider !== 'builtin');
+      const isBuiltin = !inferredAdvancedMode || config.provider === 'builtin';
       const primary = await runOne({
-        provider: config.provider,
+        provider: isBuiltin ? 'builtin' : config.provider,
         apiKey: config.apiKey,
-        model: normalizeModel(config.model),
-        baseUrl: normalizeBaseUrl(config.baseUrl),
+        model: isBuiltin ? BUILTIN_MODEL : normalizeModel(config.model),
+        baseUrl: isBuiltin ? undefined : normalizeBaseUrl(config.baseUrl),
         allowInsecureHttp: config.allowInsecureHttp ?? false,
         allowPrivateHosts: config.allowPrivateHosts ?? false,
       });
@@ -1583,6 +1609,7 @@ async function loadConfig() {
   if (keys.apiKey) {
     await setConfig({
       apiKey: keys.apiKey,
+      advancedMode: typeof result.advancedMode === 'boolean' ? result.advancedMode : undefined,
       provider: result.provider || 'deepseek',
       baseUrl: normalizeBaseUrl(result.baseUrl),
       allowInsecureHttp: result.allowInsecureHttp === true,
@@ -1618,6 +1645,9 @@ async function loadConfig() {
 
 async function setConfig(config: Config) {
   const enforced = applyReleaseRestrictions(config);
+  const inferredAdvancedMode = enforced.advancedMode ?? (enforced.provider !== 'builtin');
+  const effectiveProvider: ProviderType = inferredAdvancedMode ? enforced.provider : 'builtin';
+
   const incomingApiKey = (enforced.apiKey ?? '').trim();
   const apiKey = incomingApiKey || currentConfig?.apiKey || '';
   if (!apiKey) {
@@ -1647,7 +1677,9 @@ async function setConfig(config: Config) {
 
   currentConfig = {
     ...enforced,
+    provider: effectiveProvider,
     apiKey,
+    advancedMode: inferredAdvancedMode,
     baseUrl: normalizeBaseUrl(enforced.baseUrl),
     allowInsecureHttp: enforced.allowInsecureHttp ?? false,
     allowPrivateHosts: enforced.allowPrivateHosts ?? false,
@@ -1679,6 +1711,7 @@ async function setConfig(config: Config) {
 
   // 保存到 storage
   const baseConfigToPersist = {
+    advancedMode: currentConfig.advancedMode ?? false,
     provider: currentConfig.provider,
     ...(currentConfig.baseUrl ? { baseUrl: currentConfig.baseUrl } : {}),
     allowInsecureHttp: currentConfig.allowInsecureHttp ?? false,
@@ -1788,13 +1821,15 @@ async function setConfig(config: Config) {
 
 function buildManagerConfig(config: Config): LLMManagerConfig {
   const enforced = applyReleaseRestrictions(config);
+  const inferredAdvancedMode = enforced.advancedMode ?? (enforced.provider !== 'builtin');
+  const isBuiltin = !inferredAdvancedMode || enforced.provider === 'builtin';
   const fallbackEnabled = (enforced.enableFallback ?? false) && !!enforced.fallbackApiKey;
   return {
     primary: {
-      provider: enforced.provider,
+      provider: isBuiltin ? 'builtin' : enforced.provider,
       apiKey: enforced.apiKey,
-      model: enforced.model,
-      baseUrl: enforced.baseUrl,
+      model: isBuiltin ? BUILTIN_MODEL : enforced.model,
+      baseUrl: isBuiltin ? undefined : enforced.baseUrl,
       allowInsecureHttp: enforced.allowInsecureHttp ?? false,
       allowPrivateHosts: enforced.allowPrivateHosts ?? false,
     },

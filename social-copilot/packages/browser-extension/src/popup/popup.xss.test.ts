@@ -66,7 +66,7 @@ async function flush() {
 }
 
 describe('popup contacts rendering XSS', () => {
-  test('escapes contact dynamic fields in innerHTML', async () => {
+  test('renders contact dynamic fields without HTML injection', async () => {
     setupDom();
 
     const sendMessage = vi.fn(async (msg: any) => {
@@ -111,9 +111,9 @@ describe('popup contacts rendering XSS', () => {
 
     const contactListEl = document.getElementById('contactList')!;
 
-    expect(contactListEl.innerHTML).toContain('&lt;img');
-    expect(contactListEl.innerHTML).toContain('&lt;svg');
-    expect(contactListEl.innerHTML).toContain('&lt;b&gt;pwn&lt;/b&gt;');
+    expect(contactListEl.textContent).toContain('<img');
+    expect(contactListEl.textContent).toContain('<svg');
+    expect(contactListEl.textContent).toContain('<b>pwn</b>');
 
     expect(contactListEl.querySelector('img')).toBeNull();
     expect(contactListEl.querySelector('svg')).toBeNull();

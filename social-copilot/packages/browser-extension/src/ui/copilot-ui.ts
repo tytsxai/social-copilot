@@ -1,5 +1,4 @@
 import type { ReplyCandidate, ThoughtCard, ThoughtType } from '@social-copilot/core';
-import { escapeHtml } from '../utils/escape-html';
 import { debugWarn } from '../utils/debug';
 import { storageLocalGet, storageLocalSet } from '../utils/webext';
 import { ThoughtCardsComponent } from './thought-cards';
@@ -49,7 +48,7 @@ export class CopilotUI {
 
     this.container = document.createElement('div');
     this.container.id = 'social-copilot-root';
-    this.container.innerHTML = this.render();
+    this.container.appendChild(this.render());
     document.body.appendChild(this.container);
     this.applyPosition();
     void this.restorePosition();
@@ -148,67 +147,154 @@ export class CopilotUI {
     return this.thoughtCards.createAbortController();
   }
 
-  private render(): string {
-    return `
-      <div class="sc-panel">
-        <div class="sc-header">
-          <span class="sc-title">💬 Social Copilot</span>
-          <span class="sc-shortcut" title="快捷键">Alt+S</span>
-          <button class="sc-refresh" type="button" title="刷新建议">↻</button>
-          <button class="sc-close" type="button" title="关闭 (Esc)">✕</button>
-        </div>
-        <div class="sc-content">
-          ${this.renderContent()}
-        </div>
-      </div>
-    `;
+  private render(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'sc-panel';
+
+    const header = document.createElement('div');
+    header.className = 'sc-header';
+
+    const title = document.createElement('span');
+    title.className = 'sc-title';
+    title.textContent = '💬 Social Copilot';
+
+    const shortcut = document.createElement('span');
+    shortcut.className = 'sc-shortcut';
+    shortcut.setAttribute('title', '快捷键');
+    shortcut.textContent = 'Alt+S';
+
+    const refresh = document.createElement('button');
+    refresh.className = 'sc-refresh';
+    refresh.setAttribute('type', 'button');
+    refresh.setAttribute('title', '刷新建议');
+    refresh.textContent = '↻';
+
+    const close = document.createElement('button');
+    close.className = 'sc-close';
+    close.setAttribute('type', 'button');
+    close.setAttribute('title', '关闭 (Esc)');
+    close.textContent = '✕';
+
+    header.appendChild(title);
+    header.appendChild(shortcut);
+    header.appendChild(refresh);
+    header.appendChild(close);
+
+    const content = document.createElement('div');
+    content.className = 'sc-content';
+    content.appendChild(this.renderContent());
+
+    panel.appendChild(header);
+    panel.appendChild(content);
+
+    return panel;
   }
 
-  private renderContent(): string {
+  private renderContent(): DocumentFragment {
+    const frag = document.createDocumentFragment();
+
     const notice = this.renderNotification();
+    if (notice) frag.appendChild(notice);
 
     if (this.privacyPrompt) {
-      return `${notice}
-        <div class="sc-privacy">
-          <div class="sc-privacy-title">隐私提示</div>
-          <div class="sc-privacy-text">${escapeHtml(this.privacyPrompt)}</div>
-          <button class="sc-privacy-ack" type="button" tabindex="0">我已理解，继续</button>
-          <div class="sc-privacy-sub">你也可以在扩展设置中随时调整脱敏/匿名化与发送范围。</div>
-        </div>`;
+      const wrap = document.createElement('div');
+      wrap.className = 'sc-privacy';
+
+      const title = document.createElement('div');
+      title.className = 'sc-privacy-title';
+      title.textContent = '隐私提示';
+
+      const text = document.createElement('div');
+      text.className = 'sc-privacy-text';
+      text.textContent = this.privacyPrompt;
+
+      const ack = document.createElement('button');
+      ack.className = 'sc-privacy-ack';
+      ack.setAttribute('type', 'button');
+      ack.setAttribute('tabindex', '0');
+      ack.textContent = '我已理解，继续';
+
+      const sub = document.createElement('div');
+      sub.className = 'sc-privacy-sub';
+      sub.textContent = '你也可以在扩展设置中随时调整脱敏/匿名化与发送范围。';
+
+      wrap.appendChild(title);
+      wrap.appendChild(text);
+      wrap.appendChild(ack);
+      wrap.appendChild(sub);
+      frag.appendChild(wrap);
+      return frag;
     }
 
     if (this.isLoading) {
-      return `${notice}<div class="sc-loading">正在生成建议...</div>`;
+      const el = document.createElement('div');
+      el.className = 'sc-loading';
+      el.textContent = '正在生成建议...';
+      frag.appendChild(el);
+      return frag;
     }
 
     if (this.error) {
       if (this.error === 'NO_API_KEY') {
-        return `${notice}
-          <div class="sc-error">
-            未配置 API Key
-            <button class="sc-privacy-ack" style="margin-top:8px" data-action="open-settings">前往设置</button>
-          </div>`;
+        const el = document.createElement('div');
+        el.className = 'sc-error';
+        el.appendChild(document.createTextNode('未配置 API Key'));
+
+        const btn = document.createElement('button');
+        btn.className = 'sc-privacy-ack';
+        btn.setAttribute('data-action', 'open-settings');
+        btn.setAttribute('style', 'margin-top:8px');
+        btn.textContent = '前往设置';
+
+        el.appendChild(btn);
+        frag.appendChild(el);
+        return frag;
       }
-      return `${notice}<div class="sc-error">${escapeHtml(this.error)}</div>`;
+
+      const el = document.createElement('div');
+      el.className = 'sc-error';
+      el.textContent = this.error;
+      frag.appendChild(el);
+      return frag;
     }
 
     if (this.candidates.length === 0) {
-      return `${notice}<div class="sc-empty">等待新消息...</div>`;
+      const el = document.createElement('div');
+      el.className = 'sc-empty';
+      el.textContent = '等待新消息...';
+      frag.appendChild(el);
+      return frag;
     }
 
-    const candidateList = this.candidates.map((c, i) => `
-      <div class="sc-candidate" data-index="${i}" tabindex="0" role="button">
-        <span class="sc-style">${escapeHtml(this.getStyleLabel(c.style))}</span>
-        <p class="sc-text">${escapeHtml(c.text)}</p>
-      </div>
-    `).join('');
+    for (const [index, candidate] of this.candidates.entries()) {
+      const el = document.createElement('div');
+      el.className = 'sc-candidate';
+      el.setAttribute('data-index', String(index));
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('role', 'button');
 
-    return `${notice}${candidateList}`;
+      const style = document.createElement('span');
+      style.className = 'sc-style';
+      style.textContent = this.getStyleLabel(candidate.style);
+
+      const text = document.createElement('p');
+      text.className = 'sc-text';
+      text.textContent = candidate.text;
+
+      el.appendChild(style);
+      el.appendChild(text);
+      frag.appendChild(el);
+    }
+
+    return frag;
   }
 
-  private renderNotification(): string {
-    if (!this.notification) return '';
-    return `<div class="sc-notice">${escapeHtml(this.notification)}</div>`;
+  private renderNotification(): HTMLElement | null {
+    if (!this.notification) return null;
+    const el = document.createElement('div');
+    el.className = 'sc-notice';
+    el.textContent = this.notification;
+    return el;
   }
 
   private getStyleLabel(style: string): string {
@@ -225,7 +311,8 @@ export class CopilotUI {
   private update() {
     const content = this.container?.querySelector('.sc-content');
     if (content) {
-      content.innerHTML = this.renderContent();
+      while (content.firstChild) content.removeChild(content.firstChild);
+      content.appendChild(this.renderContent());
       // 重新渲染思路卡片
       this.thoughtCards.render(content as HTMLElement);
     }
