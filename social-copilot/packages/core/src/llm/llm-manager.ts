@@ -3,9 +3,10 @@ import { ReplyParseError } from './reply-validation';
 import { DeepSeekProvider } from './provider';
 import { OpenAIProvider } from './openai';
 import { ClaudeProvider } from './claude';
+import { BuiltinProvider } from './builtin';
 import type { PromptHookRegistry } from './prompt-hooks';
 
-export type ProviderType = 'deepseek' | 'openai' | 'claude';
+export type ProviderType = 'deepseek' | 'openai' | 'claude' | 'builtin';
 
 export interface LLMManagerConfig {
   primary: {
@@ -234,6 +235,12 @@ export class LLMManager {
           baseUrl: config.baseUrl,
           allowInsecureHttp: config.allowInsecureHttp,
           allowPrivateHosts: config.allowPrivateHosts,
+          registry: this.registry,
+        });
+      case 'builtin':
+        return new BuiltinProvider({
+          apiKey: config.apiKey,
+          model: config.model,
           registry: this.registry,
         });
       case 'deepseek':

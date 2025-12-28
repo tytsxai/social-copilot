@@ -407,6 +407,17 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should validate Config with builtin provider', () => {
+    const validConfig = {
+      apiKey: 'sk-test123',
+      provider: 'builtin' as const,
+      styles: ['humorous'] as const,
+    };
+
+    const result = ConfigSchema.safeParse(validConfig);
+    expect(result.success).toBe(true);
+  });
+
   it('should validate Config with all optional fields', () => {
     const validConfig = {
       apiKey: 'sk-test123',

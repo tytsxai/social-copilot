@@ -73,10 +73,11 @@ export const ContactMemorySummarySchema = z.object({
 });
 
 // Config Schema
-export const ProviderTypeSchema = z.enum(['openai', 'claude', 'deepseek']);
+export const ProviderTypeSchema = z.enum(['openai', 'claude', 'deepseek', 'builtin']);
 
 export const ConfigSchema = z.object({
   apiKey: z.string().min(1, 'apiKey cannot be empty'),
+  advancedMode: z.boolean().optional(),
   provider: ProviderTypeSchema,
   baseUrl: z.string().url('baseUrl must be a valid URL').optional(),
   allowInsecureHttp: z.boolean().optional(),

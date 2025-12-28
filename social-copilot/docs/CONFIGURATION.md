@@ -12,7 +12,8 @@
 
 | Key | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `provider` | `'deepseek' \| 'openai' \| 'claude'` | `'deepseek'` | 主用模型提供商 |
+| `advancedMode` | `boolean` | `false` | 是否启用高级模式（自定义第三方 API） |
+| `provider` | `'deepseek' \| 'openai' \| 'claude' \| 'builtin'` | `'deepseek'` | 主用模型提供商（高级模式关闭时会固定为 `builtin`） |
 | `baseUrl` | `string` | `undefined` | 可选：覆盖主用提供商 Base URL（默认仅支持官方域名；不要包含 `/v1`） |
 | `allowInsecureHttp` | `boolean` | `false` | 允许主用 Base URL 使用 `http`（本地代理/测试用） |
 | `allowPrivateHosts` | `boolean` | `false` | 允许主用 Base URL 指向 localhost/私有网段 |
@@ -47,6 +48,7 @@
   - `{{contact_name}}`：联系人显示名（优先画像名，否则当前消息 senderName，否则 peerId）
   - `{{app}}` / `{{platform}}` / `{{is_group}}` / `{{peer_id}}` / `{{conversation_id}}`
   - `{{styles}}` / `{{suggestion_count}}` / `{{language}}` / `{{thought_direction}}`
+- `builtin` 表示官方内置服务（仍需用户配置 API Key），且不支持 `baseUrl` 覆盖。
 - 为减少安装时的权限告警，生产版本仅支持官方域名作为 `baseUrl` / `fallbackBaseUrl`（DeepSeek/OpenAI/Anthropic）。如需接入自建网关，请使用定制/企业版本。
 - Release 构建会强制 `allowInsecureHttp=false` / `allowPrivateHosts=false`，并在设置页隐藏相关开关。
 
@@ -59,7 +61,7 @@
   - 若浏览器/环境不支持 `storage.session`，退化为写入 `chrome.storage.local` 的临时 key：
     - `__sc_session_apiKey`
     - `__sc_session_fallbackApiKey`
-  - 这些临时 key 会在浏览器启动时清理（Background 监听 `chrome.runtime.onStartup`）。
+  - 这些临时 key 会在浏览器启动时清理（Background 监听 `chrome.runtime.onStartup`），并带有 1 小时过期策略。
 - 当 `persistApiKey = true`：
   - 写入 `chrome.storage.local` 的 `apiKey` / `fallbackApiKey`
   - 同时会清理 session key，确保只有一个来源
