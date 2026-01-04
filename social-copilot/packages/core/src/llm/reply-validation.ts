@@ -1,5 +1,6 @@
 import type { ReplyCandidate, ReplyStyle, LLMInput } from '../types';
 import { extractJsonBlock as extractJsonBlockImpl } from '../utils/json';
+import { validateReplyCandidatesWithSchema } from '../types/schemas';
 
 /** Error used to signal invalid or malformed reply payloads. */
 export class ReplyParseError extends Error {
@@ -174,9 +175,10 @@ export function parseReplyContent(content: string, styles: ReplyStyle[], task?: 
     };
   });
 
-  const validation = validateReplyCandidates(candidates);
-  if (!validation.ok) {
-    throw new ReplyParseError(`Invalid reply candidates: ${validation.errors.join('; ')}`);
+  // Use Zod schema validation for stricter type checking
+  const schemaValidation = validateReplyCandidatesWithSchema(candidates);
+  if (!schemaValidation.ok) {
+    throw new ReplyParseError(`Schema validation failed: ${schemaValidation.error}`);
   }
 
   return candidates;

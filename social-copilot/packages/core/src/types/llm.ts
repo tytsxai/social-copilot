@@ -36,6 +36,8 @@ export interface LLMInput {
   thoughtDirection?: ThoughtType;
   /** 思路提示语 */
   thoughtHint?: string;
+  /** 缓存键盐（仅用于缓存命中控制，不参与提示词构建） */
+  cacheKeySalt?: string;
 }
 
 /**
@@ -48,6 +50,8 @@ export interface ReplyCandidate {
   style: ReplyStyle;
   /** 置信度 0-1 */
   confidence?: number;
+  /** 额外元信息（可选） */
+  meta?: Record<string, unknown>;
 }
 
 /**

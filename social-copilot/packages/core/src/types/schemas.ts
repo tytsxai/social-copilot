@@ -52,6 +52,22 @@ export const ContactProfileSchema = z.object({
 // StylePreference Schema
 export const ReplyStyleSchema = z.enum(['humorous', 'caring', 'rational', 'casual', 'formal']);
 
+// ThoughtPreference Schema
+export const ThoughtTypeSchema = z.enum(THOUGHT_TYPES);
+
+export const ThoughtHistoryEntrySchema = z.object({
+  thought: ThoughtTypeSchema,
+  count: z.number().int().nonnegative('count must be non-negative'),
+  lastUsed: z.number().int().nonnegative('lastUsed must be non-negative'),
+});
+
+export const ThoughtPreferenceSchema = z.object({
+  contactKeyStr: z.string().min(1, 'contactKeyStr cannot be empty'),
+  thoughtHistory: z.array(ThoughtHistoryEntrySchema),
+  defaultThought: ThoughtTypeSchema.nullable(),
+  updatedAt: z.number().int().positive('updatedAt must be positive'),
+});
+
 export const StyleHistoryEntrySchema = z.object({
   style: ReplyStyleSchema,
   count: z.number().int().nonnegative('count must be non-negative'),
@@ -107,6 +123,7 @@ export const ConfigSchema = z.object({
   fallbackApiKey: z.string().optional(),
   enableFallback: z.boolean().optional(),
   suggestionCount: z.union([z.literal(2), z.literal(3)]).optional(),
+  cacheStrategy: z.enum(['off', 'auto', 'always']).optional(),
   enableMemory: z.boolean().optional(),
   persistApiKey: z.boolean().optional(),
   privacyAcknowledged: z.boolean().optional(),
@@ -131,8 +148,6 @@ export const ConversationContextSchema = z.object({
   currentMessage: MessageSchema,
 });
 
-export const ThoughtTypeSchema = z.enum(THOUGHT_TYPES);
-
 export const LLMInputSchema = z.object({
   context: ConversationContextSchema,
   profile: ContactProfileSchema.optional(),
@@ -144,6 +159,7 @@ export const LLMInputSchema = z.object({
   task: z.enum(['reply', 'profile_extraction', 'memory_extraction']).optional(),
   thoughtDirection: ThoughtTypeSchema.optional(),
   thoughtHint: z.string().optional(),
+  cacheKeySalt: z.string().optional(),
 });
 
 // UserDataBackup Schema (for importUserData)
@@ -154,6 +170,7 @@ export const UserDataBackupSchema = z.object({
   data: z.object({
     profiles: z.array(ContactProfileSchema),
     stylePreferences: z.array(StylePreferenceSchema),
+    thoughtPreferences: z.array(ThoughtPreferenceSchema).optional(),
     contactMemories: z.array(ContactMemorySummarySchema),
     profileUpdateCounts: z.record(z.string(), z.number().int().nonnegative()),
     memoryUpdateCounts: z.record(z.string(), z.number().int().nonnegative()),
@@ -166,6 +183,7 @@ export const GenerateReplyPayloadSchema = z.object({
   messages: z.array(MessageSchema),
   currentMessage: MessageSchema,
   thoughtDirection: ThoughtTypeSchema.optional(),
+  source: z.enum(['auto', 'manual']).optional(),
 });
 
 export const AnalyzeThoughtPayloadSchema = z.object({
@@ -190,6 +208,20 @@ export const AnalyzeThoughtRequestSchema = z.object({
   requestId: z.string().optional(),
 });
 
+// LLM Output Schemas (for reply validation)
+export const ReplyCandidateSchema = z.object({
+  style: ReplyStyleSchema,
+  text: z.string()
+    .max(20000, 'text too long')
+    .refine((val) => val.trim().length > 0, { message: 'text cannot be empty or blank' }),
+  confidence: z.number().min(0).max(1).optional(),
+  meta: z.record(z.unknown()).optional(),
+});
+
+export const ReplyCandidatesArraySchema = z.array(ReplyCandidateSchema)
+  .min(1, 'candidates must not be empty')
+  .max(20, 'too many candidates');
+
 // Helper function to format Zod validation errors
 export function formatZodError(error: z.ZodError): string {
   const issues = error.issues.map((issue) => {
@@ -197,4 +229,15 @@ export function formatZodError(error: z.ZodError): string {
     return `${path}: ${issue.message}`;
   });
   return issues.join('; ');
+}
+
+// Helper function to validate reply candidates with Zod
+export function validateReplyCandidatesWithSchema(
+  candidates: unknown
+): { ok: true; data: z.infer<typeof ReplyCandidatesArraySchema> } | { ok: false; error: string } {
+  const result = ReplyCandidatesArraySchema.safeParse(candidates);
+  if (result.success) {
+    return { ok: true, data: result.data };
+  }
+  return { ok: false, error: formatZodError(result.error) };
 }

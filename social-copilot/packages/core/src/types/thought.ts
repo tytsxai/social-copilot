@@ -25,6 +25,25 @@ export interface ThoughtAnalysisResult {
 }
 
 /**
+ * 思路历史记录条目
+ */
+export interface ThoughtHistoryEntry {
+  thought: ThoughtType;
+  count: number;
+  lastUsed: number;
+}
+
+/**
+ * 思路偏好数据结构
+ */
+export interface ThoughtPreference {
+  contactKeyStr: string;
+  thoughtHistory: ThoughtHistoryEntry[];
+  defaultThought: ThoughtType | null;
+  updatedAt: number;
+}
+
+/**
  * 预定义思路卡片数据
  */
 export const THOUGHT_CARDS: Record<ThoughtType, ThoughtCard> = {

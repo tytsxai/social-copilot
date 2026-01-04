@@ -437,6 +437,7 @@ describe('IndexedDBStore - Snapshot export/import', () => {
     const result = await fresh.importSnapshot(snapshot);
     expect(result.imported.profiles).toBe(1);
     expect(result.imported.stylePreferences).toBe(1);
+    expect(result.imported.thoughtPreferences).toBe(0);
     expect(result.imported.contactMemories).toBe(1);
 
     const loadedProfile = await fresh.getProfile(contactKey);
@@ -486,6 +487,7 @@ describe('IndexedDBStore - Snapshot export/import', () => {
     const result = await store.importSnapshot(snapshot);
     expect(result.skipped.profiles).toBe(0);
     expect(result.skipped.stylePreferences).toBe(0);
+    expect(result.skipped.thoughtPreferences).toBe(0);
     expect(result.skipped.contactMemories).toBe(0);
 
     const pref = await store.getStylePreference(contactKey);

@@ -1,10 +1,10 @@
-import type { Message, ContactProfile, ContactKey, StylePreference, ReplyStyle } from '../types';
+import type { Message, ContactProfile, ContactKey, StylePreference, ReplyStyle, ThoughtPreference, ThoughtType } from '../types';
 import type { MemoryStore } from './store';
 import { contactKeyToString, contactKeyToStringV1, legacyContactKeyToString, normalizeContactKeyStr } from '../types/contact';
 import { isDebugEnabled } from '../utils/debug';
 
 const DB_NAME = 'social-copilot';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const MAX_MESSAGES_PER_CONTACT = 2000;
 const MAX_TOTAL_MESSAGES = 50000;
 const TOTAL_TRIM_MIN_INTERVAL_MS = 5 * 60_000;
@@ -29,6 +29,7 @@ const STORES = {
   settings: 'settings',
   stylePreferences: 'stylePreferences',
   contactMemories: 'contactMemories',
+  thoughtPreferences: 'thoughtPreferences',
 } as const;
 
 export interface ContactMemorySummary {
@@ -42,6 +43,7 @@ export interface IndexedDBSnapshotV1 {
   exportedAt: number;
   profiles: ContactProfile[];
   stylePreferences: StylePreference[];
+  thoughtPreferences?: ThoughtPreference[];
   contactMemories: ContactMemorySummary[];
 }
 
@@ -226,6 +228,10 @@ function isReplyStyle(value: unknown): value is ReplyStyle {
   return value === 'humorous' || value === 'caring' || value === 'rational' || value === 'casual' || value === 'formal';
 }
 
+function isThoughtType(value: unknown): value is ThoughtType {
+  return value === 'empathy' || value === 'solution' || value === 'humor' || value === 'neutral';
+}
+
 function sanitizeContactKey(raw: unknown): ContactKey | null {
   if (!isPlainObject(raw)) return null;
 
@@ -375,6 +381,41 @@ function sanitizeStylePreference(raw: unknown): StylePreference | null {
     contactKeyStr: normalizeContactKeyStr(contactKeyStrRaw),
     styleHistory,
     defaultStyle,
+    updatedAt,
+  };
+}
+
+function sanitizeThoughtPreference(raw: unknown): ThoughtPreference | null {
+  if (!isPlainObject(raw)) return null;
+  const contactKeyStrRaw = asTrimmedString(raw.contactKeyStr);
+  if (!contactKeyStrRaw) return null;
+
+  const now = Date.now();
+  const updatedAt = typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : now;
+
+  const historyRaw = Array.isArray(raw.thoughtHistory) ? raw.thoughtHistory : [];
+  const thoughtHistory = historyRaw
+    .filter((entry): entry is Record<string, unknown> => isPlainObject(entry))
+    .map((entry) => {
+      if (!isThoughtType(entry.thought)) return null;
+      const count = typeof entry.count === 'number' && Number.isFinite(entry.count)
+        ? Math.max(1, Math.floor(entry.count))
+        : null;
+      if (count === null) return null;
+      const lastUsed = typeof entry.lastUsed === 'number' && Number.isFinite(entry.lastUsed)
+        ? Math.max(0, Math.floor(entry.lastUsed))
+        : 0;
+      return { thought: entry.thought, count, lastUsed };
+    })
+    .filter((v): v is { thought: ThoughtType; count: number; lastUsed: number } => v !== null)
+    .slice(0, 100);
+
+  const defaultThought = raw.defaultThought === null ? null : isThoughtType(raw.defaultThought) ? raw.defaultThought : null;
+
+  return {
+    contactKeyStr: normalizeContactKeyStr(contactKeyStrRaw),
+    thoughtHistory,
+    defaultThought,
     updatedAt,
   };
 }
@@ -569,6 +610,11 @@ export class IndexedDBStore implements MemoryStore {
           }
           if (memoryStore && !memoryStore.indexNames.contains('updatedAt')) {
             memoryStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+          }
+
+          // 思路偏好存储
+          if (!db.objectStoreNames.contains(STORES.thoughtPreferences)) {
+            db.createObjectStore(STORES.thoughtPreferences, { keyPath: 'contactKeyStr' });
           }
 
           // 数据迁移：将 legacy key 迁移为转义后的 key，补充新索引字段
@@ -1295,14 +1341,160 @@ export class IndexedDBStore implements MemoryStore {
   }
 
   /**
+   * 获取联系人的思路偏好
+   */
+  async getThoughtPreference(contactKey: ContactKey): Promise<ThoughtPreference | null> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const keysToTry = getContactKeyStrCandidates(contactKey);
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.thoughtPreferences, 'readonly');
+      const store = tx.objectStore(STORES.thoughtPreferences);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
+
+      const tryNext = (remaining: string[]) => {
+        if (remaining.length === 0) {
+          resolve(null);
+          return;
+        }
+        const key = remaining.shift()!;
+        const request = store.get(key);
+        request.onerror = () => {
+          this.abortTransaction(tx);
+          reject(request.error);
+        };
+        request.onsuccess = () => {
+          const result = (request.result as ThoughtPreference | undefined) ?? null;
+          if (result) {
+            resolve(result);
+            return;
+          }
+          tryNext(remaining);
+        };
+      };
+
+      tryNext([...keysToTry]);
+    });
+  }
+
+  /**
+   * 保存联系人的思路偏好
+   */
+  async saveThoughtPreference(preference: ThoughtPreference): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.thoughtPreferences, 'readwrite');
+      const store = tx.objectStore(STORES.thoughtPreferences);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
+      tx.oncomplete = () => resolve();
+
+      store.put(preference);
+    });
+  }
+
+  /**
+   * 更新联系人的思路偏好（原子操作）
+   */
+  async updateThoughtPreference(
+    contactKey: ContactKey,
+    updater: (existing: ThoughtPreference | null) => ThoughtPreference
+  ): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const contactKeyStr = contactKeyToString(contactKey);
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.thoughtPreferences, 'readwrite');
+      const store = tx.objectStore(STORES.thoughtPreferences);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
+      tx.oncomplete = () => resolve();
+
+      const request = store.get(contactKeyStr);
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
+      request.onsuccess = () => {
+        const existing = (request.result as ThoughtPreference | undefined) ?? null;
+        const updated = updater(existing);
+        store.put(updated);
+      };
+    });
+  }
+
+  /**
+   * 删除联系人的思路偏好
+   */
+  async deleteThoughtPreference(contactKey: ContactKey): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const keysToTry = getContactKeyStrCandidates(contactKey);
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.thoughtPreferences, 'readwrite');
+      const store = tx.objectStore(STORES.thoughtPreferences);
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
+      tx.oncomplete = () => resolve();
+
+      for (const key of keysToTry) {
+        store.delete(key);
+      }
+    });
+  }
+
+  /**
+   * 获取所有思路偏好
+   */
+  async getAllThoughtPreferences(): Promise<ThoughtPreference[]> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction(STORES.thoughtPreferences, 'readonly');
+      const store = tx.objectStore(STORES.thoughtPreferences);
+      const request = store.getAll();
+      tx.onerror = () => {
+        this.abortTransaction(tx);
+        reject(tx.error ?? new Error('Transaction failed'));
+      };
+      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
+
+      request.onerror = () => {
+        this.abortTransaction(tx);
+        reject(request.error);
+      };
+      request.onsuccess = () => resolve(request.result as ThoughtPreference[]);
+    });
+  }
+
+  /**
    * Export a portable snapshot of *derived* user data (no raw message contents).
    */
   async exportSnapshot(): Promise<IndexedDBSnapshotV1> {
     if (!this.db) throw new Error('Database not initialized');
 
-    const [profiles, stylePreferences, contactMemories] = await Promise.all([
+    const thoughtPrefsPromise = this.getAllThoughtPreferences().catch(() => [] as ThoughtPreference[]);
+    const [profiles, stylePreferences, thoughtPreferences, contactMemories] = await Promise.all([
       this.getAllProfiles(),
       this.getAllStylePreferences(),
+      thoughtPrefsPromise,
       this.getAllContactMemorySummaries(),
     ]);
 
@@ -1311,6 +1503,7 @@ export class IndexedDBStore implements MemoryStore {
       exportedAt: Date.now(),
       profiles,
       stylePreferences,
+      thoughtPreferences,
       contactMemories,
     };
   }
@@ -1321,8 +1514,8 @@ export class IndexedDBStore implements MemoryStore {
    * This is best-effort: invalid records are skipped, valid records are upserted.
    */
   async importSnapshot(snapshot: IndexedDBSnapshotV1): Promise<{
-    imported: { profiles: number; stylePreferences: number; contactMemories: number };
-    skipped: { profiles: number; stylePreferences: number; contactMemories: number };
+    imported: { profiles: number; stylePreferences: number; thoughtPreferences: number; contactMemories: number };
+    skipped: { profiles: number; stylePreferences: number; thoughtPreferences: number; contactMemories: number };
   }> {
     if (!this.db) throw new Error('Database not initialized');
     if (!snapshot || snapshot.schemaVersion !== 1) {
@@ -1331,6 +1524,7 @@ export class IndexedDBStore implements MemoryStore {
 
     const incomingProfiles = Array.isArray(snapshot.profiles) ? snapshot.profiles : [];
     const incomingStylePreferences = Array.isArray(snapshot.stylePreferences) ? snapshot.stylePreferences : [];
+    const incomingThoughtPreferences = Array.isArray(snapshot.thoughtPreferences) ? snapshot.thoughtPreferences : [];
     const incomingContactMemories = Array.isArray(snapshot.contactMemories) ? snapshot.contactMemories : [];
 
     const profiles: ContactProfile[] = [];
@@ -1349,6 +1543,14 @@ export class IndexedDBStore implements MemoryStore {
       else skippedStylePreferences += 1;
     }
 
+    const thoughtPreferences: ThoughtPreference[] = [];
+    let skippedThoughtPreferences = 0;
+    for (const raw of incomingThoughtPreferences) {
+      const pref = sanitizeThoughtPreference(raw);
+      if (pref) thoughtPreferences.push(pref);
+      else skippedThoughtPreferences += 1;
+    }
+
     const contactMemories: ContactMemorySummary[] = [];
     let skippedContactMemories = 0;
     for (const raw of incomingContactMemories) {
@@ -1357,13 +1559,23 @@ export class IndexedDBStore implements MemoryStore {
       else skippedContactMemories += 1;
     }
 
+    const hasThoughtStore = this.db.objectStoreNames.contains(STORES.thoughtPreferences);
+    const stores: Array<string> = [STORES.profiles, STORES.stylePreferences, STORES.contactMemories];
+    if (hasThoughtStore) {
+      stores.push(STORES.thoughtPreferences);
+    } else if (thoughtPreferences.length > 0) {
+      skippedThoughtPreferences += thoughtPreferences.length;
+      thoughtPreferences.length = 0;
+    }
+
     await this.withTransaction(
-      [STORES.profiles, STORES.stylePreferences, STORES.contactMemories],
+      stores,
       'readwrite',
       async (tx) => {
         const profileStore = tx.objectStore(STORES.profiles);
         const stylePrefStore = tx.objectStore(STORES.stylePreferences);
         const memoryStore = tx.objectStore(STORES.contactMemories);
+        const thoughtPrefStore = hasThoughtStore ? tx.objectStore(STORES.thoughtPreferences) : null;
 
         for (const profile of profiles) {
           const keyStr = contactKeyToString(profile.key);
@@ -1372,6 +1584,12 @@ export class IndexedDBStore implements MemoryStore {
 
         for (const pref of stylePreferences) {
           await this.requestToPromise(stylePrefStore.put(pref), tx);
+        }
+
+        if (thoughtPrefStore) {
+          for (const pref of thoughtPreferences) {
+            await this.requestToPromise(thoughtPrefStore.put(pref), tx);
+          }
         }
 
         for (const memory of contactMemories) {
@@ -1384,11 +1602,13 @@ export class IndexedDBStore implements MemoryStore {
       imported: {
         profiles: profiles.length,
         stylePreferences: stylePreferences.length,
+        thoughtPreferences: thoughtPreferences.length,
         contactMemories: contactMemories.length,
       },
       skipped: {
         profiles: skippedProfiles,
         stylePreferences: skippedStylePreferences,
+        thoughtPreferences: skippedThoughtPreferences,
         contactMemories: skippedContactMemories,
       },
     };

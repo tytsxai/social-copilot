@@ -443,6 +443,7 @@ describe('ConfigSchema', () => {
       fallbackApiKey: 'sk-fallback123',
       enableFallback: true,
       suggestionCount: 3 as const,
+      cacheStrategy: 'auto' as const,
       enableMemory: true,
       persistApiKey: false,
       privacyAcknowledged: true,
@@ -491,6 +492,18 @@ describe('ConfigSchema', () => {
       provider: 'deepseek',
       baseUrl: 'not-a-url',
       styles: ['humorous'],
+    };
+
+    const result = ConfigSchema.safeParse(invalidConfig);
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject invalid cacheStrategy', () => {
+    const invalidConfig = {
+      apiKey: 'sk-test123',
+      provider: 'deepseek',
+      styles: ['humorous'],
+      cacheStrategy: 'invalid',
     };
 
     const result = ConfigSchema.safeParse(invalidConfig);
