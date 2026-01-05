@@ -46,3 +46,6 @@ packages/mobile/web-build/
 *.orig
 .kiro/
 social-copilot/audit-025.json
+
+# Auto Claude data directory
+.auto-claude/
