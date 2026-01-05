@@ -151,6 +151,8 @@ interface LLMInput {
   styles: ReplyStyle[];
   /** 语言偏好 */
   language: 'zh' | 'en' | 'auto';
+  /** 采样温度（0-1，越大越发散） */
+  temperature?: number;
   /** 最大回复长度 */
   maxLength?: number;
   /** 任务类型 */
@@ -159,6 +161,8 @@ interface LLMInput {
   thoughtDirection?: ThoughtType;
   /** 注入到提示词的思路提示 */
   thoughtHint?: string;
+  /** 可选：缓存键盐（用于控制缓存命中，不参与提示词构建） */
+  cacheKeySalt?: string;
 }
 ```
 
@@ -185,6 +189,8 @@ interface ReplyCandidate {
   style: ReplyStyle;
   /** 置信度 0-1 */
   confidence?: number;
+  /** 额外元信息（可选） */
+  meta?: Record<string, unknown>;
 }
 ```
 
@@ -228,6 +234,27 @@ interface MemoryStore {
 }
 ```
 
+### ContactMemorySummary / IndexedDBSnapshot
+
+IndexedDB 派生数据结构（用于长期记忆与备份/恢复）：
+
+```typescript
+interface ContactMemorySummary {
+  contactKeyStr: string;
+  summary: string;
+  updatedAt: number;
+}
+
+interface IndexedDBSnapshotV1 {
+  schemaVersion: 1;
+  exportedAt: number;
+  profiles: ContactProfile[];
+  stylePreferences: StylePreference[];
+  thoughtPreferences?: ThoughtPreference[];
+  contactMemories: ContactMemorySummary[];
+}
+```
+
 ### IndexedDBStore
 
 IndexedDB 实现的持久化存储。
@@ -260,6 +287,45 @@ class IndexedDBStore implements MemoryStore {
   
   /** 获取所有风格偏好 */
   getAllStylePreferences(): Promise<StylePreference[]>;
+
+  /** 获取联系人的长期记忆摘要 */
+  getContactMemorySummary(contactKey: ContactKey): Promise<ContactMemorySummary | null>;
+  
+  /** 保存联系人的长期记忆摘要 */
+  saveContactMemorySummary(contactKey: ContactKey, summary: string): Promise<ContactMemorySummary>;
+  
+  /** Upsert 联系人长期记忆摘要（用于备份/恢复） */
+  saveContactMemorySummaryRecord(record: ContactMemorySummary): Promise<ContactMemorySummary>;
+  
+  /** 删除联系人的长期记忆摘要 */
+  deleteContactMemorySummary(contactKey: ContactKey): Promise<void>;
+  
+  /** 获取所有联系人长期记忆摘要 */
+  getAllContactMemorySummaries(): Promise<ContactMemorySummary[]>;
+  
+  /** 获取联系人的思路偏好 */
+  getThoughtPreference(contactKey: ContactKey): Promise<ThoughtPreference | null>;
+  
+  /** 保存思路偏好 */
+  saveThoughtPreference(preference: ThoughtPreference): Promise<void>;
+  
+  /** 更新思路偏好 */
+  updateThoughtPreference(contactKey: ContactKey, updater: (existing: ThoughtPreference | null) => ThoughtPreference): Promise<void>;
+  
+  /** 删除思路偏好 */
+  deleteThoughtPreference(contactKey: ContactKey): Promise<void>;
+  
+  /** 获取所有思路偏好 */
+  getAllThoughtPreferences(): Promise<ThoughtPreference[]>;
+  
+  /** 导出派生数据快照（不包含原文消息） */
+  exportSnapshot(): Promise<IndexedDBSnapshotV1>;
+  
+  /** 导入派生数据快照 */
+  importSnapshot(snapshot: IndexedDBSnapshotV1): Promise<{
+    imported: { profiles: number; stylePreferences: number; thoughtPreferences: number; contactMemories: number };
+    skipped: { profiles: number; stylePreferences: number; thoughtPreferences: number; contactMemories: number };
+  }>;
 }
 ```
 
@@ -310,6 +376,9 @@ interface DeepSeekConfig {
   apiKey: string;
   model?: string;  // 默认: 'deepseek-v3.2'
   baseUrl?: string;
+  allowInsecureHttp?: boolean;
+  allowPrivateHosts?: boolean;
+  registry?: PromptHookRegistry;
 }
 
 class DeepSeekProvider implements LLMProvider {
@@ -328,6 +397,9 @@ interface OpenAIConfig {
   apiKey: string;
   model?: string;  // 默认: 'gpt-5.2-chat-latest'
   baseUrl?: string;
+  allowInsecureHttp?: boolean;
+  allowPrivateHosts?: boolean;
+  registry?: PromptHookRegistry;
 }
 
 class OpenAIProvider implements LLMProvider {
@@ -346,11 +418,33 @@ interface ClaudeConfig {
   apiKey: string;
   model?: string;  // 默认: 'claude-sonnet-4-5'
   baseUrl?: string;
+  allowInsecureHttp?: boolean;
+  allowPrivateHosts?: boolean;
+  registry?: PromptHookRegistry;
 }
 
 class ClaudeProvider implements LLMProvider {
   constructor(config: ClaudeConfig);
   readonly name: string;  // 'claude'
+  generateReply(input: LLMInput): Promise<LLMOutput>;
+}
+```
+
+### BuiltinProvider
+
+内置（官方）服务 Provider，实现与 OpenAI 兼容的 Chat Completions 接口。
+
+```typescript
+interface BuiltinConfig {
+  apiKey: string;
+  apiUrl?: string;  // 默认: BUILTIN_API_URL
+  model?: string;   // 默认: BUILTIN_MODEL
+  registry?: PromptHookRegistry;
+}
+
+class BuiltinProvider implements LLMProvider {
+  constructor(config: BuiltinConfig);
+  readonly name: string;  // 'builtin'
   generateReply(input: LLMInput): Promise<LLMOutput>;
 }
 ```
@@ -366,31 +460,51 @@ interface PromptHook {
   transformUserPrompt?: (prompt: string, input: LLMInput) => string;
 }
 
+class PromptHookRegistry {
+  register(hook: PromptHook): void;
+  clear(): void;
+  getAll(): readonly PromptHook[];
+  applySystemHooks(prompt: string, input: LLMInput): string;
+  applyUserHooks(prompt: string, input: LLMInput): string;
+}
+
 function registerPromptHook(hook: PromptHook): void;
 function clearPromptHooks(): void;
 function getPromptHooks(): readonly PromptHook[];
 
 function applySystemPromptHooks(prompt: string, input: LLMInput): string;
 function applyUserPromptHooks(prompt: string, input: LLMInput): string;
+function getDefaultPromptHookRegistry(): PromptHookRegistry;
 ```
 
 ### LLMManager
 
-LLM 管理器，支持主备切换和自动故障转移。
+LLM 管理器，支持主备切换、自动故障转移，以及内置请求去重 + LRU 缓存。
 
 ```typescript
-type ProviderType = 'deepseek' | 'openai' | 'claude';
+type ProviderType = 'deepseek' | 'openai' | 'claude' | 'builtin';
 
 interface LLMManagerConfig {
   primary: {
     provider: ProviderType;
     apiKey: string;
     model?: string;
+    baseUrl?: string;
+    allowInsecureHttp?: boolean;
+    allowPrivateHosts?: boolean;
   };
   fallback?: {
     provider: ProviderType;
     apiKey: string;
     model?: string;
+    baseUrl?: string;
+    allowInsecureHttp?: boolean;
+    allowPrivateHosts?: boolean;
+  };
+  cache?: {
+    enabled?: boolean;
+    size?: number;
+    ttl?: number;
   };
 }
 
@@ -573,6 +687,34 @@ const input = builder.buildInput(context, profile, styles, 'empathy');
 
 - `buildInput(...)`：在基础输入上注入 `thoughtDirection` / `thoughtHint`，可指定语言（默认 `zh`）。
 - `getThoughtPromptSegment(thought)`：单独获取某个思路的提示片段。
+
+### ThoughtPreference（可选）
+
+思路偏好记录用户对思路卡片的选择历史，可用于排序或作为默认思路。
+
+```typescript
+interface ThoughtHistoryEntry {
+  thought: ThoughtType;
+  count: number;
+  lastUsed: number;
+}
+
+interface ThoughtPreference {
+  contactKeyStr: string;
+  thoughtHistory: ThoughtHistoryEntry[];
+  defaultThought: ThoughtType | null;
+  updatedAt: number;
+}
+
+class ThoughtPreferenceManager {
+  constructor(store: IndexedDBStore);
+  recordThoughtSelection(contactKey: ContactKey, thought: ThoughtType): Promise<void>;
+  getPreference(contactKey: ContactKey): Promise<ThoughtPreference | null>;
+  getRecommendedThoughts(contactKey: ContactKey): Promise<ThoughtType[]>;
+  resetPreference(contactKey: ContactKey): Promise<void>;
+  exportPreferences(): Promise<ThoughtPreference[]>;
+}
+```
 
 ---
 

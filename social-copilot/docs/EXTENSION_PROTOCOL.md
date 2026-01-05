@@ -37,14 +37,17 @@
   - `payload.messages: Message[]`（Content Script 抽取的最近消息，含当前消息）
   - `payload.currentMessage: Message`
   - `payload.thoughtDirection?: ThoughtType`
+  - `payload.source?: 'auto' | 'manual'`（触发来源）
 - Response（成功）:
   - `candidates: { text: string; style: ReplyStyle }[]`
   - `provider: string`
   - `model: string`
   - `latency: number`
   - `usingFallback: boolean`
+  - `errorCategory?: string`（仅诊断用途；非用户提示）
 - Response（失败）:
   - `{ error: string }`
+  - `errorCategory?: string`（例如 `timeout` / `rate_limit` / `parse_error`）
 
 失败场景：
 - 未配置 API Key
@@ -126,6 +129,10 @@
 - Request: `contactKey: ContactKey`
 - Response: `{ success: true }`
 
+**`RESET_THOUGHT_PREFERENCE`**
+- Request: `contactKey: ContactKey`
+- Response: `{ success: true }`
+
 **`GET_CONTACT_MEMORY`**
 - Request: `contactKey: ContactKey`
 - Response: `{ memory: { summary: string; updatedAt: number } | null }`
@@ -171,6 +178,7 @@
   - `storeOk: boolean`
   - `storeError?: { name: string; message: string }`
   - `config: Record<string, unknown>`（脱敏后的配置摘要，不含 API Key）
+  - `remoteSelectors?: { configured: boolean; url?: string; lastAttemptAt?: number; lastFetchedAt?: number; lastVersion?: number; lastStatus?: 'ok' | 'error'; lastError?: string }`
 
 **`GET_DIAGNOSTICS_JSON`**
 - Request: `{ pretty?: boolean }`
@@ -191,6 +199,20 @@
 ### 3.8 数据备份与恢复
 
 > 用于迁移失败、误清数据、换机等场景下尽量保留个性化数据。备份文件**不包含 API Key，也不包含原文对话消息**。
+
+### 3.9 自动触发冷却上报
+
+**`REPORT_AUTO_COOLDOWN`**
+
+- Request:
+  - `payload.active: boolean`（是否进入冷却）
+  - `payload.reason: 'threshold' | 'timeout' | 'success'`
+  - `payload.failureCount?: number`
+  - `payload.windowMs?: number`
+  - `payload.cooldownMs?: number`
+  - `payload.cooldownUntil?: number`
+  - `payload.app/host/pathnameKind/pathnameLen`（仅摘要）
+- Response: `{ success: true }`
 
 **`EXPORT_USER_DATA`**
 
@@ -215,6 +237,7 @@
 - `extensionVersion: string`
 - `data.profiles: ContactProfile[]`
 - `data.stylePreferences: StylePreference[]`
+- `data.thoughtPreferences: ThoughtPreference[]`
 - `data.contactMemories: ContactMemorySummary[]`
 - `data.profileUpdateCounts/memoryUpdateCounts: Record<string, number>`
 
@@ -223,7 +246,7 @@
 - Request:
   - `data: UserDataBackupV1`
 - Response:
-  - 成功：`{ success: true, imported: { profiles: number; stylePreferences: number; contactMemories: number } }`
+  - 成功：`{ success: true, imported: { profiles: number; stylePreferences: number; thoughtPreferences: number; contactMemories: number } }`
   - 失败：`{ success: false, error: string }`
 
 说明：

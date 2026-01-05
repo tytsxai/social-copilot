@@ -6,7 +6,7 @@
 
 - 扩展名称：`Social Copilot`
 - 版本号：`social-copilot/packages/browser-extension/manifest.json` 的 `version`
-- 图标：`social-copilot/packages/browser-extension/src/icons/`（构建产物会打包）
+- 图标：`social-copilot/packages/browser-extension/icons/`（构建产物会打包）
 - 截图：需要你自行准备（建议包含：设置页、面板、思路卡片、联系人页）
 - 品牌素材：`docs/assets/`（Logo / OG 预览）与 `social-copilot/store-assets/`（商店物料）
 
@@ -29,7 +29,8 @@
 - `permissions`: 仅使用 `storage`
 - `host_permissions`:
   - 站点：Telegram/WhatsApp/Slack（用于注入与展示）
-  - API：DeepSeek/OpenAI/Anthropic（用于请求第三方模型服务）
+  - API：DeepSeek/OpenAI/Anthropic/官方内置（SiliconFlow）（用于请求第三方模型服务）
+  - `raw.githubusercontent.com`：远程选择器配置（可选热修复）
 
 生产版本不启用 optional host permissions，以避免安装时出现“可访问所有网站”的权限告警；如需定制授权策略，请在发布前单独评估。
 

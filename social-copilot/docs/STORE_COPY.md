@@ -34,16 +34,18 @@ Social Copilot（聊天导师）是一款面向聊天网站的 AI 回复助手�
 
 ## 数据使用披露（Data usage disclosure，建议在描述中明确）
 
-- 扩展会在你触发生成时，将“必要的对话上下文”发送到你选择的第三方模型服务（如 DeepSeek/OpenAI/Anthropic），用于生成候选回复或提取结构化信息。
+- 扩展会在你触发生成时，将“必要的对话上下文”发送到你选择的第三方模型服务（如 DeepSeek/OpenAI/Anthropic）或内置服务（SiliconFlow），用于生成候选回复或提取结构化信息。
 - 默认只发送最近 N 条消息（可配置），并对常见敏感信息进行脱敏与昵称匿名化（可关闭）。
 - API Key 仅存储在本地，不会上传到任何自建服务器（本项目默认无自建后端）。
+- 若启用远程选择器配置，扩展会从 `raw.githubusercontent.com` 拉取选择器 JSON（不包含聊天内容）。
 
 ## 权限说明（Permissions justification）
 
 - `storage`：保存扩展设置、风格偏好与本地数据索引
 - `host_permissions`：
   - `https://web.telegram.org/*` / `https://web.whatsapp.com/*` / `https://app.slack.com/*`：注入内容脚本并在页面展示建议面板
-  - `https://api.deepseek.com/*` / `https://api.openai.com/*` / `https://api.anthropic.com/*`：向你选择的模型服务发起请求
+  - `https://api.deepseek.com/*` / `https://api.openai.com/*` / `https://api.anthropic.com/*` / `https://api.siliconflow.cn/*`：向你选择的模型服务或内置服务发起请求
+  - `https://raw.githubusercontent.com/*`：可选远程选择器配置拉取
 
 ## 隐私政策（Privacy policy URL）
 

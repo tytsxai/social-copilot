@@ -37,9 +37,9 @@ Social Copilot 采用 monorepo 架构，使用 pnpm workspace 管理多个包。
 │  │   类型定义   │  │   存储层    │  │   模型管理与故障转移     │  │
 │  └─────────────┘  └─────────────┘  └───────────┬─────────────┘  │
 │                                                 │                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┴─────────────┐  │
-│  │   Profile   │  │ Preference  │  │   Thought    │  │      LLM Providers      │  │
-│  │   画像管理   │  │  偏好管理   │  │  思路分析     │  │  DeepSeek/OpenAI/Claude │  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │   Profile   │  │ Preference  │  │   Thought   │  │      LLM Providers      │  │
+│  │   画像管理   │  │  偏好管理   │  │  思路分析    │  │  DeepSeek/OpenAI/Claude │  │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -266,6 +266,9 @@ Database: social-copilot
 ├── stylePreferences  # 风格偏好
 │   └── key: contactKeyStr
 │
+├── thoughtPreferences # 思路偏好（可选）
+│   └── key: contactKeyStr
+│
 └── contactMemories   # 长期记忆摘要（可选功能）
     ├── key: contactKeyStr
     └── indexes: updatedAt
@@ -279,6 +282,8 @@ chrome.storage.local
 ├── debugEnabled                # 诊断日志开关
 ├── profileUpdateCounts         # 画像更新阈值计数（best-effort）
 ├── memoryUpdateCounts          # 记忆更新阈值计数（best-effort）
+├── remoteSelectorsUrl          # 远程选择器配置 URL（可选）
+├── remote_selector_config      # 远程选择器缓存（带时间戳）
 └── sc-panel-pos-<host>         # 面板位置记忆（按站点 host 分开）
 ```
 

@@ -246,7 +246,8 @@ social-copilot/
 │   │       │   └── manager.ts   # 风格偏好学习
 │   │       └── thought/         # 思路分析
 │   │           ├── analyzer.ts  # 思路推荐（共情/方案/幽默/中性）
-│   │           └── prompt-builder.ts # 带思路提示的 LLM 输入构建
+│   │           ├── prompt-builder.ts # 带思路提示的 LLM 输入构建
+│   │           └── preference-manager.ts # 思路偏好管理
 │   ├── browser-extension/       # Chrome 扩展
 │   │   ├── src/
 │   │   │   ├── adapters/        # 平台适配器

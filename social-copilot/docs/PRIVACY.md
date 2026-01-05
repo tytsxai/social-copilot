@@ -3,7 +3,7 @@
 > 本文件为 Social Copilot（浏览器扩展）的隐私政策模板与数据处理说明。
 > 若你计划发布到 Chrome Web Store：通常需要在商店后台提供一个可公开访问的隐私政策 URL。
 
-最后更新：2025-12-20
+最后更新：2025-12-29
 
 ## 1. 我们是谁
 
@@ -26,7 +26,7 @@ Social Copilot 是一款为聊天网站（Telegram Web / WhatsApp Web / Slack We
 
 ### 2.2 发送到第三方模型服务（网络传输）
 
-当你触发“生成回复建议”或启用某些自动化功能时，扩展会把“必要的对话上下文”发送到你配置的第三方模型服务（如 DeepSeek / OpenAI / Anthropic Claude），以生成回复候选或提取结构化信息。
+当你触发“生成回复建议”或启用某些自动化功能时，扩展会把“必要的对话上下文”发送到你配置的第三方模型服务（如 DeepSeek / OpenAI / Anthropic Claude）或内置服务（SiliconFlow），以生成回复候选或提取结构化信息。
 
 **默认的发送侧数据最小化与脱敏：**
 
@@ -37,6 +37,8 @@ Social Copilot 是一款为聊天网站（Telegram Web / WhatsApp Web / Slack We
 - 不发送 Message 的 `raw` 字段（原始 DOM/平台对象）
 
 你可以在扩展设置中关闭“脱敏/匿名化”，或调整消息条数/字符预算。
+
+若你启用了“远程选择器配置”，扩展会访问 `raw.githubusercontent.com` 拉取选择器 JSON（用于站点 DOM 变更热修复；不包含聊天内容）。
 
 ## 3. 我们如何使用数据
 
@@ -55,6 +57,8 @@ Social Copilot 是一款为聊天网站（Telegram Web / WhatsApp Web / Slack We
 当你配置并使用第三方模型服务时，你发送的上下文将由相应提供商按其服务条款与隐私政策处理。
 
 建议你在上架/部署时在商店页面与隐私政策中明确列出可能的第三方服务，并提醒用户自行查看其政策。
+
+可能的服务商包括（取决于你的配置）：DeepSeek / OpenAI / Anthropic / SiliconFlow。
 
 ## 6. 你的控制权与设置项
 

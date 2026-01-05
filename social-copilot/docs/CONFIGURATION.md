@@ -41,6 +41,8 @@
 | `fallbackModel` | `string` | `undefined` | 可选：备用模型名 |
 | `enableMemory` | `boolean` | `false` | 是否启用“长期记忆摘要”（默认关闭） |
 | `persistApiKey` | `boolean` | `false` | 是否持久化存储 API Key（默认不持久化） |
+| `cacheStrategy` | `'auto' \| 'always' \| 'off'` | `'auto'` | 回复缓存策略（auto=仅自动触发使用缓存） |
+| `remoteSelectorsUrl` | `string` | `undefined` | 远程选择器配置 URL（仅支持 `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/selectors.json`，分支名不含 `/`） |
 | `debugEnabled` | `boolean` | `false` | 是否启用诊断事件的 console 输出 |
 
 说明：
@@ -51,6 +53,7 @@
 - `builtin` 表示官方内置服务（仍需用户配置 API Key），且不支持 `baseUrl` 覆盖。
 - 为减少安装时的权限告警，生产版本仅支持官方域名作为 `baseUrl` / `fallbackBaseUrl`（DeepSeek/OpenAI/Anthropic）。如需接入自建网关，请使用定制/企业版本。
 - Release 构建会强制 `allowInsecureHttp=false` / `allowPrivateHosts=false`，并在设置页隐藏相关开关。
+- `cacheStrategy=auto` 会仅对自动触发启用短 TTL 缓存（默认 90 秒）；`always` 使用较长 TTL（默认 5 分钟）。
 
 ### 1.2 API Key 存储策略（安全相关）
 
@@ -61,7 +64,7 @@
   - 若浏览器/环境不支持 `storage.session`，退化为写入 `chrome.storage.local` 的临时 key：
     - `__sc_session_apiKey`
     - `__sc_session_fallbackApiKey`
-  - 这些临时 key 会在浏览器启动时清理（Background 监听 `chrome.runtime.onStartup`），并带有 1 小时过期策略。
+- 这些临时 key 会在浏览器启动时清理（Background 监听 `chrome.runtime.onStartup`），并带有 24 小时滑动过期策略（24 小时未使用会清理）。
 - 当 `persistApiKey = true`：
   - 写入 `chrome.storage.local` 的 `apiKey` / `fallbackApiKey`
   - 同时会清理 session key，确保只有一个来源
@@ -71,6 +74,7 @@
 - 内容：最近 N 条诊断事件（ring buffer，默认 N=200），不包含原文对话与 API Key（仅长度/枚举/错误栈）
 - 用途：设置页「复制诊断 / 下载诊断 JSON」；可通过「清空诊断日志」或「清除所有数据」删除
 - 诊断导出包含数据库健康状态与配置摘要（脱敏，仅保留开关/枚举/长度信息）
+- 远程选择器抓取状态：`remote_selector_status`（包含最近一次尝试时间、成功版本号、错误信息等）
 
 风险提示：
 - `persistApiKey=true` 便于长期使用，但 API Key 会长期驻留在本地存储中；建议仅在可信设备上启用。
@@ -90,18 +94,33 @@
 扩展提供“本地数据备份/恢复”能力，用于在迁移失败、误清数据、换机等场景下尽量保留个性化数据。
 
 - 入口：设置页「关于」→「备份与恢复」
-- 导出内容（JSON）：联系人画像、风格偏好、长期记忆、以及更新计数器
+- 导出内容（JSON）：联系人画像、风格偏好、思路偏好、长期记忆、以及更新计数器
 - 不包含：API Key、原文对话消息（不会导出 IndexedDB 的 `messages` 内容）
 
 风险提示：
 - 备份文件仍可能包含敏感信息（画像/记忆为对话提炼结果），请妥善保管
+
+### 1.5 远程选择器配置（可选）
+
+用于在站点 DOM 变更时快速下发选择器修复（不发版热修复），支持 WhatsApp / Telegram / Slack。
+
+- 配置项：`remoteSelectorsUrl`（`chrome.storage.local`）
+- URL 要求：
+  - `https` 协议
+  - 域名仅允许 `raw.githubusercontent.com`
+  - 路径必须满足：`/<owner>/<repo>/<branch>/selectors.json`（分支名不支持 `/`）
+- 缓存：`remote_selector_config`（`chrome.storage.local`）
+  - 结构包含 `timestamp` 与 `data`
+  - 24 小时 TTL，失败则回退到内置选择器
+- 诊断：`remote_selector_status`（`chrome.storage.local`）
+  - 包含 `lastAttemptAt/lastFetchedAt/lastUrl/lastVersion/lastError`
 
 ## 2. IndexedDB（本地数据存储）
 
 核心数据默认保存在浏览器 IndexedDB（画像/消息/偏好/长期记忆）。
 
 - DB 名：`social-copilot`
-- 主要对象仓库：`messages` / `profiles` / `stylePreferences` / `contactMemories`
+- 主要对象仓库：`messages` / `profiles` / `stylePreferences` / `thoughtPreferences` / `contactMemories`
 - 消息保留策略（防止长期膨胀）：
   - 单联系人上限：`MAX_MESSAGES_PER_CONTACT = 2000`
   - 全局上限：`MAX_TOTAL_MESSAGES = 50000`（按时间淘汰最旧消息）
