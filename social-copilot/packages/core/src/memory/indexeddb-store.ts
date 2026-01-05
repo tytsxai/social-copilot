@@ -1411,28 +1411,35 @@ export class IndexedDBStore implements MemoryStore {
   ): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
-    const contactKeyStr = contactKeyToString(contactKey);
+    const canonicalKeyRaw = contactKeyToString(contactKey);
+    const canonicalKey = normalizeContactKeyStr(canonicalKeyRaw);
+    const candidatesRaw = getContactKeyStrCandidates(contactKey);
+    const keysToTry = Array.from(
+      new Set([canonicalKey, canonicalKeyRaw, ...candidatesRaw, ...candidatesRaw.map(normalizeContactKeyStr)])
+    );
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.thoughtPreferences, 'readwrite');
+    await this.withTransaction(STORES.thoughtPreferences, 'readwrite', async (tx) => {
       const store = tx.objectStore(STORES.thoughtPreferences);
-      tx.onerror = () => {
-        this.abortTransaction(tx);
-        reject(tx.error ?? new Error('Transaction failed'));
-      };
-      tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
-      tx.oncomplete = () => resolve();
 
-      const request = store.get(contactKeyStr);
-      request.onerror = () => {
-        this.abortTransaction(tx);
-        reject(request.error);
-      };
-      request.onsuccess = () => {
-        const existing = (request.result as ThoughtPreference | undefined) ?? null;
-        const updated = updater(existing);
-        store.put(updated);
-      };
+      let existing: ThoughtPreference | null = null;
+      let foundKey: string | null = null;
+
+      for (const key of keysToTry) {
+        const result = (await this.requestToPromise(store.get(key), tx)) as ThoughtPreference | undefined;
+        if (result) {
+          existing = { ...result, contactKeyStr: canonicalKey };
+          foundKey = key;
+          break;
+        }
+      }
+
+      const updated = updater(existing);
+      await this.requestToPromise(store.put({ ...updated, contactKeyStr: canonicalKey }), tx);
+
+      for (const key of keysToTry) {
+        if (key === canonicalKey) continue;
+        await this.requestToPromise(store.delete(key), tx);
+      }
     });
   }
 

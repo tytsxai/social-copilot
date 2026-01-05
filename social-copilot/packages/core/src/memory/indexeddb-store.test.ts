@@ -3,7 +3,7 @@ import * as fc from 'fast-check';
 import 'fake-indexeddb/auto';
 import { IndexedDBStore } from './indexeddb-store';
 import type { ReplyStyle, ContactKey, Message } from '../types';
-import { contactKeyToString, contactKeyToStringV1 } from '../types/contact';
+import { contactKeyToString, contactKeyToStringV1, normalizeContactKeyStr } from '../types/contact';
 
 async function resetIndexedDb() {
   const store = new IndexedDBStore();
@@ -376,6 +376,63 @@ describe('IndexedDBStore - Style Preferences', () => {
     expect(after).not.toBeNull();
     const entry = after!.styleHistory.find((e) => e.style === 'formal');
     expect(entry?.count).toBe(2);
+  });
+});
+
+describe('IndexedDBStore - Thought Preferences', () => {
+  let store: IndexedDBStore;
+  const contactKey: ContactKey = {
+    platform: 'web',
+    app: 'telegram',
+    accountId: 'acc',
+    conversationId: 'conv',
+    peerId: 'peer',
+    isGroup: false,
+  };
+
+  beforeEach(async () => {
+    store = new IndexedDBStore();
+    await store.init();
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  test('updateThoughtPreference normalizes and deduplicates legacy keys', async () => {
+    const legacyKey = contactKeyToStringV1(contactKey);
+
+    await store.saveThoughtPreference({
+      contactKeyStr: legacyKey,
+      thoughtHistory: [{ thought: 'empathy', count: 1, lastUsed: 1 }],
+      defaultThought: null,
+      updatedAt: 1,
+    });
+
+    await store.updateThoughtPreference(contactKey, (existing) => {
+      const base = existing ?? {
+        contactKeyStr: contactKeyToString(contactKey),
+        thoughtHistory: [],
+        defaultThought: null,
+        updatedAt: 0,
+      };
+      return {
+        ...base,
+        thoughtHistory: [
+          ...base.thoughtHistory,
+          { thought: 'solution', count: 1, lastUsed: 2 },
+        ],
+        updatedAt: 2,
+      };
+    });
+
+    const all = await store.getAllThoughtPreferences();
+    expect(all).toHaveLength(1);
+    expect(all[0].contactKeyStr).toBe(normalizeContactKeyStr(contactKeyToString(contactKey)));
+
+    const pref = await store.getThoughtPreference(contactKey);
+    expect(pref).not.toBeNull();
+    expect(pref?.thoughtHistory.some((entry) => entry.thought === 'solution')).toBe(true);
   });
 });
 
