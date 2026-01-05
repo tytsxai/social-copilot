@@ -4,6 +4,7 @@ import {
   LLMManager,
   PromptHookRegistry,
   StylePreferenceManager,
+  ThoughtPreferenceManager,
   ThoughtAnalyzer,
   ReplyParseError,
   parseJsonObjectFromText,
@@ -27,6 +28,7 @@ import {
   storageSessionRemove,
   storageSessionSet,
 } from '../utils/webext';
+import { getRemoteSelectorsDiagnostics } from '../utils/remote-config';
 import type {
   Message,
   ContactKey,
@@ -34,6 +36,7 @@ import type {
   ReplyStyle,
   ContactProfile,
   StylePreference,
+  ThoughtPreference,
   ContactMemorySummary,
   LLMProvider,
   ThoughtType,
@@ -56,6 +59,8 @@ import { interpolateCustomPrompt } from './custom-prompts';
 
 const IS_RELEASE = __SC_RELEASE__;
 
+type CacheStrategy = 'off' | 'auto' | 'always';
+
 type DiagnosticEventType =
   | 'GENERATE_REPLY'
   | 'ANALYZE_THOUGHT'
@@ -69,6 +74,7 @@ type DiagnosticEventType =
   | 'BACKGROUND_ERROR'
   | 'ADAPTER_HEALTH'
   | 'CONTENT_SCRIPT_ERROR'
+  | 'AUTO_COOLDOWN'
   | 'GET_STATUS'
   | 'GET_PROFILE'
   | 'UPDATE_PROFILE'
@@ -77,6 +83,7 @@ type DiagnosticEventType =
   | 'RECORD_STYLE_SELECTION'
   | 'GET_STYLE_PREFERENCE'
   | 'RESET_STYLE_PREFERENCE'
+  | 'RESET_THOUGHT_PREFERENCE'
   | 'EXPORT_PREFERENCES'
   | 'EXPORT_USER_DATA'
   | 'EXPORT_USER_DATA_JSON'
@@ -151,6 +158,8 @@ interface Config {
   fallbackApiKey?: string;
   enableFallback?: boolean;
   suggestionCount?: number;
+  /** 回复结果缓存策略（auto: 仅自动触发使用缓存） */
+  cacheStrategy?: CacheStrategy;
   /** 是否启用长期记忆摘要（默认关闭） */
   enableMemory?: boolean;
   /** 是否持久化存储 API Key（默认不持久化以降低泄漏风险） */
@@ -177,6 +186,7 @@ let storeInitError: Error | null = null;
 let llmManager: LLMManager | null = null;
 let profileUpdater: ProfileUpdater | null = null;
 let preferenceManager: StylePreferenceManager | null = null;
+let thoughtPreferenceManager: ThoughtPreferenceManager | null = null;
 let currentConfig: Config | null = null;
 let fallbackModeActive = false;
 const DEFAULT_STYLES: ReplyStyle[] = ['caring', 'humorous', 'casual'];
@@ -197,13 +207,16 @@ const DEBUG_ENABLED_STORAGE_KEY = 'debugEnabled';
 const SESSION_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_apiKey';
 const SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY = '__sc_session_fallbackApiKey';
 const SESSION_KEYS_FALLBACK_TIMESTAMP_KEY = '__sc_session_key_ts';
-const SESSION_KEYS_FALLBACK_TTL_MS = 1000 * 60 * 60;
+// Sliding idle TTL for local-session fallback keys (extends on use).
+const SESSION_KEYS_FALLBACK_TTL_MS = 1000 * 60 * 60 * 24;
 /** Ring buffer size for exported diagnostics snapshot. */
 const DIAGNOSTICS_MAX_EVENTS = 200;
 /** Persist diagnostics across MV3 service worker restarts (local-only, no PII/raw chat text). */
 const DIAGNOSTICS_STORAGE_KEY = '__sc_diagnostics_v1';
 /** Throttle persistence to avoid excessive writes. */
 const DIAGNOSTICS_PERSIST_MIN_INTERVAL_MS = 1500;
+const CACHE_TTL_AUTO_MS = 90_000;
+const CACHE_TTL_ALWAYS_MS = 300_000;
 /** Update memory summary every N new messages (per contact) to control cost. */
 const MEMORY_UPDATE_THRESHOLD = 50;
 const MEMORY_CONTEXT_MESSAGE_LIMIT = 50;
@@ -407,6 +420,7 @@ function coerceDiagnosticEventType(value: unknown): DiagnosticEventType {
     case 'RECORD_STYLE_SELECTION':
     case 'GET_STYLE_PREFERENCE':
     case 'RESET_STYLE_PREFERENCE':
+    case 'RESET_THOUGHT_PREFERENCE':
     case 'EXPORT_PREFERENCES':
     case 'EXPORT_USER_DATA':
     case 'IMPORT_USER_DATA':
@@ -592,6 +606,7 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
     fallbackAllowInsecureHttp: config.fallbackAllowInsecureHttp ?? false,
     fallbackAllowPrivateHosts: config.fallbackAllowPrivateHosts ?? false,
     suggestionCount: normalizeSuggestionCount(config.suggestionCount),
+    cacheStrategy: normalizeCacheStrategy(config.cacheStrategy),
     enableMemory: config.enableMemory ?? false,
     persistApiKey: config.persistApiKey ?? false,
     privacyAcknowledged: config.privacyAcknowledged ?? false,
@@ -611,6 +626,10 @@ function sanitizeConfig(config: Config | null): Record<string, unknown> {
     hasApiKey: Boolean(config.apiKey?.trim()),
     hasFallbackApiKey: Boolean(config.fallbackApiKey?.trim()),
   };
+}
+
+function normalizeCacheStrategy(value: unknown): CacheStrategy {
+  return value === 'off' || value === 'auto' || value === 'always' ? value : 'auto';
 }
 
 function normalizeModel(value: unknown): string | undefined {
@@ -783,14 +802,22 @@ async function getSessionKeys(): Promise<{ apiKey?: string; fallbackApiKey?: str
     return {};
   }
 
-  return {
-    apiKey: typeof local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
-      ? (local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] as string)
-      : undefined,
-    fallbackApiKey: typeof local[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
-      ? (local[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] as string)
-      : undefined,
-  };
+  const apiKey = typeof local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
+    ? (local[SESSION_API_KEY_FALLBACK_STORAGE_KEY] as string)
+    : undefined;
+  const fallbackApiKey = typeof local[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] === 'string'
+    ? (local[SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY] as string)
+    : undefined;
+
+  if (apiKey || fallbackApiKey) {
+    try {
+      await storageLocalSet({ [SESSION_KEYS_FALLBACK_TIMESTAMP_KEY]: Date.now() });
+    } catch {
+      // best-effort: avoid failing config load due to storage issues
+    }
+  }
+
+  return { apiKey, fallbackApiKey };
 }
 
 async function clearSessionKeys(): Promise<void> {
@@ -802,7 +829,8 @@ async function clearSessionKeys(): Promise<void> {
   ]);
 }
 
-function buildDiagnosticsSnapshot(): Record<string, unknown> {
+async function buildDiagnosticsSnapshot(): Promise<Record<string, unknown>> {
+  const remoteSelectors = await getRemoteSelectorsDiagnostics();
   return {
     version: runtimeGetManifestVersion(),
     debugEnabled,
@@ -814,6 +842,7 @@ function buildDiagnosticsSnapshot(): Record<string, unknown> {
       ? { name: storeInitError.name, message: redactSecrets(storeInitError.message) }
       : undefined,
     config: sanitizeConfig(currentConfig),
+    remoteSelectors,
   };
 }
 
@@ -988,6 +1017,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     'SET_DEBUG_ENABLED',
     'REPORT_ADAPTER_HEALTH',
     'REPORT_CONTENT_SCRIPT_ERROR',
+    'REPORT_AUTO_COOLDOWN',
   ]);
 
   if (allowWithoutStore.has(requestType)) {
@@ -1025,6 +1055,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     if (
       diagType !== 'ADAPTER_HEALTH' &&
       diagType !== 'CONTENT_SCRIPT_ERROR' &&
+      diagType !== 'AUTO_COOLDOWN' &&
       diagType !== 'CLEAR_DIAGNOSTICS' &&
       diagType !== 'CLEAR_DATA'
     ) {
@@ -1044,6 +1075,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     if (
       diagType !== 'ADAPTER_HEALTH' &&
       diagType !== 'CONTENT_SCRIPT_ERROR' &&
+      diagType !== 'AUTO_COOLDOWN' &&
       diagType !== 'CLEAR_DIAGNOSTICS' &&
       diagType !== 'CLEAR_DATA'
     ) {
@@ -1052,7 +1084,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
         type: diagType,
         ok: false,
         durationMs: Date.now() - startedAt,
-        details: debugEnabled ? buildErrorDetails(request) : buildMinimalErrorDetails(request),
+        details: debugEnabled ? buildErrorDetails(request, err) : buildMinimalErrorDetails(request, err),
         error: safeErr,
       });
     }
@@ -1091,6 +1123,7 @@ type StoredConfigRecord = Record<string, unknown> &
     fallbackApiKey: string;
     enableFallback: boolean;
     suggestionCount: number;
+    cacheStrategy: CacheStrategy;
     persistApiKey: boolean;
     enableMemory: boolean;
   }>;
@@ -1110,6 +1143,7 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'RECORD_STYLE_SELECTION':
     case 'GET_STYLE_PREFERENCE':
     case 'RESET_STYLE_PREFERENCE':
+    case 'RESET_THOUGHT_PREFERENCE':
     case 'EXPORT_PREFERENCES':
     case 'EXPORT_USER_DATA':
     case 'EXPORT_USER_DATA_JSON':
@@ -1127,6 +1161,8 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
       return 'ADAPTER_HEALTH';
     case 'REPORT_CONTENT_SCRIPT_ERROR':
       return 'CONTENT_SCRIPT_ERROR';
+    case 'REPORT_AUTO_COOLDOWN':
+      return 'AUTO_COOLDOWN';
     case 'SET_PREFERRED_STYLE':
     case 'SET_API_KEY':
       // Normalize legacy aliases
@@ -1141,13 +1177,21 @@ function buildMinimalSuccessDetails(
   result: unknown
 ): Record<string, unknown> {
   if (request.type === 'GENERATE_REPLY') {
-    const r = result as { provider?: string; usingFallback?: boolean; latency?: number; candidates?: unknown[]; error?: string };
+    const r = result as {
+      provider?: string;
+      usingFallback?: boolean;
+      latency?: number;
+      candidates?: unknown[];
+      error?: string;
+      errorCategory?: string;
+    };
     return {
       provider: r.provider,
       usingFallback: r.usingFallback,
       latency: r.latency,
       candidateCount: Array.isArray(r.candidates) ? r.candidates.length : undefined,
       hasError: Boolean(r.error),
+      errorCategory: r.errorCategory,
     };
   }
   if (request.type === 'SET_CONFIG') {
@@ -1180,8 +1224,21 @@ function buildSuccessDetails(
   result: unknown
 ): Record<string, unknown> {
   if (request.type === 'GENERATE_REPLY') {
-    const payload = request.payload as { contactKey: ContactKey; messages: Message[]; thoughtDirection?: ThoughtType } | undefined;
-    const r = result as { provider?: string; usingFallback?: boolean; latency?: number; candidates?: Array<{ style?: string; text?: string }>; error?: string; model?: string };
+    const payload = request.payload as {
+      contactKey: ContactKey;
+      messages: Message[];
+      thoughtDirection?: ThoughtType;
+      source?: 'auto' | 'manual';
+    } | undefined;
+    const r = result as {
+      provider?: string;
+      usingFallback?: boolean;
+      latency?: number;
+      candidates?: Array<{ style?: string; text?: string }>;
+      error?: string;
+      errorCategory?: string;
+      model?: string;
+    };
     return {
       provider: r.provider,
       model: r.model,
@@ -1195,7 +1252,9 @@ function buildSuccessDetails(
         ? r.candidates.map((c) => (typeof c.text === 'string' ? c.text.length : 0))
         : undefined,
       hasError: Boolean(r.error),
+      errorCategory: r.errorCategory,
       thoughtDirection: payload?.thoughtDirection,
+      source: payload?.source,
       contactKeySummary: payload?.contactKey ? summarizeContactKeyForDiagnostics(payload.contactKey) : undefined,
       messageCount: Array.isArray(payload?.messages) ? payload!.messages.length : undefined,
       lastMessageLen: Array.isArray(payload?.messages) && payload!.messages.length > 0
@@ -1217,19 +1276,28 @@ function buildSuccessDetails(
   return buildMinimalSuccessDetails(request, result);
 }
 
-function buildMinimalErrorDetails(request: { type: string; [key: string]: unknown }): Record<string, unknown> {
+function buildMinimalErrorDetails(
+  request: { type: string; [key: string]: unknown },
+  error?: unknown
+): Record<string, unknown> {
   if (request.type === 'GENERATE_REPLY') {
-    return { provider: llmManager?.getActiveProvider(), config: sanitizeConfig(currentConfig) };
+    const errorCategory = error ? classifyGenerateReplyError(error) : undefined;
+    return { provider: llmManager?.getActiveProvider(), config: sanitizeConfig(currentConfig), errorCategory };
   }
   return {};
 }
 
-function buildErrorDetails(request: { type: string; [key: string]: unknown }): Record<string, unknown> {
+function buildErrorDetails(
+  request: { type: string; [key: string]: unknown },
+  error?: unknown
+): Record<string, unknown> {
   if (request.type === 'GENERATE_REPLY') {
     const payload = request.payload as { contactKey: ContactKey; messages: Message[]; thoughtDirection?: ThoughtType } | undefined;
+    const errorCategory = error ? classifyGenerateReplyError(error) : undefined;
     return {
       provider: llmManager?.getActiveProvider(),
       config: sanitizeConfig(currentConfig),
+      errorCategory,
       contactKeySummary: payload?.contactKey ? summarizeContactKeyForDiagnostics(payload.contactKey) : undefined,
       messageCount: Array.isArray(payload?.messages) ? payload!.messages.length : undefined,
       messages: Array.isArray(payload?.messages)
@@ -1247,7 +1315,7 @@ function buildErrorDetails(request: { type: string; [key: string]: unknown }): R
   if (request.type === 'SET_CONFIG') {
     return { nextConfig: sanitizeConfig(request.config as Config), prevConfig: sanitizeConfig(currentConfig) };
   }
-  return buildMinimalErrorDetails(request);
+  return buildMinimalErrorDetails(request, error);
 }
 
 async function dispatchMessage(
@@ -1394,11 +1462,11 @@ async function dispatchMessage(
     }
 
     case 'GET_DIAGNOSTICS':
-      return buildDiagnosticsSnapshot();
+      return await buildDiagnosticsSnapshot();
 
     case 'GET_DIAGNOSTICS_JSON': {
       const pretty = Boolean(request.pretty);
-      const snapshot = buildDiagnosticsSnapshot();
+      const snapshot = await buildDiagnosticsSnapshot();
       return { json: JSON.stringify(snapshot, null, pretty ? 2 : 0) };
     }
 
@@ -1464,6 +1532,9 @@ async function dispatchMessage(
 
     case 'RESET_STYLE_PREFERENCE':
       return resetStylePreference(request.contactKey as ContactKey);
+
+    case 'RESET_THOUGHT_PREFERENCE':
+      return resetThoughtPreference(request.contactKey as ContactKey);
 
     case 'EXPORT_PREFERENCES':
       return exportPreferences();
@@ -1556,6 +1627,36 @@ async function dispatchMessage(
       return { success: true };
     }
 
+    case 'REPORT_AUTO_COOLDOWN': {
+      const payload = request.payload as Record<string, unknown> | undefined;
+      const active = payload?.active === true;
+      const reason = typeof payload?.reason === 'string' ? payload.reason : 'unknown';
+      const failureCount = typeof payload?.failureCount === 'number' ? payload.failureCount : undefined;
+      const windowMs = typeof payload?.windowMs === 'number' ? payload.windowMs : undefined;
+      const cooldownMs = typeof payload?.cooldownMs === 'number' ? payload.cooldownMs : undefined;
+      const cooldownUntil = typeof payload?.cooldownUntil === 'number' ? payload.cooldownUntil : undefined;
+
+      pushDiagnostic({
+        ts: Date.now(),
+        type: 'AUTO_COOLDOWN',
+        requestId,
+        ok: true,
+        details: {
+          app: payload?.app,
+          host: payload?.host,
+          pathnameKind: payload?.pathnameKind,
+          pathnameLen: payload?.pathnameLen,
+          active,
+          reason,
+          failureCount,
+          windowMs,
+          cooldownMs,
+          cooldownUntil,
+        },
+      });
+      return { success: true };
+    }
+
     default:
       return { error: 'Unknown message type', requestId };
   }
@@ -1591,6 +1692,7 @@ async function loadConfig() {
     'fallbackApiKey',
     'enableFallback',
     'suggestionCount',
+    'cacheStrategy',
     'persistApiKey',
     'enableMemory',
   ]);
@@ -1637,6 +1739,7 @@ async function loadConfig() {
       fallbackApiKey: keys.fallbackApiKey,
       enableFallback,
       suggestionCount: normalizeSuggestionCount(result.suggestionCount),
+      cacheStrategy: normalizeCacheStrategy(result.cacheStrategy),
       enableMemory,
       persistApiKey,
     });
@@ -1704,6 +1807,7 @@ async function setConfig(config: Config) {
     fallbackApiKey,
     styles: normalizedStyles,
     suggestionCount: normalizedSuggestionCount,
+    cacheStrategy: normalizeCacheStrategy(enforced.cacheStrategy),
     enableMemory: enforced.enableMemory ?? false,
     persistApiKey: enforced.persistApiKey ?? false,
     privacyAcknowledged,
@@ -1738,6 +1842,7 @@ async function setConfig(config: Config) {
     fallbackModel: currentConfig.fallbackModel,
     enableFallback: currentConfig.enableFallback ?? false,
     suggestionCount: currentConfig.suggestionCount,
+    cacheStrategy: currentConfig.cacheStrategy,
     enableMemory: currentConfig.enableMemory ?? false,
     persistApiKey: currentConfig.persistApiKey ?? false,
   };
@@ -1824,6 +1929,14 @@ function buildManagerConfig(config: Config): LLMManagerConfig {
   const inferredAdvancedMode = enforced.advancedMode ?? (enforced.provider !== 'builtin');
   const isBuiltin = !inferredAdvancedMode || enforced.provider === 'builtin';
   const fallbackEnabled = (enforced.enableFallback ?? false) && !!enforced.fallbackApiKey;
+  const cacheStrategy = normalizeCacheStrategy(enforced.cacheStrategy);
+  const cache =
+    cacheStrategy === 'off'
+      ? { enabled: false }
+      : {
+          enabled: true,
+          ttl: cacheStrategy === 'always' ? CACHE_TTL_ALWAYS_MS : CACHE_TTL_AUTO_MS,
+        };
   return {
     primary: {
       provider: isBuiltin ? 'builtin' : enforced.provider,
@@ -1843,6 +1956,7 @@ function buildManagerConfig(config: Config): LLMManagerConfig {
           allowPrivateHosts: enforced.fallbackAllowPrivateHosts ?? false,
         }
       : undefined,
+    cache,
   };
 }
 
@@ -1906,8 +2020,40 @@ async function handleAllFailedEvent(errors: Error[]) {
 async function handleAnalyzeThought(payload: { context: ConversationContext }) {
   const analyzer = new ThoughtAnalyzer();
   const result = analyzer.analyze(payload.context);
-  const cards = analyzer.getRecommendedCards(result);
-  return { result, cards };
+  let recommended = result.recommended;
+
+  try {
+    if (!thoughtPreferenceManager) {
+      thoughtPreferenceManager = new ThoughtPreferenceManager(store);
+    }
+    const preference = await thoughtPreferenceManager.getPreference(payload.context.contactKey);
+    if (preference?.thoughtHistory?.length) {
+      const countMap = new Map<ThoughtType, number>(
+        preference.thoughtHistory.map((entry) => [entry.thought, entry.count])
+      );
+      const baseOrder = new Map<ThoughtType, number>(
+        result.recommended.map((thought, idx) => [thought, idx])
+      );
+      recommended = [...result.recommended].sort((a, b) => {
+        const diff = (countMap.get(b) ?? 0) - (countMap.get(a) ?? 0);
+        if (diff !== 0) return diff;
+        return (baseOrder.get(a) ?? 0) - (baseOrder.get(b) ?? 0);
+      });
+    }
+
+    if (preference?.defaultThought && recommended.includes(preference.defaultThought)) {
+      recommended = [
+        preference.defaultThought,
+        ...recommended.filter((t) => t !== preference.defaultThought),
+      ];
+    }
+  } catch {
+    // best-effort only
+  }
+
+  const normalizedResult = recommended === result.recommended ? result : { ...result, recommended };
+  const cards = recommended.map((type) => THOUGHT_CARDS[type]);
+  return { result: normalizedResult, cards };
 }
 
 async function handleGenerateReply(payload: {
@@ -1915,8 +2061,10 @@ async function handleGenerateReply(payload: {
   messages: Message[];
   currentMessage: Message;
   thoughtDirection?: ThoughtType;
+  source?: 'auto' | 'manual';
 }) {
   const { contactKey, messages, currentMessage, thoughtDirection } = payload;
+  const source = payload.source === 'auto' ? 'auto' : 'manual';
   let memorySummary: string | undefined;
 
   // Ensure config/LLM is available before touching local memory or calling providers.
@@ -1924,10 +2072,10 @@ async function handleGenerateReply(payload: {
     await loadConfig();
   }
   if (!llmManager || !currentConfig) {
-    return { error: 'NO_API_KEY' }; // 使用错误码，方便前端处理
+    return { error: 'NO_API_KEY', errorCategory: 'missing_api_key' }; // 使用错误码，方便前端处理
   }
   if (!currentConfig.privacyAcknowledged) {
-    return { error: '首次使用请先在扩展设置中确认隐私告知。' };
+    return { error: '首次使用请先在扩展设置中确认隐私告知。', errorCategory: 'privacy_unacknowledged' };
   }
 
   const language = resolveLanguage(currentConfig.language, currentMessage, messages);
@@ -1998,6 +2146,11 @@ async function handleGenerateReply(payload: {
     input.thoughtHint = THOUGHT_CARDS[thoughtDirection]?.promptHint;
   }
 
+  const cacheStrategy = normalizeCacheStrategy(currentConfig?.cacheStrategy);
+  if (cacheStrategy === 'auto' && source !== 'auto') {
+    input.cacheKeySalt = generateRequestId();
+  }
+
   // 调用 LLM
   try {
     const output = await llmManager.generateReply(input);
@@ -2006,6 +2159,10 @@ async function handleGenerateReply(payload: {
     // 异步更新长期记忆（不阻塞本次回复）
     if (currentConfig?.enableMemory ?? false) {
       void maybeUpdateMemory(contactKey, profile, messageCount, language);
+    }
+
+    if (thoughtDirection) {
+      void recordThoughtSelection(contactKey, thoughtDirection);
     }
 
     return {
@@ -2018,11 +2175,12 @@ async function handleGenerateReply(payload: {
   } catch (error) {
     debugError('[Social Copilot] Failed to generate reply:', sanitizeErrorForDiagnostics(error));
     const message = toUserErrorMessage(error);
+    const errorCategory = classifyGenerateReplyError(error);
 
     if (currentConfig?.enableMemory ?? false) {
       void maybeUpdateMemory(contactKey, profile, messageCount, language);
     }
-    return { error: message };
+    return { error: message, errorCategory };
   }
 }
 
@@ -2056,6 +2214,15 @@ async function maybeMigrateContactState(contactKey: ContactKey, profile: Contact
   }
 
   try {
+    const thoughtPref = await store.getThoughtPreference(profile.key);
+    if (thoughtPref && thoughtPref.contactKeyStr !== desiredKeyStr) {
+      await store.saveThoughtPreference({ ...thoughtPref, contactKeyStr: desiredKeyStr, updatedAt: Date.now() });
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
     const memory = await store.getContactMemorySummary(profile.key);
     if (memory && memory.summary) {
       await store.saveContactMemorySummary(contactKey, memory.summary);
@@ -2065,6 +2232,65 @@ async function maybeMigrateContactState(contactKey: ContactKey, profile: Contact
   }
 
   return migrated;
+}
+
+type GenerateReplyErrorCategory =
+  | 'missing_api_key'
+  | 'privacy_unacknowledged'
+  | 'parse_error'
+  | 'timeout'
+  | 'rate_limit'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'server_error'
+  | 'network_error'
+  | 'db_error'
+  | 'unknown';
+
+function classifyGenerateReplyError(error: unknown): GenerateReplyErrorCategory {
+  if (error instanceof ReplyParseError) {
+    return 'parse_error';
+  }
+
+  const message = redactSecrets(error instanceof Error ? error.message : String(error));
+  const text = message.toLowerCase();
+
+  if (
+    text.includes('indexeddb')
+    || text.includes('database not initialized')
+    || text.includes('数据库')
+  ) {
+    return 'db_error';
+  }
+
+  if (text.includes('timed out') || text.includes('timeout')) {
+    return 'timeout';
+  }
+  if (text.includes('429')) {
+    return 'rate_limit';
+  }
+  if (text.includes('401')) {
+    return 'unauthorized';
+  }
+  if (text.includes('403')) {
+    return 'forbidden';
+  }
+  if (/(500|502|503|504)/.test(text)) {
+    return 'server_error';
+  }
+
+  if (
+    text.includes('fetch failed')
+    || text.includes('network')
+    || text.includes('econnrefused')
+    || text.includes('econnreset')
+    || text.includes('enet')
+    || text.includes('ehost')
+  ) {
+    return 'network_error';
+  }
+
+  return 'unknown';
 }
 
 function toUserErrorMessage(error: unknown): string {
@@ -2150,6 +2376,10 @@ async function maybeUpdateProfile(
         }
         if (debugEnabled) {
           debugLog('[Social Copilot] Profile updated');
+        }
+      } else {
+        if (debugEnabled) {
+          debugLog('[Social Copilot] Profile update skipped: no incremental changes for', profile.displayName);
         }
       }
     } catch (error) {
@@ -2274,6 +2504,7 @@ async function clearContactData(contactKey: ContactKey) {
   await store.deleteMessages(contactKey);
   await store.deleteProfile(contactKey);
   await store.deleteStylePreference(contactKey);
+  await store.deleteThoughtPreference(contactKey);
   await store.deleteContactMemorySummary(contactKey);
 
   // Best-effort: clear counters for all known key variants
@@ -2372,6 +2603,7 @@ async function clearData() {
   fallbackModeActive = false;
   profileUpdater = null;
   preferenceManager = null;
+  thoughtPreferenceManager = null;
   currentConfig = null;
   storeReady = null;
   storeInitError = null;
@@ -2424,6 +2656,15 @@ async function recordStyleSelection(contactKey: ContactKey, style: ReplyStyle) {
   return { success: true };
 }
 
+async function recordThoughtSelection(contactKey: ContactKey, thought: ThoughtType) {
+  if (!THOUGHT_CARDS[thought]) return { success: false };
+  if (!thoughtPreferenceManager) {
+    thoughtPreferenceManager = new ThoughtPreferenceManager(store);
+  }
+  await thoughtPreferenceManager.recordThoughtSelection(contactKey, thought);
+  return { success: true };
+}
+
 async function getStylePreference(contactKey: ContactKey) {
   if (!preferenceManager) {
     preferenceManager = new StylePreferenceManager(store);
@@ -2437,6 +2678,14 @@ async function resetStylePreference(contactKey: ContactKey) {
     preferenceManager = new StylePreferenceManager(store);
   }
   await preferenceManager.resetPreference(contactKey);
+  return { success: true };
+}
+
+async function resetThoughtPreference(contactKey: ContactKey) {
+  if (!thoughtPreferenceManager) {
+    thoughtPreferenceManager = new ThoughtPreferenceManager(store);
+  }
+  await thoughtPreferenceManager.resetPreference(contactKey);
   return { success: true };
 }
 
@@ -2455,6 +2704,7 @@ interface UserDataBackupV1 {
   data: {
     profiles: ContactProfile[];
     stylePreferences: StylePreference[];
+    thoughtPreferences: ThoughtPreference[];
     contactMemories: ContactMemorySummary[];
     profileUpdateCounts: Record<string, number>;
     memoryUpdateCounts: Record<string, number>;
@@ -2474,6 +2724,12 @@ function normalizeCountRecordKeys(record: Record<string, number>): Record<string
 async function exportUserData(): Promise<{ backup: UserDataBackupV1 }> {
   const profiles = await store.getAllProfiles();
   const stylePreferences = await store.getAllStylePreferences();
+  let thoughtPreferences: ThoughtPreference[] = [];
+  try {
+    thoughtPreferences = await store.getAllThoughtPreferences();
+  } catch {
+    thoughtPreferences = [];
+  }
   const contactMemories = await store.getAllContactMemorySummaries();
 
   const profileUpdateCounts: Record<string, number> = {};
@@ -2493,6 +2749,7 @@ async function exportUserData(): Promise<{ backup: UserDataBackupV1 }> {
       data: {
         profiles,
         stylePreferences,
+        thoughtPreferences,
         contactMemories,
         profileUpdateCounts,
         memoryUpdateCounts,
@@ -2512,9 +2769,15 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
   const validatedData = validationResult.data;
   const profileUpdateCounts = normalizeCountRecordKeys(validatedData.data.profileUpdateCounts);
   const memoryUpdateCounts = normalizeCountRecordKeys(validatedData.data.memoryUpdateCounts);
+  const thoughtPreferences = Array.isArray(validatedData.data.thoughtPreferences)
+    ? validatedData.data.thoughtPreferences
+    : [];
 
   let importResult:
-    | { imported: { profiles: number; stylePreferences: number; contactMemories: number }; skipped: Record<string, number> }
+    | {
+      imported: { profiles: number; stylePreferences: number; thoughtPreferences: number; contactMemories: number };
+      skipped: Record<string, number>;
+    }
     | null = null;
   try {
     importResult = await store.importSnapshot({
@@ -2522,6 +2785,7 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
       exportedAt: Date.now(),
       profiles: validatedData.data.profiles,
       stylePreferences: validatedData.data.stylePreferences,
+      thoughtPreferences,
       contactMemories: validatedData.data.contactMemories,
     });
   } catch (err) {
@@ -2531,6 +2795,7 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
 
   const profiles = importResult.imported.profiles;
   const stylePreferences = importResult.imported.stylePreferences;
+  const thoughtPreferencesImported = importResult.imported.thoughtPreferences;
   const contactMemories = importResult.imported.contactMemories;
 
   lastProfileUpdateCount.clear();
@@ -2555,7 +2820,7 @@ async function importUserData(payload: unknown): Promise<{ success: boolean; err
 
   return {
     success: true,
-    imported: { profiles, stylePreferences, contactMemories },
+    imported: { profiles, stylePreferences, thoughtPreferences: thoughtPreferencesImported, contactMemories },
     skipped: importResult.skipped,
   };
 }

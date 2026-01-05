@@ -2,6 +2,7 @@ import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
 import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
 import { debugError, debugLog } from '../utils/debug';
+import { getMergedSelectors } from '../utils/remote-config';
 
 /**
  * Telegram Web 适配器
@@ -17,6 +18,8 @@ export class TelegramAdapter implements PlatformAdapter {
   private isDisposed = false;
   private setupTimeoutId: number | null = null;
   private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
+  private mergedSelectorsK: Record<string, string> | null = null;
+  private mergedSelectorsA: Record<string, string> | null = null;
 
   private isDev(): boolean {
     return (
@@ -56,7 +59,8 @@ export class TelegramAdapter implements PlatformAdapter {
   };
 
   private get selectors() {
-    return this.version === 'a' ? this.selectorsA : this.selectorsK;
+    const merged = this.version === 'a' ? this.mergedSelectorsA : this.mergedSelectorsK;
+    return merged ?? (this.version === 'a' ? this.selectorsA : this.selectorsK);
   }
 
   isMatch(): boolean {
@@ -77,6 +81,9 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   private extractConversationId(): string | null {
+    const domId = this.extractConversationIdFromDom();
+    if (domId) return domId;
+
     const hash = window.location.hash || '';
 
     // Common forms:
@@ -96,6 +103,30 @@ export class TelegramAdapter implements PlatformAdapter {
     return null;
   }
 
+  private extractConversationIdFromDom(): string | null {
+    const titleEl = document.querySelector(this.selectors.chatTitle);
+    if (!titleEl) return null;
+
+    const directHost = titleEl.closest('[data-peer-id], [data-peer-id-string], [data-peer]');
+    const direct =
+      directHost?.getAttribute('data-peer-id') ||
+      directHost?.getAttribute('data-peer-id-string') ||
+      directHost?.getAttribute('data-peer');
+    if (direct?.trim()) return direct.trim();
+
+    const header =
+      titleEl.closest('.chat-info, .ChatInfo, .top, .TopBar, header') ||
+      titleEl.parentElement;
+    const candidate = header?.querySelector('[data-peer-id], [data-peer-id-string], [data-peer]') as HTMLElement | null;
+    const fromHeader =
+      candidate?.getAttribute('data-peer-id') ||
+      candidate?.getAttribute('data-peer-id-string') ||
+      candidate?.getAttribute('data-peer');
+    if (fromHeader?.trim()) return fromHeader.trim();
+
+    return null;
+  }
+
   private detectVersion(): void {
     const path = window.location.pathname;
     if (path.startsWith('/a')) {
@@ -105,6 +136,25 @@ export class TelegramAdapter implements PlatformAdapter {
     }
     if (this.isDev()) {
       debugLog(`[Social Copilot] Detected Telegram Web version: ${this.version}`);
+    }
+  }
+
+  /**
+   * 尝试从远程配置更新选择器（非阻塞，失败不影响运行）
+   */
+  private async updateSelectorsFromRemote() {
+    try {
+      this.detectVersion();
+      const currentDefault = this.version === 'a' ? this.selectorsA : this.selectorsK;
+      const merged = await getMergedSelectors('telegram', this.version, currentDefault);
+      if (this.version === 'a') {
+        this.mergedSelectorsA = merged;
+      } else {
+        this.mergedSelectorsK = merged;
+      }
+      debugLog('[Social Copilot] Telegram selectors updated from remote config', merged);
+    } catch (e) {
+      debugError('[Social Copilot] Failed to update Telegram selectors remotely', e);
     }
   }
 
@@ -223,6 +273,9 @@ export class TelegramAdapter implements PlatformAdapter {
 
   onNewMessage(callback: (message: Message) => void): () => void {
     this.isDisposed = false;
+
+    // 初始化时异步拉取远程配置
+    void this.updateSelectorsFromRemote();
     
     const findContainer = (): HTMLElement | null => {
       return this.findChatContainer();

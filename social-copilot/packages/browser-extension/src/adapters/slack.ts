@@ -2,6 +2,7 @@ import type { Message, ContactKey } from '@social-copilot/core';
 import type { PlatformAdapter } from './base';
 import { buildMessageId, dispatchInputLikeEvent, parseTimestampFromText, queryFirst, setEditableText } from './base';
 import { debugError, debugLog } from '../utils/debug';
+import { getMergedSelectors } from '../utils/remote-config';
 
 /**
  * Slack Web 适配器
@@ -15,6 +16,7 @@ export class SlackAdapter implements PlatformAdapter {
   private setupTimeoutId: number | null = null;
   private variant: 'virtual_list' | 'scroller' | 'fallback' = 'virtual_list';
   private selectorHints: Partial<Record<'chatContainer' | 'message' | 'inputBox', string>> = {};
+  private mergedSelectors: Record<string, string> | null = null;
 
   private isDev(): boolean {
     return (
@@ -25,7 +27,7 @@ export class SlackAdapter implements PlatformAdapter {
     );
   }
 
-  private readonly selectors = {
+  private readonly defaultSelectors = {
     chatContainer: '.c-virtual_list__scroll_container, .p-message_pane__scroller',
     message: '[data-qa="message_container"]',
     messageText: '.c-message__body, .p-rich_text_section',
@@ -36,8 +38,25 @@ export class SlackAdapter implements PlatformAdapter {
     time: '[data-qa="message_time"]',
   };
 
+  private get selectors() {
+    return this.mergedSelectors ?? this.defaultSelectors;
+  }
+
   isMatch(): boolean {
     return window.location.hostname === 'app.slack.com';
+  }
+
+  /**
+   * 尝试从远程配置更新选择器（非阻塞）
+   */
+  private async updateSelectorsFromRemote() {
+    try {
+      const merged = await getMergedSelectors('slack', this.variant, this.defaultSelectors);
+      this.mergedSelectors = merged;
+      debugLog('[Social Copilot] Slack selectors updated from remote config', merged);
+    } catch (e) {
+      debugError('[Social Copilot] Failed to update Slack selectors remotely', e);
+    }
   }
 
   private findChatContainer(): HTMLElement | null {
@@ -103,15 +122,72 @@ export class SlackAdapter implements PlatformAdapter {
     return slack.TS?.boot_data?.user_id || slack.TS?.model?.user?.id || null;
   }
 
+  private getWorkspaceId(): string | null {
+    const pathMatch = window.location.pathname.match(/\/client\/([^/]+)\/([^/]+)/);
+    const teamId = pathMatch?.[1];
+    if (teamId) return teamId;
+
+    try {
+      const raw = localStorage.getItem('localConfig_v2') || localStorage.getItem('localConfig');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const fromStorage = typeof parsed.team_id === 'string'
+          ? parsed.team_id
+          : typeof parsed.teamId === 'string'
+            ? parsed.teamId
+            : typeof parsed.team === 'string'
+              ? parsed.team
+              : undefined;
+        if (fromStorage?.trim()) return fromStorage.trim();
+      }
+    } catch {
+      // ignore
+    }
+
+    const slack = window as unknown as { TS?: { boot_data?: { team_id?: string }; model?: { team?: { id?: string } } } };
+    return slack.TS?.boot_data?.team_id || slack.TS?.model?.team?.id || null;
+  }
+
+  private extractChannelIdFromDom(): string | null {
+    const header =
+      document.querySelector<HTMLElement>('[data-qa="channel_header"], .p-view_header, .p-classic_nav__channel_header') ??
+      document.querySelector<HTMLElement>('[data-qa="message_pane"]');
+    if (!header) return null;
+    const attr =
+      header.getAttribute('data-qa-channel-id') ||
+      header.getAttribute('data-channel-id') ||
+      header.dataset.channelId ||
+      header.dataset.qaChannelId;
+    return attr?.trim() || null;
+  }
+
+  private extractChannelIdFromHash(): string | null {
+    const hash = window.location.hash || '';
+    const match = hash.match(/(?:^|\/)([CDG][A-Z0-9]{5,})/);
+    return match?.[1] ?? null;
+  }
+
+  private getActiveChannelIdFromGlobal(): string | null {
+    const slack = window as unknown as {
+      TS?: { model?: { activeChannelId?: string; active_channel_id?: string } };
+    };
+    return slack.TS?.model?.activeChannelId || slack.TS?.model?.active_channel_id || null;
+  }
+
   extractContactKey(): ContactKey | null {
     const pathMatch = window.location.pathname.match(/\/client\/([^/]+)\/([^/]+)/);
-    const teamId = pathMatch?.[1] || '';
-    const channelId = pathMatch?.[2] || '';
+    const channelId =
+      pathMatch?.[2] ||
+      this.getActiveChannelIdFromGlobal() ||
+      this.extractChannelIdFromDom() ||
+      this.extractChannelIdFromHash() ||
+      '';
+    const teamId = this.getWorkspaceId() || '';
 
     const titleEl = document.querySelector(this.selectors.chatTitle);
     const peerName = titleEl?.textContent?.trim() || 'Unknown';
 
-    const isGroup = !channelId.startsWith('D');
+    const isGroup = channelId ? !channelId.startsWith('D') : false;
 
     return {
       platform: 'web',
@@ -206,6 +282,9 @@ export class SlackAdapter implements PlatformAdapter {
 
   onNewMessage(callback: (message: Message) => void): () => void {
     this.isDisposed = false;
+
+    // 初始化时异步拉取远程配置
+    void this.updateSelectorsFromRemote();
     
     const findContainer = (): HTMLElement | null => {
       return document.querySelector(this.selectors.chatContainer) as HTMLElement;

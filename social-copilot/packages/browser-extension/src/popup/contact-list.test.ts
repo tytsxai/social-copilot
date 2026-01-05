@@ -135,7 +135,7 @@ describe('Contact List Layout', () => {
     expect(header.contains(actions)).toBe(false);
     expect(contactItem.contains(actions)).toBe(true);
     
-    expect(actions.querySelectorAll('button').length).toBe(3);
+    expect(actions.querySelectorAll('button').length).toBe(4);
 
     // Check memory box
     const memoryBox = contactItem.querySelector('.memory-box')!;
@@ -177,6 +177,17 @@ describe('Contact List Layout', () => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'RESET_STYLE_PREFERENCE',
+        contactKey: mockContacts[0].key,
+      }),
+      expect.any(Function)
+    );
+
+    // Test Reset Thought Preference
+    const resetThoughtBtn = contactList.querySelector('.reset-thought-btn') as HTMLButtonElement;
+    resetThoughtBtn.click();
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'RESET_THOUGHT_PREFERENCE',
         contactKey: mockContacts[0].key,
       }),
       expect.any(Function)

@@ -10,6 +10,7 @@
     "https://api.deepseek.com/*",
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
+    "https://api.siliconflow.cn/*",
     "https://web.telegram.org/*",
     "https://web.whatsapp.com/*",
     "https://app.slack.com/*",

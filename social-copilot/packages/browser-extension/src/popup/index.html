@@ -327,6 +327,7 @@
       }
 
       .reset-pref-btn,
+      .reset-thought-btn,
       .clear-memory-btn,
       .clear-contact-btn {
         cursor: pointer;
@@ -430,7 +431,7 @@
           <input type="checkbox" id="persistApiKey">
           记住 API Key
         </label>
-        <small>不勾选则密钥仅本次浏览器会话有效（重启浏览器需重新输入）</small>
+        <small>不勾选则密钥仅本次浏览器会话有效（重启浏览器需重新输入）；若浏览器不支持 session，长时间未使用可能失效</small>
       </div>
     </div>
 
@@ -480,6 +481,16 @@
         自动代理（收到消息自动发送）
       </label>
       <small class="muted">默认关闭；开启后会尝试自动填充并按 Enter 发送（不同平台可能无效或需手动确认）</small>
+    </div>
+
+    <div class="form-group">
+      <label for="cacheStrategy">建议缓存策略</label>
+      <select id="cacheStrategy">
+        <option value="auto">仅自动触发使用缓存（推荐）</option>
+        <option value="always">始终使用缓存（减少成本）</option>
+        <option value="off">关闭缓存（每次都重新生成）</option>
+      </select>
+      <small class="muted">缓存可减少重复请求；手动触发会优先获取新的建议</small>
     </div>
 
     <div class="fallback-card" style="margin-top: 12px;">
@@ -685,7 +696,7 @@
           placeholder="https://raw.githubusercontent.com/<owner>/<repo>/<branch>/selectors.json"
           autocomplete="off"
         >
-        <small class="muted">仅支持 raw.githubusercontent.com 的 https JSON；留空则禁用远程配置</small>
+        <small class="muted">仅支持 raw.githubusercontent.com 的 https JSON；分支名不能包含 /；留空则禁用远程配置</small>
       </div>
 
       <div class="button-stack">

@@ -24,7 +24,9 @@ describe('Popup Accessibility', () => {
     expect(htmlContent).toMatch(/\.tab\s*{[^}]*cursor:\s*pointer/);
     expect(htmlContent).toMatch(/button\.primary\s*{[^}]*cursor:\s*pointer/);
     expect(htmlContent).toMatch(/button\.secondary\s*{[^}]*cursor:\s*pointer/);
-    expect(htmlContent).toMatch(/\.reset-pref-btn,\s*\.clear-memory-btn,\s*\.clear-contact-btn\s*{[^}]*cursor:\s*pointer/);
+    expect(htmlContent).toMatch(
+      /\.reset-pref-btn,\s*\.reset-thought-btn,\s*\.clear-memory-btn,\s*\.clear-contact-btn\s*{[^}]*cursor:\s*pointer/
+    );
   });
 
   test('contact-item should NOT have cursor: pointer', () => {

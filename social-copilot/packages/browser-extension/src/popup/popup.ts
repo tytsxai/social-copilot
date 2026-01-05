@@ -9,6 +9,7 @@ import {
   storageLocalRemove,
   storageLocalSet,
 } from '../utils/webext';
+import { validateRemoteSelectorsUrl } from '../utils/remote-config';
 
 // DOM 元素
 const statusEl = document.getElementById('status')!;
@@ -28,6 +29,7 @@ const languageSelect = document.getElementById('language') as HTMLSelectElement;
 const autoInGroupsCheckbox = document.getElementById('autoInGroups') as HTMLInputElement;
 const autoTriggerCheckbox = document.getElementById('autoTrigger') as HTMLInputElement;
 const autoAgentCheckbox = document.getElementById('autoAgent') as HTMLInputElement;
+const cacheStrategySelect = document.getElementById('cacheStrategy') as HTMLSelectElement | null;
 const customSystemPromptInput = document.getElementById('customSystemPrompt') as HTMLTextAreaElement;
 const customUserPromptInput = document.getElementById('customUserPrompt') as HTMLTextAreaElement;
 const privacyAcknowledgedCheckbox = document.getElementById('privacyAcknowledged') as HTMLInputElement;
@@ -122,6 +124,7 @@ type PopupStoredConfigRecord = Record<string, unknown> &
     fallbackApiKey: string;
     enableFallback: boolean;
     suggestionCount: number | string;
+    cacheStrategy: string;
     persistApiKey: boolean;
     enableMemory: boolean;
   }>;
@@ -224,6 +227,12 @@ if (contactListEl) {
       if (btn.classList.contains('reset-pref-btn')) {
         if (!confirm(`重置 ${contact.displayName} 的风格偏好？`)) return;
         await runtimeSendMessage({ type: 'RESET_STYLE_PREFERENCE', contactKey: contact.key });
+        await loadContacts();
+        return;
+      }
+      if (btn.classList.contains('reset-thought-btn')) {
+        if (!confirm(`重置 ${contact.displayName} 的思路偏好？`)) return;
+        await runtimeSendMessage({ type: 'RESET_THOUGHT_PREFERENCE', contactKey: contact.key });
         await loadContacts();
         return;
       }
@@ -338,6 +347,11 @@ async function loadContacts() {
       resetBtn.setAttribute('data-index', String(index));
       resetBtn.textContent = '重置偏好';
 
+      const resetThoughtBtn = document.createElement('button');
+      resetThoughtBtn.className = 'reset-thought-btn';
+      resetThoughtBtn.setAttribute('data-index', String(index));
+      resetThoughtBtn.textContent = '重置思路偏好';
+
       const clearMemoryBtn = document.createElement('button');
       clearMemoryBtn.className = 'clear-memory-btn';
       clearMemoryBtn.setAttribute('data-index', String(index));
@@ -349,6 +363,7 @@ async function loadContacts() {
       clearContactBtn.textContent = '清除数据';
 
       actions.appendChild(resetBtn);
+      actions.appendChild(resetThoughtBtn);
       actions.appendChild(clearMemoryBtn);
       actions.appendChild(clearContactBtn);
 
@@ -677,6 +692,11 @@ function buildConfigFromForm() {
   const autoInGroups = autoInGroupsCheckbox.checked;
   const autoTrigger = autoTriggerCheckbox.checked;
   const autoAgent = autoAgentCheckbox.checked;
+  const cacheStrategyRaw = cacheStrategySelect?.value;
+  const cacheStrategy =
+    cacheStrategyRaw === 'off' || cacheStrategyRaw === 'auto' || cacheStrategyRaw === 'always'
+      ? cacheStrategyRaw
+      : 'auto';
   const privacyAcknowledged = privacyAcknowledgedCheckbox.checked;
   const redactPii = redactPiiCheckbox.checked;
   const anonymizeSenders = anonymizeSendersCheckbox.checked;
@@ -732,6 +752,7 @@ function buildConfigFromForm() {
     autoInGroups,
     autoTrigger,
     autoAgent,
+    cacheStrategy,
     customSystemPrompt: customSystemPrompt || undefined,
     customUserPrompt: customUserPrompt || undefined,
     privacyAcknowledged,
@@ -836,6 +857,7 @@ async function loadSettings() {
     'fallbackApiKey',
     'enableFallback',
     'suggestionCount',
+    'cacheStrategy',
     'persistApiKey',
     'enableMemory',
   ]);
@@ -912,6 +934,11 @@ async function loadSettings() {
   autoInGroupsCheckbox.checked = Boolean(result.autoInGroups);
   autoTriggerCheckbox.checked = result.autoTrigger === undefined ? true : Boolean(result.autoTrigger);
   autoAgentCheckbox.checked = Boolean(result.autoAgent);
+  if (cacheStrategySelect) {
+    const strategy = result.cacheStrategy;
+    cacheStrategySelect.value =
+      strategy === 'off' || strategy === 'auto' || strategy === 'always' ? strategy : 'auto';
+  }
   privacyAcknowledgedCheckbox.checked = result.privacyAcknowledged === undefined ? false : Boolean(result.privacyAcknowledged);
 
   customSystemPromptInput.value = typeof result.customSystemPrompt === 'string' ? result.customSystemPrompt : '';
@@ -1038,13 +1065,18 @@ saveBtn.addEventListener('click', async () => {
     return;
   }
 
-  statusEl.className = 'status success';
-  statusEl.textContent = '设置已保存';
+  let remoteSelectorsWarning: string | null = null;
 
   if (remoteSelectorsUrlInput) {
     const value = remoteSelectorsUrlInput.value.trim();
     if (value) {
-      await storageLocalSet({ remoteSelectorsUrl: value });
+      const validated = validateRemoteSelectorsUrl(value);
+      if (validated) {
+        await storageLocalSet({ remoteSelectorsUrl: validated });
+      } else {
+        await storageLocalRemove('remoteSelectorsUrl');
+        remoteSelectorsWarning = '远程选择器 URL 无效，需为 https://raw.githubusercontent.com/<owner>/<repo>/<branch>/selectors.json';
+      }
     } else {
       await storageLocalRemove('remoteSelectorsUrl');
     }
@@ -1056,6 +1088,9 @@ saveBtn.addEventListener('click', async () => {
   }
 
   await checkStatus();
+  if (remoteSelectorsWarning) {
+    alert(remoteSelectorsWarning);
+  }
 });
 
 function downloadJson(filename: string, json: string) {

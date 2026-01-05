@@ -13,6 +13,9 @@ import {
 export type SupportedApp = 'telegram' | 'whatsapp' | 'slack';
 
 const DEFAULT_SEND_MESSAGE_TIMEOUT_MS = 30_000;
+const AUTO_FAILURE_WINDOW_MS = 2 * 60_000;
+const AUTO_FAILURE_THRESHOLD = 3;
+const AUTO_COOLDOWN_MS = 60_000;
 
 const isDevMode = (): boolean => {
   return (
@@ -158,6 +161,9 @@ export class CopilotContentScript {
 
   private consecutiveAdapterFailures = 0;
   private autoDisabled = false;
+  private autoFailureCount = 0;
+  private autoFailureWindowStart = 0;
+  private autoCooldownUntil = 0;
   private autoRecoveryTimer: number | null = null;
   private readonly adapterFailureThreshold = 3;
   private readonly autoRecoveryDelayMs = 5000;
@@ -585,6 +591,11 @@ export class CopilotContentScript {
       return;
     }
 
+    if (this.isAutoCooldownActive()) {
+      this.lastMessageId = message.id;
+      return;
+    }
+
     this.lastMessageId = message.id;
     this.pendingIncomingMessage = message;
     const epoch = this.conversationEpoch;
@@ -609,6 +620,7 @@ export class CopilotContentScript {
   private async analyzeAndGenerateSuggestions(currentMessage: Message, epoch: number) {
     if (this.isDestroyed) return;
     if (epoch !== this.conversationEpoch) return;
+    if (this.isAutoCooldownActive()) return;
     const contactKey = this.adapter.extractContactKey();
     if (!contactKey) {
       this.recordAdapterFailure();
@@ -867,6 +879,7 @@ export class CopilotContentScript {
           messages,
           currentMessage,
           thoughtDirection: selectedThought,
+          source,
         },
       });
 
@@ -876,14 +889,17 @@ export class CopilotContentScript {
 
       if (response?.error) {
         this.ui.setError(response.error);
+        if (source === 'auto') this.recordAutoFailure();
       } else if (response?.candidates) {
         this.ui.setCandidates(response.candidates);
         this.updateProviderNotice(response);
+        this.recordAutoSuccess();
         if (source === 'auto' && this.autoAgent) {
           void this.autoReply(response.candidates);
         }
       } else {
         this.ui.setError('未收到有效响应');
+        if (source === 'auto') this.recordAutoFailure();
       }
     } catch (error) {
       if (!this.isDestroyed) {
@@ -893,6 +909,7 @@ export class CopilotContentScript {
         } else {
           this.ui.setError('生成建议失败');
         }
+        if (source === 'auto') this.recordAutoFailure();
         this.recordAdapterFailure();
       }
     } finally {
@@ -955,6 +972,62 @@ export class CopilotContentScript {
     } catch {
       return false;
     }
+  }
+
+  private isAutoCooldownActive(): boolean {
+    if (this.autoCooldownUntil === 0) return false;
+    if (this.autoCooldownUntil <= Date.now()) {
+      this.autoCooldownUntil = 0;
+      this.reportAutoCooldown(false, 'timeout');
+      return false;
+    }
+    return true;
+  }
+
+  private recordAutoFailure(): void {
+    const now = Date.now();
+    if (!this.autoFailureWindowStart || now - this.autoFailureWindowStart > AUTO_FAILURE_WINDOW_MS) {
+      this.autoFailureWindowStart = now;
+      this.autoFailureCount = 1;
+      return;
+    }
+
+    this.autoFailureCount += 1;
+    if (this.autoFailureCount < AUTO_FAILURE_THRESHOLD) return;
+
+    this.autoCooldownUntil = now + AUTO_COOLDOWN_MS;
+    this.reportAutoCooldown(true, 'threshold', this.autoFailureCount);
+    this.autoFailureCount = 0;
+    this.autoFailureWindowStart = 0;
+  }
+
+  private recordAutoSuccess(): void {
+    const hadCooldown = this.autoCooldownUntil > 0;
+    const hadFailures = this.autoFailureCount > 0 || this.autoFailureWindowStart > 0;
+    this.autoFailureCount = 0;
+    this.autoFailureWindowStart = 0;
+    this.autoCooldownUntil = 0;
+    if (hadCooldown || hadFailures) {
+      this.reportAutoCooldown(false, 'success');
+    }
+  }
+
+  private reportAutoCooldown(active: boolean, reason: 'threshold' | 'timeout' | 'success', failureCount = 0) {
+    void sendMessageWithTimeout({
+      type: 'REPORT_AUTO_COOLDOWN',
+      payload: {
+        app: this.options.app,
+        host: location.host,
+        pathnameKind: this.summarizePathnameKind(location.pathname),
+        pathnameLen: (location.pathname ?? '').length,
+        active,
+        reason,
+        failureCount,
+        windowMs: AUTO_FAILURE_WINDOW_MS,
+        cooldownMs: AUTO_COOLDOWN_MS,
+        cooldownUntil: this.autoCooldownUntil || undefined,
+      },
+    }).catch(() => {});
   }
 
   private handleSelect(candidate: ReplyCandidate) {
