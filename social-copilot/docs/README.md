@@ -13,6 +13,14 @@
 - 贡献：`CONTRIBUTING.md`
 - 变更记录：`../CHANGELOG.md`
 
+## 深度开发指南
+
+- 平台适配器开发：`ADAPTER_DEVELOPMENT.md`
+- LLM 提供商集成：`LLM_INTEGRATION.md`
+- 存储层与数据迁移：`MEMORY_STORAGE.md`
+- 思路分析系统：`THOUGHT_SYSTEM.md`
+- 测试策略：`TESTING.md`
+
 ## 常见任务
 
 - 本地开发与调试：`DEVELOPMENT.md`

@@ -144,3 +144,97 @@ const manager = new LLMManager(config, {
   },
 });
 ```
+
+## 添加新提供商
+
+### 步骤 1: 创建提供商类
+
+```typescript
+// packages/core/src/llm/my-provider.ts
+
+import type { LLMProvider, LLMInput, LLMOutput } from '../types';
+
+export class MyProvider implements LLMProvider {
+  readonly name = 'my-provider';
+
+  constructor(private config: { apiKey: string; model?: string }) {}
+
+  async generateReply(input: LLMInput): Promise<LLMOutput> {
+    const response = await fetch('https://api.example.com/chat', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ messages: input.messages }),
+    });
+
+    const data = await response.json();
+    return { replies: this.parseReplies(data) };
+  }
+}
+```
+
+### 步骤 2: 注册到 LLMManager
+
+在 `llm-manager.ts` 的 `createProvider` 方法中添加新提供商。
+
+## 提示词钩子系统
+
+钩子系统允许在提示词构建过程中注入自定义逻辑：
+
+```typescript
+import { PromptHookRegistry } from '@social-copilot/core';
+
+const registry = new PromptHookRegistry();
+
+registry.register('beforeBuild', (context) => {
+  // 在构建提示词前修改上下文
+  return { ...context, customField: 'value' };
+});
+
+registry.register('afterBuild', (prompt) => {
+  // 在构建后修改提示词
+  return prompt + '\n请保持简洁。';
+});
+```
+
+## 缓存策略
+
+LLMManager 内置 LRU 缓存，避免重复请求：
+
+- **容量**: 默认 100 条
+- **TTL**: 默认 5 分钟
+- **去重**: 并发相同请求自动合并
+
+```typescript
+// 获取缓存统计
+const stats = manager.getCacheStats();
+console.log(`命中率: ${(stats.hitRate * 100).toFixed(1)}%`);
+
+// 清除缓存
+manager.clearCache();
+```
+
+## 错误处理
+
+### 自动重试
+
+网络错误自动重试（最多 2 次），指数退避：
+
+- 第 1 次重试: 500ms
+- 第 2 次重试: 1000ms
+
+### 回退机制
+
+主提供商失败后自动切换到备用提供商，15 秒冷却期后尝试恢复。
+
+### 解析错误重试
+
+`ReplyParseError` 时自动追加 JSON 格式提示重试一次。
+
+---
+
+**相关文档**:
+- [架构设计](./ARCHITECTURE.md)
+- [思路系统](./THOUGHT_SYSTEM.md)
