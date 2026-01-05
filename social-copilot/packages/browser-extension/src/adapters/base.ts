@@ -39,6 +39,10 @@ export interface PlatformAdapter {
   getRuntimeInfo?(): AdapterRuntimeInfo;
 }
 
+/**
+ * 分割选择器字符串为数组
+ * @param selectors - 逗号分隔的选择器字符串
+ */
 export function splitSelectors(selectors: string): string[] {
   return selectors
     .split(',')
@@ -46,6 +50,12 @@ export function splitSelectors(selectors: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 按优先级查询第一个匹配的元素
+ * @param selectors - 选择器数组或逗号分隔字符串
+ * @param root - 查询根节点
+ * @returns 匹配的元素和选择器，或 null
+ */
 export function queryFirst<T extends Element = Element>(
   selectors: string | string[],
   root: ParentNode = document
@@ -92,6 +102,10 @@ function hashString(input: string): string {
   return (hash >>> 0).toString(36);
 }
 
+/**
+ * 构建稳定的消息 ID
+ * 优先使用平台提供的 ID，否则基于内容生成哈希
+ */
 export function buildMessageId(args: {
   preferredId?: string | null;
   contactKey: ContactKey;
@@ -118,6 +132,10 @@ export function buildMessageId(args: {
   return `${contactKeyStr}::f_${stable}`;
 }
 
+/**
+ * 解析时间文本为时间戳
+ * 支持多种格式：HH:MM AM/PM、昨天、日期等
+ */
 export function parseTimestampFromText(timeText: string, now: Date = new Date()): number {
   const text = (timeText ?? '').trim();
   if (!text) return Date.now();
@@ -176,6 +194,10 @@ export function parseTimestampFromText(timeText: string, now: Date = new Date())
   return Date.now();
 }
 
+/**
+ * 设置可编辑元素的文本内容
+ * 支持 input/textarea 和 contenteditable 元素
+ */
 export function setEditableText(element: Element | null, text: string): boolean {
   if (!element) return false;
 
@@ -215,6 +237,10 @@ export function setEditableText(element: Element | null, text: string): boolean 
   }
 }
 
+/**
+ * 触发 input 事件通知框架文本已更改
+ * 兼容不同浏览器和框架的事件处理
+ */
 export function dispatchInputLikeEvent(element: Element | null, text: string): boolean {
   if (!element) return false;
 
