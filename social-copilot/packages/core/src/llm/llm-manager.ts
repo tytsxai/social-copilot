@@ -57,7 +57,8 @@ interface LRUNode {
 }
 
 /**
- * Lightweight LRU Cache implementation
+ * LRU 缓存实现
+ * 用于缓存 LLM 响应，避免重复请求
  */
 class LRUCache {
   private capacity: number;
@@ -170,11 +171,21 @@ class LRUCache {
 }
 
 /**
- * LLM Manager with automatic fallback support, request deduplication, and LRU caching
+ * LLM 管理器
  *
- * Manages primary and fallback LLM providers, automatically switching
- * to fallback when primary fails and recovering when primary is healthy again.
- * Includes request deduplication for concurrent identical requests and LRU caching.
+ * 提供统一的 LLM 调用入口，支持：
+ * - 主/备提供商自动切换
+ * - 请求去重与 LRU 缓存
+ * - 网络错误自动重试
+ *
+ * @example
+ * ```typescript
+ * const manager = new LLMManager({
+ *   primary: { provider: 'deepseek', apiKey: 'sk-xxx' },
+ *   fallback: { provider: 'openai', apiKey: 'sk-yyy' },
+ * });
+ * const result = await manager.generateReply(input);
+ * ```
  */
 export class LLMManager {
   private primaryProvider: LLMProvider;
@@ -258,7 +269,8 @@ export class LLMManager {
 
 
   /**
-   * Generate cache key from input
+   * 生成缓存键
+   * 使用 FNV-1a 64-bit 哈希确保稳定性
    */
   private generateCacheKey(input: LLMInput): string {
     const inputStr = stableStringify(input);
@@ -267,7 +279,10 @@ export class LLMManager {
   }
 
   /**
-   * Generate reply with automatic fallback handling, deduplication, and caching
+   * 生成回复
+   * 支持缓存、去重和自动回退
+   * @param input - LLM 输入参数
+   * @returns LLM 输出结果
    */
   async generateReply(input: LLMInput): Promise<LLMOutput> {
     // Generate cache key before any modifications

@@ -440,6 +440,9 @@ function sanitizeContactMemorySummary(raw: unknown): ContactMemorySummary | null
 
 /**
  * IndexedDB 存储实现
+ *
+ * 提供消息、联系人画像、风格偏好等数据的持久化存储。
+ * 支持自动清理、数据迁移和向后兼容。
  */
 export class IndexedDBStore implements MemoryStore {
   private db: IDBDatabase | null = null;
