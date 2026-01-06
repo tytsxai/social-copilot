@@ -2,11 +2,12 @@ import type { LLMInput, LLMOutput, LLMProvider } from '../types';
 import { ReplyParseError } from './reply-validation';
 import { DeepSeekProvider } from './provider';
 import { OpenAIProvider } from './openai';
+import { NvidiaProvider } from './nvidia';
 import { ClaudeProvider } from './claude';
 import { BuiltinProvider } from './builtin';
 import type { PromptHookRegistry } from './prompt-hooks';
 
-export type ProviderType = 'deepseek' | 'openai' | 'claude' | 'builtin';
+export type ProviderType = 'deepseek' | 'openai' | 'claude' | 'builtin' | 'nvidia';
 
 export interface LLMManagerConfig {
   primary: {
@@ -232,6 +233,15 @@ export class LLMManager {
     switch (config.provider) {
       case 'openai':
         return new OpenAIProvider({
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          allowInsecureHttp: config.allowInsecureHttp,
+          allowPrivateHosts: config.allowPrivateHosts,
+          registry: this.registry,
+        });
+      case 'nvidia':
+        return new NvidiaProvider({
           apiKey: config.apiKey,
           model: config.model,
           baseUrl: config.baseUrl,

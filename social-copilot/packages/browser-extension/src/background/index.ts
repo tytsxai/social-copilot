@@ -92,6 +92,7 @@ type DiagnosticEventType =
   | 'GET_CONTACTS_WITH_PREFS'
   | 'CLEAR_DATA'
   | 'CLEAR_CONTACT_DATA'
+  | 'CLEAR_API_KEYS'
   | 'SET_DEBUG_ENABLED'
   | 'GET_DIAGNOSTICS'
   | 'GET_DIAGNOSTICS_JSON'
@@ -742,6 +743,8 @@ function getProviderDefaultModel(provider: ProviderType): string {
   switch (provider) {
     case 'openai':
       return 'gpt-5.2-chat-latest';
+    case 'nvidia':
+      return 'z-ai/glm4.7';
     case 'claude':
       return 'claude-sonnet-4-5';
     case 'builtin':
@@ -827,6 +830,65 @@ async function clearSessionKeys(): Promise<void> {
     SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY,
     SESSION_KEYS_FALLBACK_TIMESTAMP_KEY,
   ]);
+}
+
+async function clearApiKeys(target: 'primary' | 'fallback' | 'both' = 'both') {
+  const clearPrimary = target === 'primary' || target === 'both';
+  const clearFallback = target === 'fallback' || target === 'both';
+
+  const sessionKeys: string[] = [];
+  if (clearPrimary) sessionKeys.push('apiKey');
+  if (clearFallback) sessionKeys.push('fallbackApiKey');
+  if (sessionKeys.length) {
+    try {
+      await storageSessionRemove(sessionKeys);
+    } catch (err) {
+      debugWarn('[Social Copilot] Failed to clear session API keys:', sanitizeErrorForDiagnostics(err));
+    }
+  }
+
+  const localKeys = new Set<string>();
+  if (clearPrimary) {
+    localKeys.add('apiKey');
+    localKeys.add(SESSION_API_KEY_FALLBACK_STORAGE_KEY);
+  }
+  if (clearFallback) {
+    localKeys.add('fallbackApiKey');
+    localKeys.add(SESSION_FALLBACK_API_KEY_FALLBACK_STORAGE_KEY);
+  }
+  if (clearPrimary && clearFallback) {
+    localKeys.add(SESSION_KEYS_FALLBACK_TIMESTAMP_KEY);
+  }
+  if (localKeys.size) {
+    try {
+      await storageLocalRemove(Array.from(localKeys));
+    } catch (err) {
+      debugWarn('[Social Copilot] Failed to clear local API keys:', sanitizeErrorForDiagnostics(err));
+    }
+  }
+
+  if (clearFallback) {
+    try {
+      await storageLocalSet({ enableFallback: false });
+    } catch (err) {
+      debugWarn('[Social Copilot] Failed to disable fallback after clearing key:', sanitizeErrorForDiagnostics(err));
+    }
+  }
+
+  if (currentConfig) {
+    currentConfig = {
+      ...currentConfig,
+      apiKey: clearPrimary ? '' : currentConfig.apiKey,
+      fallbackApiKey: clearFallback ? undefined : currentConfig.fallbackApiKey,
+      enableFallback: clearFallback ? false : currentConfig.enableFallback,
+    };
+  }
+
+  llmManager = null;
+  profileUpdater = null;
+  fallbackModeActive = false;
+
+  return { success: true, cleared: { primary: clearPrimary, fallback: clearFallback } };
 }
 
 async function buildDiagnosticsSnapshot(): Promise<Record<string, unknown>> {
@@ -1018,6 +1080,7 @@ async function handleMessage(request: { type: string; [key: string]: unknown }) 
     'REPORT_ADAPTER_HEALTH',
     'REPORT_CONTENT_SCRIPT_ERROR',
     'REPORT_AUTO_COOLDOWN',
+    'CLEAR_API_KEYS',
   ]);
 
   if (allowWithoutStore.has(requestType)) {
@@ -1152,6 +1215,7 @@ function normalizeDiagnosticType(type: string): DiagnosticEventType {
     case 'GET_CONTACTS_WITH_PREFS':
     case 'CLEAR_DATA':
     case 'CLEAR_CONTACT_DATA':
+    case 'CLEAR_API_KEYS':
     case 'SET_DEBUG_ENABLED':
     case 'GET_DIAGNOSTICS':
     case 'GET_DIAGNOSTICS_JSON':
@@ -1562,6 +1626,14 @@ async function dispatchMessage(
 
     case 'CLEAR_CONTACT_DATA':
       return clearContactData(request.contactKey as ContactKey);
+
+    case 'CLEAR_API_KEYS': {
+      const targetRaw = typeof request.target === 'string' ? request.target : 'both';
+      const target = targetRaw === 'primary' || targetRaw === 'fallback' || targetRaw === 'both'
+        ? targetRaw
+        : 'both';
+      return clearApiKeys(target);
+    }
 
     case 'OPEN_OPTIONS_PAGE': {
       runtimeOpenOptionsPage();

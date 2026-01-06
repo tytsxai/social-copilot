@@ -1,5 +1,6 @@
 export * from './provider';
 export * from './openai';
+export * from './nvidia';
 export * from './claude';
 export * from './builtin';
 export * from './builtin-config';

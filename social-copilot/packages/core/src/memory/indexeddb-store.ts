@@ -466,7 +466,13 @@ export class IndexedDBStore implements MemoryStore {
     this.db?.close();
     this.db = null;
 
-    const requiredStores = [STORES.messages, STORES.profiles, STORES.stylePreferences, STORES.contactMemories];
+    const requiredStores = [
+      STORES.messages,
+      STORES.profiles,
+      STORES.stylePreferences,
+      STORES.contactMemories,
+      STORES.thoughtPreferences,
+    ];
 
     const ensureSchemaCompatible = (db: IDBDatabase) => {
       const missingStores = requiredStores.filter((name) => !db.objectStoreNames.contains(name));
@@ -1425,13 +1431,11 @@ export class IndexedDBStore implements MemoryStore {
       const store = tx.objectStore(STORES.thoughtPreferences);
 
       let existing: ThoughtPreference | null = null;
-      let foundKey: string | null = null;
 
       for (const key of keysToTry) {
         const result = (await this.requestToPromise(store.get(key), tx)) as ThoughtPreference | undefined;
         if (result) {
           existing = { ...result, contactKeyStr: canonicalKey };
-          foundKey = key;
           break;
         }
       }

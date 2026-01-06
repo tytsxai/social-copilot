@@ -52,6 +52,8 @@ const fallbackModelHint = document.getElementById('fallbackModelHint')!;
 const fallbackModelSuggestions = document.getElementById('fallbackModelSuggestions') as HTMLDataListElement;
 const fallbackApiKeyInput = document.getElementById('fallbackApiKey') as HTMLInputElement;
 const fallbackApiKeyHint = document.getElementById('fallbackApiKeyHint')!;
+const clearApiKeyBtn = document.getElementById('clearApiKeyBtn') as HTMLButtonElement | null;
+const clearFallbackApiKeyBtn = document.getElementById('clearFallbackApiKeyBtn') as HTMLButtonElement | null;
 const suggestionCountSelect = document.getElementById('suggestionCount') as HTMLSelectElement;
 const saveBtn = document.getElementById('saveBtn')!;
 const testConnectionBtn = document.getElementById('testConnectionBtn') as HTMLButtonElement | null;
@@ -92,6 +94,7 @@ type SetConfigResponse = { error?: string };
 type ExportUserDataResponse = { json?: string; error?: string };
 type ImportUserDataResponse = { success?: boolean; error?: string; imported?: Record<string, number> };
 type ClearDataResponse = { success?: boolean; error?: string };
+type ClearApiKeysResponse = { success?: boolean; error?: string; cleared?: { primary?: boolean; fallback?: boolean } };
 
 type PopupStoredConfigRecord = Record<string, unknown> &
   Partial<{
@@ -461,6 +464,13 @@ function getProviderModelMeta(provider: string): { defaultModel: string; docsUrl
       suggestions: ['gpt-5.2-chat-latest', 'gpt-5.2', 'gpt-5.2-pro'],
     };
   }
+  if (provider === 'nvidia') {
+    return {
+      defaultModel: 'z-ai/glm4.7',
+      docsUrl: 'https://build.nvidia.com/',
+      suggestions: ['z-ai/glm4.7', 'minimaxai/minimax-m2.1'],
+    };
+  }
   if (provider === 'claude') {
     return {
       defaultModel: 'claude-sonnet-4-5',
@@ -483,6 +493,9 @@ function getProviderModelMeta(provider: string): { defaultModel: string; docsUrl
 function getProviderBaseUrlMeta(provider: string): { defaultBaseUrl: string; docsUrl: string } {
   if (provider === 'openai') {
     return { defaultBaseUrl: 'https://api.openai.com', docsUrl: 'https://platform.openai.com/docs/api-reference' };
+  }
+  if (provider === 'nvidia') {
+    return { defaultBaseUrl: 'https://integrate.api.nvidia.com', docsUrl: 'https://build.nvidia.com/' };
   }
   if (provider === 'claude') {
     return { defaultBaseUrl: 'https://api.anthropic.com', docsUrl: 'https://docs.anthropic.com/en/api' };
@@ -637,6 +650,9 @@ function updateApiKeyHint(provider: string, hintEl: HTMLElement) {
   } else if (provider === 'openai') {
     linkEl.href = 'https://platform.openai.com/api-keys';
     linkEl.textContent = '获取 OpenAI API Key';
+  } else if (provider === 'nvidia') {
+    linkEl.href = 'https://build.nvidia.com/';
+    linkEl.textContent = '获取 NVIDIA API Key';
   } else if (provider === 'claude') {
     linkEl.href = 'https://console.anthropic.com/';
     linkEl.textContent = '获取 Claude API Key';
@@ -1091,6 +1107,46 @@ saveBtn.addEventListener('click', async () => {
   if (remoteSelectorsWarning) {
     alert(remoteSelectorsWarning);
   }
+});
+
+async function handleClearApiKeys(target: 'primary' | 'fallback' | 'both') {
+  const label = target === 'primary' ? '主 API Key' : target === 'fallback' ? '备用 API Key' : '主/备用 API Key';
+  if (!confirm(`确定清除${label}吗？`)) {
+    return;
+  }
+
+  try {
+    const res = await runtimeSendMessage<ClearApiKeysResponse>({ type: 'CLEAR_API_KEYS', target });
+    if (res?.success === false || res?.error) {
+      statusEl.className = 'status warning';
+      statusEl.textContent = `清除失败：${res?.error || '未知错误'}`;
+      return;
+    }
+
+    if (target !== 'fallback') {
+      apiKeyInput.value = '';
+    }
+    if (target !== 'primary') {
+      fallbackApiKeyInput.value = '';
+      enableFallbackCheckbox.checked = false;
+      toggleFallbackFields();
+    }
+
+    statusEl.className = 'status info';
+    statusEl.textContent = 'API Key 已清除';
+    await checkStatus();
+  } catch (err) {
+    statusEl.className = 'status warning';
+    statusEl.textContent = `清除失败：${(err as Error).message}`;
+  }
+}
+
+clearApiKeyBtn?.addEventListener('click', () => {
+  void handleClearApiKeys('primary');
+});
+
+clearFallbackApiKeyBtn?.addEventListener('click', () => {
+  void handleClearApiKeys('fallback');
 });
 
 function downloadJson(filename: string, json: string) {
