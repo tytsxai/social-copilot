@@ -20,6 +20,7 @@
 - 存储层与数据迁移：`MEMORY_STORAGE.md`
 - 思路分析系统：`THOUGHT_SYSTEM.md`
 - 测试策略：`TESTING.md`
+- 故障排查：`TROUBLESHOOTING.md`
 
 ## 常见任务
 

@@ -175,9 +175,201 @@ export class MyProvider implements LLMProvider {
 }
 ```
 
-### 步骤 2: 注册到 LLMManager
+### 步骤 2: 实现完整的提供商
 
-在 `llm-manager.ts` 的 `createProvider` 方法中添加新提供商。
+以 NVIDIA Provider 为参考，完整实现需要包含：
+
+```typescript
+// packages/core/src/llm/nvidia.ts
+
+import type { LLMInput, LLMOutput, LLMProvider, ReplyCandidate, ReplyStyle } from '../types';
+import { parseReplyContent, ReplyParseError } from './reply-validation';
+import { fetchWithTimeout } from './fetch-with-timeout';
+import type { PromptHookRegistry } from './prompt-hooks';
+import { applySystemPromptHooks, applyUserPromptHooks } from './prompt-hooks';
+import { normalizeBaseUrl } from './normalize-base-url';
+import { buildSystemPrompt, buildUserPrompt } from './prompts';
+
+export interface NvidiaProviderConfig {
+  apiKey: string;
+  baseUrl?: string;
+  model?: string;
+  allowInsecureHttp?: boolean;
+  allowPrivateHosts?: boolean;
+  registry?: PromptHookRegistry;
+}
+
+export class NvidiaProvider implements LLMProvider {
+  readonly name = 'nvidia';
+  private apiKey: string;
+  private baseUrl: string;
+  private model: string;
+  private registry?: PromptHookRegistry;
+
+  constructor(config: NvidiaProviderConfig) {
+    // 1. 验证 API Key
+    if (!NvidiaProvider.validateApiKey(config.apiKey)) {
+      throw new Error('Invalid NVIDIA apiKey');
+    }
+    this.apiKey = config.apiKey.trim();
+
+    // 2. 规范化 Base URL
+    this.baseUrl = normalizeBaseUrl(
+      config.baseUrl || 'https://integrate.api.nvidia.com',
+      {
+        allowInsecureHttp: config.allowInsecureHttp,
+        allowPrivateHosts: config.allowPrivateHosts,
+      }
+    );
+
+    // 3. 设置默认模型
+    this.model = config.model || 'z-ai/glm4.7';
+    this.registry = config.registry;
+  }
+
+  // API Key 验证（NVIDIA 格式: nvapi-xxx）
+  static validateApiKey(apiKey: string): boolean {
+    if (!apiKey || typeof apiKey !== 'string') return false;
+    const trimmed = apiKey.trim();
+    return trimmed.startsWith('nvapi-') && !/\s/.test(trimmed);
+  }
+
+  async generateReply(input: LLMInput): Promise<LLMOutput> {
+    const task = input.task ?? 'reply';
+    const startTime = Date.now();
+
+    // 4. 构建提示词
+    const systemPrompt = buildSystemPrompt(task, input);
+    const userPrompt = buildUserPrompt(task, input);
+
+    // 5. 应用提示词钩子
+    const finalSystemPrompt = this.registry
+      ? this.registry.applySystemHooks(systemPrompt, input)
+      : applySystemPromptHooks(systemPrompt, input);
+    const finalUserPrompt = this.registry
+      ? this.registry.applyUserHooks(userPrompt, input)
+      : applyUserPromptHooks(userPrompt, input);
+
+    // 6. 发送请求
+    const response = await fetchWithTimeout(
+      `${this.baseUrl}/v1/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            { role: 'system', content: finalSystemPrompt },
+            { role: 'user', content: finalUserPrompt },
+          ],
+          temperature: input.temperature ?? 0.8,
+          max_tokens: Math.min(input.maxLength ?? 1000, 2000),
+        }),
+        timeoutMs: 20_000,
+        retry: { retries: 2 },
+      }
+    );
+
+    // 7. 错误处理
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`NVIDIA API error: ${response.status}`);
+    }
+
+    // 8. 解析响应
+    const data = await response.json();
+    const content = this.extractContent(data);
+    const candidates = parseReplyContent(content, input.styles, task);
+
+    return {
+      candidates,
+      model: this.model,
+      latency: Date.now() - startTime,
+      raw: data,
+    };
+  }
+
+  private extractContent(data: unknown): string {
+    // OpenAI 兼容格式: data.choices[0].message.content
+    const choices = (data as any).choices;
+    return choices?.[0]?.message?.content ?? '';
+  }
+}
+```
+
+### 步骤 3: 注册到 LLMManager
+
+在 `llm-manager.ts` 中添加新提供商：
+
+```typescript
+// packages/core/src/llm/llm-manager.ts
+
+import { NvidiaProvider } from './nvidia';
+
+// 1. 扩展 ProviderType
+export type ProviderType = 'deepseek' | 'openai' | 'claude' | 'builtin' | 'nvidia';
+
+// 2. 在 createProvider 方法中添加 case
+private createProvider(config: ProviderConfig): LLMProvider {
+  switch (config.provider) {
+    case 'deepseek':
+      return new DeepSeekProvider({ ... });
+    case 'openai':
+      return new OpenAIProvider({ ... });
+    case 'claude':
+      return new ClaudeProvider({ ... });
+    case 'nvidia':
+      return new NvidiaProvider({
+        apiKey: config.apiKey,
+        model: config.model,
+        baseUrl: config.baseUrl,
+        allowInsecureHttp: config.allowInsecureHttp,
+        allowPrivateHosts: config.allowPrivateHosts,
+      });
+    default:
+      throw new Error(`Unknown provider: ${config.provider}`);
+  }
+}
+```
+
+### 步骤 4: 导出新提供商
+
+```typescript
+// packages/core/src/llm/index.ts
+export { NvidiaProvider } from './nvidia';
+export type { NvidiaProviderConfig } from './nvidia';
+```
+
+### 步骤 5: 编写单元测试
+
+```typescript
+// packages/core/src/llm/__tests__/nvidia.test.ts
+
+import { describe, it, expect, vi } from 'vitest';
+import { NvidiaProvider } from '../nvidia';
+
+describe('NvidiaProvider', () => {
+  describe('validateApiKey', () => {
+    it('should accept valid nvapi- keys', () => {
+      expect(NvidiaProvider.validateApiKey('nvapi-abc123')).toBe(true);
+    });
+
+    it('should reject invalid keys', () => {
+      expect(NvidiaProvider.validateApiKey('')).toBe(false);
+      expect(NvidiaProvider.validateApiKey('sk-xxx')).toBe(false);
+    });
+  });
+
+  describe('generateReply', () => {
+    it('should call NVIDIA API with correct format', async () => {
+      // Mock fetch and test API call
+    });
+  });
+});
+```
 
 ## 提示词钩子系统
 

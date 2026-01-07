@@ -843,7 +843,60 @@ export class DiscordAdapter implements PlatformAdapter {
 
 ## Browser Extension 协议与配置
 
-本 API 文档主要描述 `@social-copilot/core`。但在实际维护中，扩展的“内部消息协议”和“运行时配置项”同样是高频改动点：
+本 API 文档主要描述 `@social-copilot/core`。但在实际维护中，扩展的"内部消息协议"和"运行时配置项"同样是高频改动点：
 
 - 内部消息协议（Popup/Content Script/Background）：见 `docs/EXTENSION_PROTOCOL.md`
 - 运行时配置项与环境变量：见 `docs/CONFIGURATION.md`
+
+---
+
+## 错误处理
+
+### LLM 模块错误
+
+```typescript
+import { LLMManager, ReplyParseError } from '@social-copilot/core';
+
+try {
+  const result = await manager.generateReply(input);
+} catch (error) {
+  if (error instanceof ReplyParseError) {
+    // LLM 返回格式解析失败
+    console.error('回复解析失败:', error.message);
+  } else if (error.message.includes('API error')) {
+    // API 调用失败（网络/认证/限流）
+    console.error('API 错误:', error.message);
+  } else {
+    // 其他错误
+    throw error;
+  }
+}
+```
+
+### 存储模块错误
+
+```typescript
+import { IndexedDBStore } from '@social-copilot/core';
+
+try {
+  await store.init();
+} catch (error) {
+  if (error.message.includes('blocked')) {
+    // 数据库被其他标签页占用
+    console.error('请关闭其他标签页后重试');
+  } else if (error.message.includes('schema')) {
+    // 数据库版本不兼容
+    console.error('数据库版本不兼容，请更新扩展');
+  }
+}
+```
+
+### 常见错误码
+
+| 错误类型 | 原因 | 处理建议 |
+|----------|------|----------|
+| `ReplyParseError` | LLM 返回非预期格式 | 重试或切换模型 |
+| `API error: 401` | API Key 无效 | 检查配置 |
+| `API error: 429` | 请求限流 | 等待后重试 |
+| `Database blocked` | IndexedDB 被占用 | 关闭其他标签页 |
+| `Transaction aborted` | 事务冲突 | 自动重试（内置） |
