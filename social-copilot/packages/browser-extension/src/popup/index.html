@@ -338,6 +338,75 @@
         gap: 8px;
         margin-top: 8px;
       }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .fallback-card {
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--card);
+      }
+
+      .style-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .style-option {
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        cursor: pointer;
+        font-size: 13px;
+        transition: border-color 0.2s ease;
+      }
+
+      .style-option:hover {
+        border-color: var(--primary);
+      }
+
+      .style-option.selected {
+        border-color: var(--primary);
+        background: rgba(91, 94, 246, 0.08);
+      }
+
+      .shortcut-hint {
+        margin-top: 16px;
+        padding: 12px;
+        border-radius: 10px;
+        background: rgba(91, 94, 246, 0.06);
+        font-size: 12px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .shortcut-hint kbd {
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        font-family: monospace;
+        font-size: 11px;
+      }
+
+      .contact-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .empty-state {
+        padding: 24px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
     </style>
   </head>
   <body>
