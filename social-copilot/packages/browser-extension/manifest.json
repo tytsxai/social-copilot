@@ -11,6 +11,7 @@
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
     "https://api.siliconflow.cn/*",
+    "https://integrate.api.nvidia.com/*",
     "https://web.telegram.org/*",
     "https://web.whatsapp.com/*",
     "https://app.slack.com/*",
