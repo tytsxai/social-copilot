@@ -49,3 +49,6 @@ social-copilot/audit-025.json
 
 # Auto Claude data directory
 .auto-claude/
+
+# Claude Code settings
+.claude_settings.json
